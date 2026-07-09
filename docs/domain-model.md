@@ -9,6 +9,14 @@
 
 ## 1. Purpose & scope
 
+**Thesis.** The deliverable is a **tenancy timeline** — a complete, tamper-evident
+history of a tenancy (rent falling due, payments, notices, corrections) legible
+enough to serve as **evidence in a tribunal (NCAT) arrears case**. This is a
+learning **simulation**, not production: events are simulated and seeded, with Oban
+jobs advancing time to build histories realistically. The timeline *is* the event
+log's payoff — which is why the design leans on immutable, posted events and
+correction-by-compensation.
+
 We model the **seam between two bounded contexts**:
 
 - **Property Management (PM)** — owns the tenancy, the lease terms, the
@@ -28,6 +36,12 @@ first-class path.
 **Ubiquitous language note:** the language *flips* at the seam. Accounts speaks
 *payment / receipt / money*; PM speaks *arrears / weeks behind / balance*. The
 translation is the anti-corruption layer.
+
+**Simulation.** There is no real Accounts or bank. A **simulator** is the event
+source: a tenant-behaviour engine (pays on time / short / misses) emits
+`PaymentReceived` facts through ACL-1, and **Oban jobs advance simulated time** —
+driving `RentFellDue` catch-up and the arrears trigger — so timelines accrue over
+time rather than all at once.
 
 ---
 
@@ -76,8 +90,12 @@ access-control list.
 | `RentFellDue` | `tenancy_id, due_date, amount, period_from, period_to` | Step tick, via lazy catch-up; **carries the amount** |
 | `RentPaymentRecorded` | `tenancy_id, amount, received_on, source_payment_id` | **Output of ACL-1**; signed (reversal ⇒ negative) |
 | `RentChargeAdjusted` **(proposal)** | `tenancy_id, period, delta, reason` | Compensating entry for a backdated rate change |
-| `NoticeToVacateGiven` | `tenancy_id, elected_vacate_date, given_on` | |
-| `EarlyReleaseAgreed` | `tenancy_id, effective_date` | Landlord consents to end liability early |
+| `NoticeToVacateGiven` | `tenancy_id, elected_vacate_date, given_on` | **Tenant-initiated** end |
+| `VacateDateAmended` | `tenancy_id, new_vacate_date, amended_on` | Moves the effective end date; **requires landlord approval** |
+| `TerminationNoticeGiven` | `tenancy_id, grounds, termination_date, given_on` | **Landlord/agent-initiated**; grounds = arrears (≥14 days). Sets an effective end date |
+| `TerminationNoticeVoided` | `tenancy_id, reason, voided_on` | Arrears remedied (paid **or** repayment plan) before the date ⇒ notice void, tenancy continues |
+| `RepaymentPlanAgreed` **(proposal)** | `tenancy_id, terms, agreed_on` | An agreed catch-up plan; complying with it **stays** termination |
+| `EarlyReleaseAgreed` | `tenancy_id, effective_date` | Landlord consents to end liability early (shortens) |
 | `KeysReturned` | `tenancy_id, on_date` | Possession recovered; terminal trigger + settlement |
 | `TenancySettled` **(proposal)** | `tenancy_id, refund?, overstay_charge?` | Final settlement computed at `KeysReturned` |
 
@@ -112,30 +130,50 @@ for the same days, so nothing needs cross-tenancy consistency.
 
 ### Lifecycle state machine
 
+Two directions of notice both set an **effective end date**: the tenant's
+**notice to vacate**, or the landlord/agent's **termination notice** (e.g. arrears).
+
 ```
-                 ┌─────────────┐
-   commence ────▶│   Active    │
-                 └──────┬──────┘
-                        │ NoticeToVacateGiven(elected_vacate_date)
-                        ▼
-                 ┌─────────────┐   EarlyReleaseAgreed(effective_date)
-                 │   Notice    │─────────────┐  (moves the effective end date earlier)
-                 └──────┬──────┘             │
-        keys back by    │   keys NOT back    │
-        effective end   │   by effective end │
-                        ▼                    ▼
-                 ┌─────────────┐      ┌─────────────┐
-                 │  (settle)   │      │  Overstay   │  daily accrual (derived ramp)
-                 └──────┬──────┘      └──────┬──────┘
-                        │  KeysReturned       │  KeysReturned
-                        ▼                     ▼
-                 ┌───────────────────────────────────┐
-                 │   Terminal (possession recovered) │  accrual stops; balance persists as debt
-                 └───────────────────────────────────┘
+                        ┌─────────────┐
+        commence ──────▶│   Active    │◀── TerminationNoticeVoided ──┐
+                        └──────┬──────┘        (arrears remedied)     │
+            ┌──────────────────┴──────────────────┐                  │
+   NoticeToVacateGiven                    TerminationNoticeGiven      │
+   (tenant elects a date)                 (landlord; arrears ≥14d)    │
+            └──────────────────┬──────────────────┘                  │
+                               ▼                                      │
+                     ┌──────────────────────┐                        │
+                     │        Ending         │────────────────────────┘
+                     │ (has effective end date)│
+                     └───────────┬───────────┘
+   VacateDateAmended (extend) / EarlyReleaseAgreed (shorten) ─ landlord-approved, adjusts the date
+                                 │
+             ┌───────────────────┴───────────────────┐
+     keys back by end date              keys NOT back by end date
+             │                                        │
+             ▼                                        ▼
+         (settle)                              ┌───────────┐
+             │                                 │  Overstay │  daily accrual (derived ramp)
+             │                                 └─────┬─────┘
+             │  KeysReturned                         │  KeysReturned
+             ▼                                       ▼
+         ┌───────────────────────────────────────────────┐
+         │        Terminal (possession recovered)         │  accrual stops; balance persists as debt
+         └───────────────────────────────────────────────┘
 ```
 
-**`effective end date`** = the elected vacate date, moved **earlier** by
-`EarlyReleaseAgreed`, or extended **later** by an overstay until `KeysReturned`.
+> **Off-diagram (out of scope):** if a termination date lapses *unremedied* and the
+> tenant hasn't left, arrears collections escalates to the **Tribunal (NCAT)** for a
+> possession order. Termination *grounds* other than arrears (end of fixed term,
+> breach, and the reason-based grounds from the 19 May 2025 reforms) and the
+> tribunal internals are noted but **not modelled**. *No-grounds termination is
+> unlawful in NSW since 19 May 2025.*
+
+**`effective end date`** = the date the tenancy is set to end. It comes from either
+a **notice to vacate** (tenant) or a **termination notice** (landlord/agent); it may
+be **amended with landlord approval** — `VacateDateAmended` extends it,
+`EarlyReleaseAgreed` shortens it — and it is extended by an overstay until
+`KeysReturned`. It is the date the step-accrual clamp stops at.
 
 ---
 
@@ -152,6 +190,15 @@ but allow**.
 - **L5** — Liability can't be shortened by early departure alone; **early release
   requires landlord consent** (`EarlyReleaseAgreed`). No consent ⇒ rent runs to
   the elected vacate date (tenant liable for empty weeks).
+- **L6** — The vacate date may be **amended only with landlord approval**
+  (`VacateDateAmended` extends the effective end date; `EarlyReleaseAgreed`
+  shortens it — both consented).
+- **L7** — A **termination notice on arrears grounds** requires the tenant to be
+  **≥14 days in arrears** — the arrears projection *gates* the command.
+- **L8** — Paying the arrears in full **— or entering and complying with an agreed
+  repayment plan —** before the termination date **voids** the termination notice;
+  the tenancy continues (a fresh notice may issue if they fall behind again). *(The
+  NSW "general guarantee" against termination for remedied arrears.)*
 
 ### Accrual
 - **A1** — No accrual before commencement / before the first due date.
@@ -164,6 +211,9 @@ but allow**.
   *recorded* date). It must **not** rewrite past ticks — it emits
   `RentChargeAdjusted` (compensation). **Soft guard:** warn if no corresponding
   notice event exists, but allow override.
+
+- **A5** — A rent increase happens **at most once per 12 months** and needs **≥60
+  days written notice** (NSW, all tenancy types since 31 Oct 2024).
 
 ### Payments
 - **P1** — A payment (`source_payment_id`) is applied **at most once**. (hard)
@@ -197,6 +247,12 @@ but allow**.
   exit day**; prepaid excess is **refunded**. Overstay extends the daily ramp to
   `KeysReturned` and **consumes any credit first** (automatic under
   balance-as-truth). Computed at `KeysReturned`.
+- **What "overstay" is (NSW):** keys not returned = **no vacant possession**, so the
+  tenancy *continues* accruing until `KeysReturned`. Daily charging here is a
+  **practice/lease-terms convention** — kept, because the boundary partial period
+  prorates to daily anyway — **not** a statutory *occupation fee* (that term means
+  *goods left behind*, and daily occupation rent is actually prohibited, so we avoid
+  it).
 - **Backdating (bitemporality).** A legitimate rent change may be *effective* in
   the past but *recorded* now. Past `RentFellDue` ticks are frozen; the change
   emits `RentChargeAdjusted` deltas. Never mutate history.
@@ -217,7 +273,9 @@ but allow**.
   `ceil(balance ÷ rent)` only when rent is constant.
 - **Projection (read model):** `{ tenancy_id, balance, weeks_behind,
   oldest_unpaid_due_date, as_of }`. Derived, disposable, rebuildable from the log.
-  Drives the **~14-day legal arrears trigger**.
+  Drives the **~14-day legal arrears trigger** — and *gates* the
+  `TerminationNoticeGiven` command (L7): the read model is a **precondition**, not
+  just a report.
 - **Reversals** are just negative `RentPaymentRecorded` — the fold absorbs them
   with no special case.
 
@@ -273,6 +331,40 @@ values. It's where small domain rules live, keeping the aggregate clean.
 - Exit-settlement event shape (`TenancySettled` / `RentChargeAdjusted`) — decided
   the *rules*, not the exact events; pin during implementation.
 - Whether `RentTerms` is a standalone VO or bare aggregate fields — minor.
+- **Collections beyond the notice** — Tribunal (NCAT) escalation and non-arrears
+  termination grounds are **out of scope**; the notice → void → (lapse) boundary is
+  captured, the tribunal internals are not.
 - **Who builds what** — leaning "Claude drives", with the core learning bits
   (the event fold, the arrears projection, ACL-1) as candidates for
   hand-implementation. To be decided before coding.
+
+---
+
+## 11. NSW RTA grounding (Residential Tenancies Act 2010)
+
+Concrete figures the model rests on, verified against NSW sources. This is a
+**simulation** — grounding is for realism, not legal advice.
+
+- **Arrears termination:** >14 days behind → a non-payment termination notice giving
+  **14 days** to vacate. Remedied by paying up **or** an agreed **repayment plan**
+  (the "general guarantee" — L8).
+- **Tenancy ends on vacant possession** (keys returned), *not* on the notice. No
+  vacant possession by the date → landlord applies to **NCAT** for a termination
+  order. (This is the statutory basis for `KeysReturned` = terminal.)
+- **Ending — notice periods:** tenant **14 days** (fixed-term) / **21 days**
+  (periodic); landlord generally **90 days** (**60** if fixed term ≤6 months),
+  varying by ground.
+- **No-grounds termination: unlawful since 19 May 2025** — a valid reason + evidence
+  is required.
+- **Rent increases:** at most **once per 12 months**, **≥60 days** written notice
+  (A5).
+- **"Occupation fee"** is a *goods-left-behind* term and daily occupation rent is
+  **prohibited** — we don't use it; overstay is simply the tenancy continuing until
+  vacant possession.
+
+**Sources:**
+[Non-payment of rent](https://www.nsw.gov.au/housing-and-construction/rules/non-payment-of-rent) ·
+[Minimum notice periods](https://www.nsw.gov.au/housing-and-construction/rules/minimum-notice-periods-for-ending-a-residential-tenancy) ·
+[Tenancy law has changed (2025 reforms)](https://www.tenants.org.au/resource/law-change) ·
+[Dealing with goods left behind](https://www.nsw.gov.au/housing-and-construction/rules/dealing-goods-left-behind) ·
+[How do I end my tenancy?](https://www.tenants.org.au/factsheet-how-do-i-end-my-tenancy)
