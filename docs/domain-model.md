@@ -126,7 +126,16 @@ access-control list.
 
 **Structural finding:** tenancies are **independent** — there is **no `Property`
 aggregate** above them. Re-letting can legitimately double-charge two tenancies
-for the same days, so nothing needs cross-tenancy consistency.
+for the same days (an overstaying tenant still liable while the incoming tenancy
+has commenced), so nothing needs cross-tenancy consistency **on the money**.
+
+**But possession is singular.** Only one tenancy can hold **vacant possession** of
+the property at a time: the incoming tenancy cannot actually take possession until
+the outgoing tenant returns keys (`KeysReturned`). So the double-charge is
+legitimate on *liability*, not on *physical possession* — and that constraint lives
+in the real world (and in Leasing's hand-over), **not** in a cross-tenancy aggregate
+invariant. The independence finding stands; this only flags what the money model
+doesn't see.
 
 ### Lifecycle state machine
 
