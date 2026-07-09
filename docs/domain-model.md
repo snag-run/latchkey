@@ -203,7 +203,8 @@ but allow**.
   (`VacateDateAmended` extends the effective end date; `EarlyReleaseAgreed`
   shortens it — both consented).
 - **L7** — A **termination notice on arrears grounds** requires the tenant to be
-  **≥14 days in arrears** — the arrears projection *gates* the command.
+  **≥14 days in arrears** — measured as **elapsed time**, `days_behind ≥ 14` (§7),
+  *not* the dollar amount owed. The arrears projection *gates* the command.
 - **L8** — Paying the arrears in full **— or entering and complying with an agreed
   repayment plan —** before the termination date **voids** the termination notice;
   the tenancy continues (a fresh notice may issue if they fall behind again). *(The
@@ -279,19 +280,30 @@ but allow**.
   entry, not a "negative credit." The signed scalar above is just this ledger
   collapsed to one number. Full double-entry (balancing contra entries) is
   Accounts' native model — see §10 "Accounts → true double-entry".
-- **Two reads, deliberately divergent:**
-  - `weeks_behind` — whole unpaid periods (FIFO, oldest first). A partial payment
-    or small credit does **not** decrement it.
+- **Three reads, deliberately divergent** (all from the same balance + schedule):
+  - `days_behind` — **elapsed calendar days** from the oldest unpaid due date:
+    `as_of − oldest_unpaid_due_date`. **Time-based and cycle-independent** — a large
+    balance does *not* accelerate it; only the clock does. **This is the read that
+    gates L7** (`days_behind ≥ 14`). Clearing the oldest unpaid period (FIFO) advances
+    `oldest_unpaid_due_date`, which **resets the clock** (dovetails with L8). *(decided:
+    the NSW ground is time-elapsed, not amount owed — 8 days late owing "14 days' rent"
+    is not defensible at tribunal.)*
+  - `periods_behind` — whole unpaid periods (FIFO, oldest first); **cycle-relative**
+    ("2 payments missed"). For **human communication only — never the legal gate**: a
+    period count isn't comparable across weekly / fortnightly / monthly cycles (one
+    unpaid *monthly* period ≠ one unpaid *weekly* one). A partial payment or small
+    credit does **not** decrement it. *(Was `weeks_behind`; "weeks" baked in a weekly
+    cycle.)*
   - `balance` — exact dollars; a partial **does** reduce it.
   - There is **no "paid-to date."** (Explicitly rejected as misleading — "we say
     they owe the week.")
-- `weeks_behind` generally needs the schedule + FIFO; it collapses to
+- `periods_behind` generally needs the schedule + FIFO; it collapses to
   `ceil(balance ÷ rent)` only when rent is constant.
-- **Projection (read model):** `{ tenancy_id, balance, weeks_behind,
+- **Projection (read model):** `{ tenancy_id, balance, days_behind, periods_behind,
   oldest_unpaid_due_date, as_of }`. Derived, disposable, rebuildable from the log.
-  Drives the **~14-day legal arrears trigger** — and *gates* the
-  `TerminationNoticeGiven` command (L7): the read model is a **precondition**, not
-  just a report.
+  `days_behind` drives the **14-day legal arrears trigger** and *gates* the
+  `TerminationNoticeGiven` command (L7) — **time elapsed, not amount owed**; the read
+  model is a **precondition**, not just a report.
 - **Reversals** are just negative `RentPaymentRecorded` — the fold absorbs them
   with no special case.
 
