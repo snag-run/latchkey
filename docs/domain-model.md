@@ -76,8 +76,11 @@ access-control list.
 | `RentFellDue` | `tenancy_id, due_date, amount, period_from, period_to` | Step tick, via lazy catch-up; **carries the amount** |
 | `RentPaymentRecorded` | `tenancy_id, amount, received_on, source_payment_id` | **Output of ACL-1**; signed (reversal ⇒ negative) |
 | `RentChargeAdjusted` **(proposal)** | `tenancy_id, period, delta, reason` | Compensating entry for a backdated rate change |
-| `NoticeToVacateGiven` | `tenancy_id, elected_vacate_date, given_on` | |
-| `EarlyReleaseAgreed` | `tenancy_id, effective_date` | Landlord consents to end liability early |
+| `NoticeToVacateGiven` | `tenancy_id, elected_vacate_date, given_on` | **Tenant-initiated** end |
+| `VacateDateAmended` | `tenancy_id, new_vacate_date, amended_on` | Moves the effective end date; **requires landlord approval** |
+| `TerminationNoticeGiven` | `tenancy_id, grounds, termination_date, given_on` | **Landlord/agent-initiated**; grounds = arrears (≥14 days). Sets an effective end date |
+| `TerminationNoticeVoided` | `tenancy_id, reason, voided_on` | Arrears remedied before the date ⇒ notice void, tenancy continues |
+| `EarlyReleaseAgreed` | `tenancy_id, effective_date` | Landlord consents to end liability early (shortens) |
 | `KeysReturned` | `tenancy_id, on_date` | Possession recovered; terminal trigger + settlement |
 | `TenancySettled` **(proposal)** | `tenancy_id, refund?, overstay_charge?` | Final settlement computed at `KeysReturned` |
 
@@ -112,30 +115,48 @@ for the same days, so nothing needs cross-tenancy consistency.
 
 ### Lifecycle state machine
 
+Two directions of notice both set an **effective end date**: the tenant's
+**notice to vacate**, or the landlord/agent's **termination notice** (e.g. arrears).
+
 ```
-                 ┌─────────────┐
-   commence ────▶│   Active    │
-                 └──────┬──────┘
-                        │ NoticeToVacateGiven(elected_vacate_date)
-                        ▼
-                 ┌─────────────┐   EarlyReleaseAgreed(effective_date)
-                 │   Notice    │─────────────┐  (moves the effective end date earlier)
-                 └──────┬──────┘             │
-        keys back by    │   keys NOT back    │
-        effective end   │   by effective end │
-                        ▼                    ▼
-                 ┌─────────────┐      ┌─────────────┐
-                 │  (settle)   │      │  Overstay   │  daily accrual (derived ramp)
-                 └──────┬──────┘      └──────┬──────┘
-                        │  KeysReturned       │  KeysReturned
-                        ▼                     ▼
-                 ┌───────────────────────────────────┐
-                 │   Terminal (possession recovered) │  accrual stops; balance persists as debt
-                 └───────────────────────────────────┘
+                        ┌─────────────┐
+        commence ──────▶│   Active    │◀── TerminationNoticeVoided ──┐
+                        └──────┬──────┘        (arrears remedied)     │
+            ┌──────────────────┴──────────────────┐                  │
+   NoticeToVacateGiven                    TerminationNoticeGiven      │
+   (tenant elects a date)                 (landlord; arrears ≥14d)    │
+            └──────────────────┬──────────────────┘                  │
+                               ▼                                      │
+                     ┌──────────────────────┐                        │
+                     │        Ending         │────────────────────────┘
+                     │ (has effective end date)│
+                     └───────────┬───────────┘
+   VacateDateAmended (extend) / EarlyReleaseAgreed (shorten) ─ landlord-approved, adjusts the date
+                                 │
+             ┌───────────────────┴───────────────────┐
+     keys back by end date              keys NOT back by end date
+             │                                        │
+             ▼                                        ▼
+         (settle)                              ┌───────────┐
+             │                                 │  Overstay │  daily accrual (derived ramp)
+             │                                 └─────┬─────┘
+             │  KeysReturned                         │  KeysReturned
+             ▼                                       ▼
+         ┌───────────────────────────────────────────────┐
+         │        Terminal (possession recovered)         │  accrual stops; balance persists as debt
+         └───────────────────────────────────────────────┘
 ```
 
-**`effective end date`** = the elected vacate date, moved **earlier** by
-`EarlyReleaseAgreed`, or extended **later** by an overstay until `KeysReturned`.
+> **Off-diagram (out of scope):** if a termination date lapses *unremedied* and the
+> tenant hasn't left, arrears collections escalates to the **Tribunal (NCAT)** for a
+> possession order. Termination *grounds* other than arrears (end of fixed term,
+> breach, no-grounds) and the tribunal internals are noted but **not modelled**.
+
+**`effective end date`** = the date the tenancy is set to end. It comes from either
+a **notice to vacate** (tenant) or a **termination notice** (landlord/agent); it may
+be **amended with landlord approval** — `VacateDateAmended` extends it,
+`EarlyReleaseAgreed` shortens it — and it is extended by an overstay until
+`KeysReturned`. It is the date the step-accrual clamp stops at.
 
 ---
 
@@ -152,6 +173,14 @@ but allow**.
 - **L5** — Liability can't be shortened by early departure alone; **early release
   requires landlord consent** (`EarlyReleaseAgreed`). No consent ⇒ rent runs to
   the elected vacate date (tenant liable for empty weeks).
+- **L6** — The vacate date may be **amended only with landlord approval**
+  (`VacateDateAmended` extends the effective end date; `EarlyReleaseAgreed`
+  shortens it — both consented).
+- **L7** — A **termination notice on arrears grounds** requires the tenant to be
+  **≥14 days in arrears** — the arrears projection *gates* the command.
+- **L8** — Paying the arrears in full **before the termination date voids** the
+  termination notice; the tenancy continues (a fresh notice may issue if they fall
+  behind again).
 
 ### Accrual
 - **A1** — No accrual before commencement / before the first due date.
@@ -217,7 +246,9 @@ but allow**.
   `ceil(balance ÷ rent)` only when rent is constant.
 - **Projection (read model):** `{ tenancy_id, balance, weeks_behind,
   oldest_unpaid_due_date, as_of }`. Derived, disposable, rebuildable from the log.
-  Drives the **~14-day legal arrears trigger**.
+  Drives the **~14-day legal arrears trigger** — and *gates* the
+  `TerminationNoticeGiven` command (L7): the read model is a **precondition**, not
+  just a report.
 - **Reversals** are just negative `RentPaymentRecorded` — the fold absorbs them
   with no special case.
 
@@ -273,6 +304,9 @@ values. It's where small domain rules live, keeping the aggregate clean.
 - Exit-settlement event shape (`TenancySettled` / `RentChargeAdjusted`) — decided
   the *rules*, not the exact events; pin during implementation.
 - Whether `RentTerms` is a standalone VO or bare aggregate fields — minor.
+- **Collections beyond the notice** — Tribunal (NCAT) escalation and non-arrears
+  termination grounds are **out of scope**; the notice → void → (lapse) boundary is
+  captured, the tribunal internals are not.
 - **Who builds what** — leaning "Claude drives", with the core learning bits
   (the event fold, the arrears projection, ACL-1) as candidates for
   hand-implementation. To be decided before coding.
