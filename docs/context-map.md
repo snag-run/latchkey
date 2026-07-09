@@ -38,7 +38,7 @@ model + language, even though they're all "PM"):
 
 | Bounded context | Language / concerns | Depth here |
 |---|---|---|
-| **Tenancy & Arrears** | tenancy, lease terms, rent due, arrears, weeks-behind, notice, overstay; **arrears collections** (notices, NCAT/tribunal, termination) live here | **Deep** — `domain-model.md` |
+| **Tenancy & Arrears** | tenancy, lease terms, rent due, arrears, days-behind / periods-behind, notice, overstay; **arrears collections** (notices, NCAT/tribunal, termination) live here | **Deep** — `domain-model.md` |
 | **Maintenance / Work Orders** | tenant requests, work orders, tradies, owner approval | Named only |
 | **Inspections** | routine inspections, entry/exit condition reports | Named only |
 | **Compliance** | smoke alarms, safety checks, bond lodgement, certificates & due dates | Named only |
