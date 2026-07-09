@@ -17,6 +17,16 @@ DDD sorts subdomains by where modelling effort is worth spending:
 - **Supporting** — necessary, business-specific, not a differentiator; model lightly.
 - **Generic** — every business needs it; buy / off-the-shelf; don't model.
 
+> **Core ≠ critical.** The axis is *differentiation*, not *importance*. Trust
+> accounting is mission-critical (mishandle trust money and you lose your licence),
+> yet it's **Supporting**, not Core — it's legislated, done identically by every
+> agency, and buyable off the shelf (PropertyMe, Console). No landlord picks an
+> agency for its trust ledger. The test: *could I buy it, and would a customer
+> switch for a better one?* Core is where you can be **better**; trust accounting is
+> where you must merely be **compliant**. The differentiator here is tenancy/arrears
+> management (the tribunal-ready timeline), which is why **PM is Core, Accounts
+> Supporting** — even though we may still build Accounts deeply for our own reasons.
+
 ---
 
 ## The map
