@@ -1,0 +1,38 @@
+# Dependabot — version updates + security updates.
+#
+# Requires the repo-level toggles to be ON (these live in GitHub settings, not
+# this file): Dependency graph, Dependabot alerts, Dependabot security updates.
+#
+# Supply-chain floor: `cooldown` delays *routine* version PRs until a release
+# has aged a few days — catching the publish-then-yank attack window. Security
+# updates BYPASS the cooldown by design, so a real vuln patch still flows
+# immediately. (This is the "do we relax the floor for a vuln?" answer: you
+# don't — security skips it.)
+#
+# Commit prefixes follow Conventional Commits: shipping (production) deps use
+# `fix(deps)`, dev-only deps use `chore(deps-dev)`.
+version: 2
+
+updates:
+  # Elixir / Mix.
+  - package-ecosystem: "mix"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "fix"
+      prefix-development: "chore"
+      include: "scope"
+    cooldown:
+      default-days: 3
+      semver-major-days: 7
+    groups:
+      mix-development:
+        dependency-type: "development"
+        update-types: ["minor", "patch", "major"]
+      mix-production:
+        dependency-type: "production"
+        update-types: ["minor", "patch", "major"]
