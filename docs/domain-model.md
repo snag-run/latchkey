@@ -263,6 +263,13 @@ but allow**.
 
 - **Balance-as-truth.** The fold is a running `Money` balance: `Σ RentFellDue −
   Σ RentPaymentRecorded` (both signed). Negative = credit.
+- **Ledger presentation = double-entry (decided).** The tenant rent statement —
+  the tribunal exhibit — renders as a **two-column ledger**: `RentFellDue` is the
+  **debit** (charge), `RentPaymentRecorded` the **credit** (payment), running
+  balance = `Σ debits − Σ credits` (the same fold). A reversal reads as a **debit**
+  entry, not a "negative credit." The signed scalar above is just this ledger
+  collapsed to one number. Full double-entry (balancing contra entries) is
+  Accounts' native model — see §10 "Accounts → true double-entry".
 - **Two reads, deliberately divergent:**
   - `weeks_behind` — whole unpaid periods (FIFO, oldest first). A partial payment
     or small credit does **not** decrement it.
@@ -337,6 +344,18 @@ values. It's where small domain rules live, keeping the aggregate clean.
 - **Who builds what** — leaning "Claude drives", with the core learning bits
   (the event fold, the arrears projection, ACL-1) as candidates for
   hand-implementation. To be decided before coding.
+- **Accounts → true double-entry (directional goal).** Longer-term aim: model
+  Accounts as a real double-entry trust ledger — money *in* (receipt) and *out*
+  (reversal / eventually disbursement) as balancing entries — un-stubbing it
+  (§1 currently calls it a stub). Near-term stays the payment-facts edge; **build
+  toward it without foreclosing**. Additive over the existing log: Accounts already
+  produces the facts; double-entry is new read models + disbursement events. May
+  not be reached; direction is set.
+- **UNKNOWN / suspense matching (secondary/tertiary goal).** A read model + workflow
+  in **Accounts** to hold and cross-reference unmatched receipts, then reallocate
+  (reverse + fresh receive). Suspense is an **Accounts** entity, *never* a PM
+  tenancy — routing unmatched money through a dummy PM tenancy would re-pollute the
+  model ACL-1 exists to protect.
 
 ---
 
