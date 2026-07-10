@@ -54,7 +54,9 @@ time rather than all at once.
 - **Logical ownership is per-context.** Every event has exactly one owning
   context. A consumer **never folds another context's event directly** — it
   **translates at its ACL** into its own language first. The shared table is
-  *transport*; the boundary lives in the *translation*. **(decided)**
+  *transport*; the boundary lives in the *translation*. **(decided)** A translating
+  ACL that **emits** events (ACL-1) is a **stateful policy with its own checkpoint**,
+  *not* a side-effect-free projection — see §8 for its replay semantics.
 - **Upstream/downstream is per-fact, not a global rank.** Accounts is upstream
   *for payments*; PM is upstream *for the rent schedule*. Each context both
   produces some facts and consumes others.
@@ -121,7 +123,15 @@ access-control list.
 - lifecycle state (see state machine)
 - current `RentTerms` (derived — see §7)
 - `due_through` pointer (last due date booked)
-- running **balance** (`Money`; negative = credit) — needed for exit refund
+- **arrears fold** — enough to re-derive **FIFO oldest-unpaid** at decide-time. Two
+  equivalent shapes: (a) the **ordered charge sequence** (each `RentFellDue`'s
+  `due_date` + `amount`) alongside **Σ payments applied**, re-deriving FIFO on demand;
+  or (b) an **`oldest_unpaid_due_date` pointer** maintained directly, advanced as FIFO
+  periods clear. Either yields `oldest_unpaid_due_date` → `days_behind`, which the L7
+  gate needs (§5). A **scalar balance alone is lossy**: it collapses the schedule to
+  one number and can't recover *which* period is unpaid, so it can't drive the gate.
+  The running **balance** (`Money`, negative = credit; `Σ charges − Σ paid`) remains a
+  **view over this fold** for the exit refund — not the fold itself.
 - set of applied `source_payment_id`s (idempotency)
 
 **Structural finding:** tenancies are **independent** — there is **no `Property`
@@ -204,11 +214,19 @@ but allow**.
   shortens it — both consented).
 - **L7** — A **termination notice on arrears grounds** requires the tenant to be
   **≥14 days in arrears** — measured as **elapsed time**, `days_behind ≥ 14` (§7),
-  *not* the dollar amount owed. The arrears projection *gates* the command.
+  *not* the dollar amount owed. This is a **write-side invariant**: `decide` computes
+  `days_behind` from the aggregate's **own fold** (§4) and refuses the command — it is
+  **not** read off the async arrears projection. The projection may mirror the same
+  number for the exhibit, but the gate does not depend on it.
 - **L8** — Paying the arrears in full **— or entering and complying with an agreed
   repayment plan —** before the termination date **voids** the termination notice;
   the tenancy continues (a fresh notice may issue if they fall behind again). *(The
-  NSW "general guarantee" against termination for remedied arrears.)*
+  NSW "general guarantee" against termination for remedied arrears.)* **Caveat
+  (deliberate omission):** the guarantee is **not absolute** — a tribunal may still
+  order termination where the tenant has *frequently failed to pay* rent on time; that
+  tribunal finding is **out of scope** and not modelled. Note too that "comply with a
+  plan" is modelled here as a **clean void → `Active`**; whether it should instead be a
+  **conditional suspension** (a later breach revives the termination) is parked in §10.
 
 ### Accrual
 - **A1** — No accrual before commencement / before the first due date.
@@ -244,11 +262,15 @@ but allow**.
 
 - **Normal tenancy: step / in-advance.** The full period's rent falls due on the
   due date. One day late on a weekly cycle ⇒ owe the **whole week**, never 1/7.
-- **`RentFellDue` via lazy catch-up.** The aggregate advances its own clock: on
-  any interaction (payment, query), append a `RentFellDue` for each due date in
-  `(due_through, min(today, effective_end_date)]`, then move `due_through`.
-  Idempotent by the pointer; needs no global scheduler for correctness. An
-  optional nightly sweep only keeps the read model warm.
+- **`RentFellDue` via catch-up (command-time + sweep).** The aggregate advances its
+  own clock by appending a `RentFellDue` for each due date in
+  `(due_through, min(today, effective_end_date)]`, then moving `due_through`.
+  Idempotent by the pointer; needs no global scheduler for correctness. **Catch-up runs
+  only inside commands and the Oban sweep — never in a query.** Queries are **pure
+  folds**: they read the log, they never append to it. Consequently the **nightly sweep
+  is load-bearing, not cache-warming** — an untouched tenancy's timeline (and its
+  `days_behind`) is genuinely **stale until a command or the sweep advances it**, not
+  merely un-warmed.
   - *Heuristic:* **discrete change ⇒ event; linear ramp ⇒ derive.**
 - **Daily rate appears only at the boundary:** the single partial period at exit,
   and the overstay ramp. Everywhere else is whole periods at exact amounts.
@@ -283,8 +305,10 @@ but allow**.
 - **Three reads, deliberately divergent** (all from the same balance + schedule):
   - `days_behind` — **elapsed calendar days** from the oldest unpaid due date:
     `as_of − oldest_unpaid_due_date`. **Time-based and cycle-independent** — a large
-    balance does *not* accelerate it; only the clock does. **This is the read that
-    gates L7** (`days_behind ≥ 14`). Clearing the oldest unpaid period (FIFO) advances
+    balance does *not* accelerate it; only the clock does. **This is the quantity the
+    L7 gate tests** (`days_behind ≥ 14`) — but the gate computes it **write-side in
+    `decide`** from the aggregate fold (§4, §5 L7), *not* from this projection.
+    Clearing the oldest unpaid period (FIFO) advances
     `oldest_unpaid_due_date`, which **resets the clock** (dovetails with L8). *(decided:
     the NSW ground is time-elapsed, not amount owed — 8 days late owing "14 days' rent"
     is not defensible at tribunal.)*
@@ -300,10 +324,14 @@ but allow**.
 - `periods_behind` generally needs the schedule + FIFO; it collapses to
   `ceil(balance ÷ rent)` only when rent is constant.
 - **Projection (read model):** `{ tenancy_id, balance, days_behind, periods_behind,
-  oldest_unpaid_due_date, as_of }`. Derived, disposable, rebuildable from the log.
-  `days_behind` drives the **14-day legal arrears trigger** and *gates* the
-  `TerminationNoticeGiven` command (L7) — **time elapsed, not amount owed**; the read
-  model is a **precondition**, not just a report.
+  oldest_unpaid_due_date, as_of }`. Derived, disposable, rebuildable from the log —
+  and **report/exhibit only**. It does **not** gate any command: the L7 arrears gate is
+  a write-side invariant computed in `decide` (§5 L7), so an *async* projection can
+  never be the precondition for refusing `TerminationNoticeGiven` — a stale read must
+  not authorise a termination. *(Alternative considered: make just this projection
+  **inline/synchronous** with the command instead of moving the gate into the
+  aggregate. Weighed and set aside — the §4 fold already carries what `decide` needs,
+  so the gate lives write-side and the projection stays pure exhibit.)*
 - **Reversals** are just negative `RentPaymentRecorded` — the fold absorbs them
   with no special case.
 
@@ -317,10 +345,19 @@ Accounts.PaymentReceived { holder = tenancy_ref, amount, received_on, payment_id
     └─translate─▶ PM.RentPaymentRecorded { tenancy_id, amount, received_on, source_payment_id }
 Accounts.PaymentReversed  └─translate─▶ PM.RentPaymentRecorded { …, amount: negative }
 ```
+- **A replay-safe policy, not a projection.** ACL-1 has a **side effect** — it emits
+  `RentPaymentRecorded` — so it cannot be blindly re-run like a side-effect-free
+  projection. It keeps its **own checkpoint** over the Accounts stream and is
+  **idempotent on `source_payment_id`**. On a full-store replay it translates only
+  Accounts events **past its checkpoint**; the `RentPaymentRecorded` events it already
+  emitted are simply **re-folded** into the aggregate, never re-translated. This is the
+  one place the "consumers translate; projections are pure" discipline (§2) is
+  deliberately bent — the checkpoint is what makes the side effect replay-safe.
 - **Idempotent** on `source_payment_id`.
 - Fires **only for tenancy-attributed receipts**. `UNKNOWN`/suspense payments
   never cross the seam — PM's arrears is never polluted by unmatched money.
-- **Defensive:** reject a reversal that references a payment PM never recorded.
+- **Defensive:** reject a reversal that references a payment PM never recorded — see
+  §10 for the "not seen *yet*" vs "will *never* see" wrinkle once Accounts un-stubs.
 
 ### ACL-2 — Accounts consumes the schedule (PM → Accounts)
 ```
@@ -358,6 +395,18 @@ values. It's where small domain rules live, keeping the aggregate clean.
 - Snappy name for the "keys returned late" (Overstay) situation — TBD.
 - Exit-settlement event shape (`TenancySettled` / `RentChargeAdjusted`) — decided
   the *rules*, not the exact events; pin during implementation.
+- **Repayment plan: conditional suspension vs one-shot void (§5 L8, §4 SM).** The
+  general guarantee holds only *while the tenant keeps complying*; a breach revives the
+  termination. Should a plan introduce a **plan-active sub-state + `RepaymentPlanBreached`**
+  transition (back to `Ending`) rather than the clean void → `Active` L8 and the state
+  machine show today? Deferred — **to grill.**
+- **P2 reversal ordering: "not seen *yet*" vs "will *never* see" (§5 P2, §8 ACL-1).**
+  Today the single, totally-ordered store guarantees receipt-before-reversal, so
+  "reject a reversal PM never recorded" is safe. Once Accounts **un-stubs / goes
+  out-of-process**, a reversal arriving ahead of its receipt is mere reordering — yet
+  it looks **identical to a seam bug**. Distinguish *not-yet-arrived* (park/hold
+  pending) from *never-coming* (reject), e.g. via a watermark or a pending-reversals
+  holding area. Deferred — **to grill.**
 - Whether `RentTerms` is a standalone VO or bare aggregate fields — minor.
 - **Collections beyond the notice** — Tribunal (NCAT) escalation and non-arrears
   termination grounds are **out of scope**; the notice → void → (lapse) boundary is
@@ -385,9 +434,21 @@ values. It's where small domain rules live, keeping the aggregate clean.
 Concrete figures the model rests on, verified against NSW sources. This is a
 **simulation** — grounding is for realism, not legal advice.
 
-- **Arrears termination:** >14 days behind → a non-payment termination notice giving
-  **14 days** to vacate. Remedied by paying up **or** an agreed **repayment plan**
+- **Arrears termination (s88).** The statute: a non-payment termination notice "has no
+  effect unless the rent has ... remained unpaid ... for **not less than 14 days**
+  before the ... notice is given" — i.e. **≥ 14 days**, which is exactly what L7's
+  `days_behind ≥ 14` encodes (inclusive at 14). NSW Gov consumer material paraphrases
+  this loosely as "more than 14 days"; the **statute wording controls**. The notice
+  then gives the tenant **14 days** to vacate and must state they need not leave if they
+  pay all rent owing **or** enter and **fully comply with** an agreed **repayment plan**
   (the "general guarantee" — L8).
+- **Time, not amount (recorded rationale).** s88 counts *days the rent has remained
+  unpaid*, not *dollars owed*. Tenant-facing summaries blur this into "owe 14 days'
+  rent **or** be 14 days overdue"; we deliberately **reject the amount framing** and
+  read the ground as **time-elapsed only** (§7 `days_behind`). Someone 8 days late who
+  happens to owe "14 days' rent" is **not** 14 days in arrears, and the notice would
+  not stand — which is why the amount-based reads (`balance`, `periods_behind`) are
+  never the legal gate.
 - **Tenancy ends on vacant possession** (keys returned), *not* on the notice. No
   vacant possession by the date → landlord applies to **NCAT** for a termination
   order. (This is the statutory basis for `KeysReturned` = terminal.)
