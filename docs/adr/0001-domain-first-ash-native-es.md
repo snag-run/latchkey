@@ -4,7 +4,7 @@ Status: accepted
 
 Latchkey is first a **DDD / domain-modelling** exercise — the tenancy lifecycle, the
 arrears gate, the Accounts ↔ PM anti-corruption seam. **Event sourcing is a
-supporting implementation**, chosen because it makes the tamper-evident tribunal
+supporting implementation**, chosen because it makes the append-only, auditable tribunal
 timeline (domain-model.md §1) fall out almost for free. We build it **Ash-native via
 [AshCommanded](https://github.com/accountex-org/ash_commanded)** — a declarative
 CQRS/ES extension wrapping the **Commanded** library, with **Commanded's Postgres

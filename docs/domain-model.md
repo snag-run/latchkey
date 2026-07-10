@@ -51,7 +51,7 @@ time rather than all at once.
 ## 2. Architecture of the seam
 
 **Domain modelling is the first-class concern; event sourcing is the supporting
-implementation** that makes the tamper-evident timeline fall out almost for free.
+implementation** that makes the append-only, auditable timeline fall out almost for free.
 Built **Ash-native** — Ash 3 / AshPostgres, CQRS/ES via **AshCommanded** (the
 Commanded library + its Postgres EventStore as source of truth).
 The write model is genuinely event-sourced: state is **derived from the fold**,
