@@ -15,7 +15,10 @@ enough to serve as **evidence in a tribunal (NCAT) arrears case**. This is a
 learning **simulation**, not production: events are simulated and seeded, with Oban
 jobs advancing time to build histories realistically. The timeline *is* the event
 log's payoff — which is why the design leans on immutable, posted events and
-correction-by-compensation.
+correction-by-compensation. **Priority:** the domain model (the tenancy lifecycle,
+the arrears gate, the ACL seam) is the first-class deliverable; event sourcing is
+the *enabling* implementation — built Ash-native — not the goal itself (see §2 and
+ADR 0001).
 
 We model the **seam between two bounded contexts**:
 
@@ -47,7 +50,15 @@ time rather than all at once.
 
 ## 2. Architecture of the seam
 
-**Event sourcing, hand-rolled** (no framework — we want to feel the mechanics).
+**Domain modelling is the first-class concern; event sourcing is the supporting
+implementation** that makes the append-only, auditable timeline fall out almost for free.
+Built **Ash-native** — Ash 3 / AshPostgres, CQRS/ES via **AshCommanded** (the
+Commanded library + its Postgres EventStore as source of truth).
+The write model is genuinely event-sourced: state is **derived from the fold**,
+never a mutated status column — so **no `AshStateMachine`** (the §4 state machine
+lives on as domain rules over derived state, not a stored status). A hand-rolled,
+frameworkless ES core is a **parked, optional descent** (§10), not the spine.
+**(decided — see [ADR 0001](adr/0001-domain-first-ash-native-es.md))**
 
 - **One physical event store** (a single append-only Postgres table). Simplest
   thing that works; in-process, no separate services. **(decided)**
@@ -411,9 +422,13 @@ values. It's where small domain rules live, keeping the aggregate clean.
 - **Collections beyond the notice** — Tribunal (NCAT) escalation and non-arrears
   termination grounds are **out of scope**; the notice → void → (lapse) boundary is
   captured, the tribunal internals are not.
-- **Who builds what** — leaning "Claude drives", with the core learning bits
-  (the event fold, the arrears projection, ACL-1) as candidates for
-  hand-implementation. To be decided before coding.
+- **Who builds what / how** — built **Ash-native** (Ash 3 / AshPostgres, CQRS/ES via
+  AshCommanded + Commanded), David driving the domain modelling. See ADR 0001.
+- **Hand-rolled ES descent (optional, parked).** Dropping to a frameworkless ES
+  core — to feel the append / fold / optimistic-concurrency mechanics AshCommanded
+  (and Commanded, and even Go) absorb — is a *maybe*, not committed. If taken, it's a clean-slate rewrite
+  (that's the exercise), so the Ash build pays for **no speculative peelability
+  seams**. See ADR 0001.
 - **Accounts → true double-entry (directional goal).** Longer-term aim: model
   Accounts as a real double-entry trust ledger — money *in* (receipt) and *out*
   (reversal / eventually disbursement) as balancing entries — un-stubbing it
