@@ -1,6 +1,6 @@
 # 0001 — Domain-first, Ash-native event sourcing (AshCommanded)
 
-Status: accepted
+Status: **on hold** — the AshCommanded choice was rejected after a go/no-go smoke test; see [ADR 0002](0002-ash-commanded-nogo-foundation-parked.md). The domain-first framing below still stands; the *tool* does not.
 
 Latchkey is first a **DDD / domain-modelling** exercise — the tenancy lifecycle, the
 arrears gate, the Accounts ↔ PM anti-corruption seam. **Event sourcing is a
