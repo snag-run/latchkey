@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit configuration. https://docs.coderabbit.ai/getting-started/configure-coderabbit
+reviews:
+  # Enable the request-changes workflow so explicit top-level commands
+  # (`@coderabbitai approve`, `@coderabbitai resolve`) are accepted.
+  request_changes_workflow: true
+  auto_review:
+    # Review only when explicitly summoned with `@coderabbitai review`.
+    # Disables the automatic review on PR open as well as the incremental
+    # review on each push.
+    enabled: false
+    auto_incremental_review: false
