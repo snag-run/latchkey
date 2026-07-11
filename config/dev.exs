@@ -11,6 +11,16 @@ config :latchkey, Latchkey.Repo,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10
 
+# Commanded EventStore DB (separate from the Ecto/Ash DB above).
+config :latchkey, Latchkey.EventStore,
+  serializer: Commanded.Serialization.JsonSerializer,
+  username: "postgres",
+  password: "postgres",
+  hostname: "localhost",
+  database: "latchkey_eventstore_dev",
+  port: 5432,
+  pool_size: 5
+
 # For development, we disable any cache and enable
 # debugging and code reloading.
 #

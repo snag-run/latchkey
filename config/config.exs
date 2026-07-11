@@ -7,6 +7,16 @@
 # General application configuration
 import Config
 
+# Event-sourcing foundation (ADR 0003): raw Commanded + its Postgres EventStore.
+config :latchkey, ash_domains: [Latchkey.PropertyManagement]
+config :latchkey, event_stores: [Latchkey.EventStore]
+
+config :latchkey, Latchkey.CommandedApp,
+  event_store: [
+    adapter: Commanded.EventStore.Adapters.EventStore,
+    event_store: Latchkey.EventStore
+  ]
+
 # These enable behaviors that will become the default in the next major
 # version of Ash. Setting them now opts your application into the new
 # behavior and ensures a seamless upgrade. See the backwards compatibility

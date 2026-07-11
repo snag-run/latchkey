@@ -1,6 +1,9 @@
 import Config
 config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
 
+# Don't boot Commanded in the sandboxed suite; integration tests start it explicitly.
+config :latchkey, start_commanded: false
+
 # Configure your database
 #
 # The MIX_TEST_PARTITION environment variable can be used
@@ -13,6 +16,17 @@ config :latchkey, Latchkey.Repo,
   database: "latchkey_test#{System.get_env("MIX_TEST_PARTITION")}",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
+
+# Commanded EventStore DB for integration tests (not sandboxed — Commanded runs
+# outside the Ecto sandbox; integration tests start the app and use unique streams).
+config :latchkey, Latchkey.EventStore,
+  serializer: Commanded.Serialization.JsonSerializer,
+  username: "postgres",
+  password: "postgres",
+  hostname: "localhost",
+  database: "latchkey_eventstore_test#{System.get_env("MIX_TEST_PARTITION")}",
+  port: 5432,
+  pool_size: 2
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.

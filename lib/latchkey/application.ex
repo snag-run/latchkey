@@ -7,21 +7,33 @@ defmodule Latchkey.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      LatchkeyWeb.Telemetry,
-      Latchkey.Repo,
-      {DNSCluster, query: Application.get_env(:latchkey, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: Latchkey.PubSub},
-      # Start a worker by calling: Latchkey.Worker.start_link(arg)
-      # {Latchkey.Worker, arg},
-      # Start to serve requests, typically the last entry
-      LatchkeyWeb.Endpoint
-    ]
+    children =
+      [
+        LatchkeyWeb.Telemetry,
+        Latchkey.Repo,
+        {DNSCluster, query: Application.get_env(:latchkey, :dns_cluster_query) || :ignore},
+        {Phoenix.PubSub, name: Latchkey.PubSub}
+      ] ++
+        commanded_children() ++
+        [
+          # Start to serve requests, typically the last entry
+          LatchkeyWeb.Endpoint
+        ]
 
     # See https://elixir.hexdocs.pm/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Latchkey.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  # The event-sourcing write side. Disabled in :test (see config/test.exs) so the
+  # sandboxed suite doesn't boot Commanded; integration tests start it explicitly.
+  defp commanded_children do
+    if Application.get_env(:latchkey, :start_commanded, true) do
+      [Latchkey.CommandedApp, Latchkey.PropertyManagement.ArrearsProjector]
+    else
+      []
+    end
   end
 
   # Tell Phoenix to update the endpoint configuration
