@@ -40,11 +40,16 @@ first-class path.
 *payment / receipt / money*; PM speaks *arrears / weeks behind / balance*. The
 translation is the anti-corruption layer.
 
-**Simulation.** There is no real Accounts or bank. A **simulator** is the event
-source: a tenant-behaviour engine (pays on time / short / misses) emits
-`PaymentReceived` facts through ACL-1, and **Oban jobs advance simulated time** —
-driving `RentFellDue` catch-up and the arrears trigger — so timelines accrue over
-time rather than all at once.
+**Simulation (see [ADR 0005](adr/0005-simulation-and-time-model.md)).** There is no
+real Accounts or bank. The simulation drives exactly two things — **time** and **the
+tenant**; **the agent/agency is the human end-user** (issue notice, void, agree a
+plan — none of it simulated). A **tenant-behaviour engine** (deterministic archetypes:
+pays on time / late / short / misses) emits `PaymentReceived` facts **through ACL-1**,
+and a **daily Oban sweep** advances catch-up (`RentFellDue`) in **wall-clock** time —
+there is no separate sim-clock; "now" is `Date.utc_today()`. The **arrears trigger**
+is *eligibility surfacing* (a lit-up affordance the user may act on), **not** an
+auto-issued notice. Backhistory is **seeded** (backdated events), so timelines accrue
+over time rather than all at once.
 
 ---
 
@@ -104,15 +109,15 @@ access-control list.
 | `RentScheduleChanged` | `tenancy_id, effective_from, new_amount, new_cycle?` | Mid-lease increase; **may be backdated** (see §6) |
 | `RentFellDue` | `tenancy_id, due_date, amount, period_from, period_to` | Step tick, via lazy catch-up; **carries the amount** |
 | `RentPaymentRecorded` | `tenancy_id, amount, received_on, source_payment_id` | **Output of ACL-1**; signed (reversal ⇒ negative) |
-| `RentChargeAdjusted` **(proposal)** | `tenancy_id, period, delta, reason` | Compensating entry for a backdated rate change |
+| `RentChargeAdjusted` **(deferred)** | — | **Retired as a delta event** (ADR 0004). Backdated corrections are rare and deferred to the rent-increase slice; when built they use **reverse+repost** (reverse the frozen ticks, re-post corrected), not a delta |
 | `NoticeToVacateGiven` | `tenancy_id, elected_vacate_date, given_on` | **Tenant-initiated** end |
 | `VacateDateAmended` | `tenancy_id, new_vacate_date, amended_on` | Moves the effective end date; **requires landlord approval** |
 | `TerminationNoticeGiven` | `tenancy_id, grounds, termination_date, given_on` | **Landlord/agent-initiated**; grounds = arrears (≥14 days). Sets an effective end date |
 | `TerminationNoticeVoided` | `tenancy_id, reason, voided_on` | Arrears remedied (paid **or** repayment plan) before the date ⇒ notice void, tenancy continues |
 | `RepaymentPlanAgreed` **(proposal)** | `tenancy_id, terms, agreed_on` | An agreed catch-up plan; complying with it **stays** termination |
 | `EarlyReleaseAgreed` | `tenancy_id, effective_date` | Landlord consents to end liability early (shortens) |
-| `KeysReturned` | `tenancy_id, on_date` | Possession recovered; terminal trigger + settlement |
-| `TenancySettled` **(proposal)** | `tenancy_id, refund?, overstay_charge?` | Final settlement computed at `KeysReturned` |
+| `KeysReturned` | `tenancy_id, effective_date (keys date), recorded_on` | **Input fact** — possession recovered; triggers settlement (ADR 0004) |
+| `TenancySettled` | `tenancy_id, effective_date, recorded_on, final_balance_cents` (signed: −refund / +debt) | **Reckoning** — pure terminal marker, carries no money of its own; reaches Terminal (ADR 0004) |
 
 ### Accounts (edge / stub)
 
@@ -124,6 +129,18 @@ access-control list.
 > Reallocation is **not** a distinct event: it's `PaymentReversed` on the wrong
 > holder **plus** a fresh `PaymentReceived` on the right one. Correction by
 > compensation, never mutation — the same discipline as PM's adjustments.
+
+**Bitemporal envelope (ADR 0004, amended by [ADR 0005](adr/0005-simulation-and-time-model.md)).**
+Every event carries `effective_date` (when the fact is true in the tenancy's world)
+and `recorded_on` (when it was booked — **wall-clock for live events, seeder-assigned
+for history**; distinct from the store's `created_at` metadata, which #16's hash
+preimage excludes). The payload column lists each event's *domain-specific* fields;
+the envelope pair is uniform and omitted for brevity. Envelope **direction is
+per-event-kind**: **notices forward-date** (`effective ≥ recorded` — a pre-entered
+notice kicks in later); **accrual catch-up ticks lag** (`recorded ≥ effective` — the
+rent fell due in the past, the sweep just hadn't booked it: *lazy accrual, not
+backdating*); **true backdating** (`effective < recorded` *and* correcting posted
+events) is rare and deferred (§6, §10).
 
 ---
 
@@ -240,18 +257,24 @@ but allow**.
   tribunal finding is **out of scope** and not modelled. Note too that "comply with a
   plan" is modelled here as a **clean void → `Active`**; whether it should instead be a
   **conditional suspension** (a later breach revives the termination) is parked in §10.
+- **L9** — `KeysReturned` requires an **effective end date** (tenancy in `Ending` /
+  `Overstay`); it reaches **Terminal** and fires **at most once** (L3 keeps Terminal
+  final). Settlement (`TenancySettled`) is computed exactly once, at keys-return.
+  *(ADR 0004.)*
 
 ### Accrual
 - **A1** — No accrual before commencement / before the first due date.
-- **A2** — `RentFellDue` (step) **never** fires past the effective end date. Past
-  the vacate date, accrual continues **only** as the daily Overstay charge, and
-  **only** while keys are not returned.
+- **A2** — `RentFellDue` (step) **never** fires past the effective end date: full
+  periods accrue until one no longer fits before E, then the boundary period is
+  **pro-rated daily to E**. Past the vacate date, accrual continues **only** as the
+  daily Overstay charge, and **only** while keys are not returned.
 - **A3** — At most **one** `RentFellDue` per due date (guaranteed by the
   `due_through` pointer).
-- **A4** — A rent change **may be backdated** (bitemporality: *effective* date vs
-  *recorded* date). It must **not** rewrite past ticks — it emits
-  `RentChargeAdjusted` (compensation). **Soft guard:** warn if no corresponding
-  notice event exists, but allow override.
+- **A4** — A rent change is normally **forward-dated** (*effective* ≥ *recorded*).
+  A **backdated** change must **not** rewrite past ticks — it corrects by
+  **reverse+repost** (reverse the frozen ticks, re-post corrected), never a delta.
+  **Deferred** to the rent-increase slice (ADR 0004). **Soft guard (when built):**
+  warn if no corresponding notice event exists, but allow override.
 
 - **A5** — A rent increase happens **at most once per 12 months** and needs **≥60
   days written notice** (NSW, all tenancy types since 31 Oct 2024).
@@ -284,23 +307,39 @@ but allow**.
   is load-bearing, not cache-warming** — an untouched tenancy's timeline (and its
   `days_behind`) is genuinely **stale until a command or the sweep advances it**, not
   merely un-warmed.
+  - *The sweep is the backstop for **non-payers** ([ADR 0005](adr/0005-simulation-and-time-model.md)).*
+    `decide_payment` already catches up before recording, so a **paying tenant catches
+    itself up**; only tenancies that **stopped paying** never get a command, and an
+    unbooked due date reads as paid-up (`oldest_unpaid = nil`). The sweep exists to
+    **make that silence visible**. `days_behind` is then computed **on read** as
+    `today − oldest_unpaid_due_date` — no stored counter to re-stamp.
   - *Heuristic:* **discrete change ⇒ event; linear ramp ⇒ derive.**
 - **Daily rate appears only at the boundary:** the single partial period at exit,
   and the overstay ramp. Everywhere else is whole periods at exact amounts.
-- **Exit settlement (decided rules; event shape is a proposal):** full periods
-  stay weekly; the period containing the exit date is billed **daily to the exact
-  exit day**; prepaid excess is **refunded**. Overstay extends the daily ramp to
-  `KeysReturned` and **consumes any credit first** (automatic under
-  balance-as-truth). Computed at `KeysReturned`.
+- **Exit settlement (finalised — ADR 0004):** **full rent periods until a full
+  period no longer fits before the effective end date E, then the remainder is
+  pro-rated daily to E** — lazily, as it accrues (E is known forward via the notice
+  period, so the boundary period is never charged whole and clawed back). Overstay
+  (keys back after E) is a **single crystallised `RentFellDue`** for the `E → keys`
+  span at the daily rate, emitted at `KeysReturned`; it **consumes any credit first**
+  automatically under balance-as-truth. The reckoning is `TenancySettled` — a **pure
+  terminal marker** carrying the signed `final_balance_cents` (negative = refund owed,
+  positive = debt); the refund is **declared, not disbursed** (money-out is an Accounts
+  concern, deferred — §10), and the balance **persists** in Terminal, the mirror of
+  "balance persists as debt".
 - **What "overstay" is (NSW):** keys not returned = **no vacant possession**, so the
   tenancy *continues* accruing until `KeysReturned`. Daily charging here is a
   **practice/lease-terms convention** — kept, because the boundary partial period
   prorates to daily anyway — **not** a statutory *occupation fee* (that term means
   *goods left behind*, and daily occupation rent is actually prohibited, so we avoid
   it).
-- **Backdating (bitemporality).** A legitimate rent change may be *effective* in
-  the past but *recorded* now. Past `RentFellDue` ticks are frozen; the change
-  emits `RentChargeAdjusted` deltas. Never mutate history.
+- **Backdating (bitemporality) — reframed, deferred (ADR 0004).** Rent changes are
+  normally **forward-dated**: a notice is *recorded* when served and *effective* when
+  it kicks in (§11, ≥60 days), so no past tick is disturbed. A genuine **backdated**
+  change (*effective* in the past, *recorded* now) is rare and **deferred to the
+  rent-increase slice**; when built it corrects by **reverse+repost** (reverse the
+  frozen ticks, re-post corrected ones — never a delta, never mutation), the same
+  discipline as payment reallocation (§3).
 
 ---
 
@@ -406,13 +445,23 @@ values. It's where small domain rules live, keeping the aggregate clean.
 ## 10. Open / parked
 
 - Snappy name for the "keys returned late" (Overstay) situation — TBD.
-- Exit-settlement event shape (`TenancySettled` / `RentChargeAdjusted`) — decided
-  the *rules*, not the exact events; pin during implementation.
+- ~~Exit-settlement event shape (`TenancySettled` / `RentChargeAdjusted`)~~ —
+  **RESOLVED (ADR 0004):** `KeysReturned` (input fact) + `TenancySettled` (pure
+  terminal marker, signed `final_balance_cents`); overstay is a crystallised
+  `RentFellDue`; refund declared-not-disbursed. `RentChargeAdjusted` retired as a delta
+  and **deferred** to the rent-increase slice as a reverse+repost correction.
+  Bitemporal `{effective_date, recorded_on}` envelope adopted on events.
 - **Repayment plan: conditional suspension vs one-shot void (§5 L8, §4 SM).** The
   general guarantee holds only *while the tenant keeps complying*; a breach revives the
   termination. Should a plan introduce a **plan-active sub-state + `RepaymentPlanBreached`**
   transition (back to `Ending`) rather than the clean void → `Active` L8 and the state
   machine show today? Deferred — **to grill.**
+- **Reactive / self-aware tenant behaviour ([ADR 0005](adr/0005-simulation-and-time-model.md)).**
+  The behaviour engine ships **deterministic archetypes** — stateless jitter + scripted
+  irregularity (a miss-then-double-pay is *authored*, not simulated). A tenant that
+  **reads its own arrears** and decides to catch up (or that **complies with a
+  repayment plan** the user agreed) is a **feedback loop** — the same category as the
+  repayment-plan sub-state above. Deferred; both wait on the same enrichment.
 - **P2 reversal ordering: "not seen *yet*" vs "will *never* see" (§5 P2, §8 ACL-1).**
   Today the single, totally-ordered store guarantees receipt-before-reversal, so
   "reject a reversal PM never recorded" is safe. Once Accounts **un-stubs / goes
