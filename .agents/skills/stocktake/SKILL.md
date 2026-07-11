@@ -30,13 +30,13 @@ Each stage is detected from an artifact that already exists. The **PRD is the sp
 ls docs/prd/ docs/adr/ 2>/dev/null; ls docs/domain-model.md docs/context-map.md 2>/dev/null
 # Funnel labels — counts and the issues behind them (labels that don't exist just return empty)
 for L in proposed ready-for-agent in-run-plan hitl; do
-  echo "== $L =="; gh issue list --state open --label "$L" --json number,title --jq '.[] | "  #\(.number) \(.title)"'
+  echo "== $L =="; gh issue list --state open --label "$L" --limit 500 --json number,title --jq '.[] | "  #\(.number) \(.title)"'
 done
-# Open PRs in flight (with linked issues via "Closes #N" in body)
-gh pr list --state open --json number,title,headRefName,isDraft,statusCheckRollup,body \
+# Open PRs in flight — keep `body` so the "Closes #N" links stay available for PR→issue mapping
+gh pr list --state open --limit 200 --json number,title,headRefName,isDraft,statusCheckRollup,body \
   --jq '.[] | "#\(.number) [\(if .isDraft then "draft" else "ready" end)] \(.title)"'
 # Recently completed
-gh pr list --state merged --limit 20 --json number,title,mergedAt --jq '.[] | "#\(.number) \(.title)"'
+gh pr list --state merged --limit 100 --json number,title,mergedAt --jq '.[] | "#\(.number) \(.title)"'
 ```
 
 Read each `docs/prd/*.md` enough to know its name, the feature it covers, and whether it has implementation/ADR sections filled (stage 2 vs 3). Map issues to a PRD/ADR via their body references or shared naming. Don't deep-read every issue — titles + labels are usually enough.

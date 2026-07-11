@@ -17,7 +17,7 @@ Turn a batch of **independent**, ready-for-agent issues into a queue of merge-re
 Default candidate set = open issues labeled **`ready-for-agent`** that aren't claimed by a run plan and don't need a human:
 
 ```bash
-gh issue list --state open --label ready-for-agent \
+gh issue list --state open --label ready-for-agent --limit 500 \
   --json number,title,labels \
   --jq '.[] | select((.labels|map(.name)) as $l | ($l|index("in-run-plan")|not) and ($l|index("hitl")|not)) | "\(.number)\t\(.title)"'
 ```

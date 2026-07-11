@@ -19,7 +19,8 @@ git worktree list
 For each worktree, capture: current branch, ahead/behind `origin/main`, tracked vs untracked change counts, and the commits ahead of main.
 
 ```bash
-for wt in $(git worktree list --porcelain | awk '/^worktree /{print $2}'); do
+# Read paths line-safe (a worktree path may contain spaces).
+git worktree list --porcelain | awk '/^worktree /{print substr($0, 10)}' | while IFS= read -r wt; do
   br=$(git -C "$wt" branch --show-current)
   ahead=$(git -C "$wt" rev-list --count origin/main..HEAD 2>/dev/null)
   behind=$(git -C "$wt" rev-list --count HEAD..origin/main 2>/dev/null)
@@ -30,19 +31,19 @@ for wt in $(git worktree list --porcelain | awk '/^worktree /{print $2}'); do
 done
 ```
 
-Then pull the PR picture (branches are squash-merged by convention, so merged branches are NOT ancestors of main — use the PR list, not `git branch --merged`):
+Then pull the PR picture (branches are squash-merged by convention, so merged branches are NOT ancestors of main — use the PR list, not `git branch --merged`). Capture the merged PR's **head SHA** (`headRefOid`), not just its branch name — you need it in §2:
 
 ```bash
-gh pr list --state open   --limit 50 --json number,title,headRefName,isDraft,mergeable
-gh pr list --state merged --limit 30 --json number,title,headRefName \
-  --jq '.[] | "\(.number) \(.headRefName) — \(.title)"'
+gh pr list --state open   --limit 200 --json number,title,headRefName,isDraft,mergeable
+gh pr list --state merged --limit 200 --json number,title,headRefName,headRefOid \
+  --jq '.[] | "\(.number) \(.headRefName) @\(.headRefOid[0:9]) — \(.title)"'
 ```
 
 ## 2. Categorize each worktree
 
 Match each lane's branch against the PR lists:
 
-- **Merged branch** (its `headRefName` appears in the *merged* PR list) → **resync to main** (§3). Its authored work is already on main.
+- **Merged branch** — its `headRefName` appears in the *merged* PR list **and** the lane's current tip (`git -C "$wt" rev-parse HEAD`) equals that PR's `headRefOid`. Only then is the authored work fully on main → **resync to main** (§3). If the name matches but the tip has moved past the merged SHA, the lane has **new post-merge commits** — treat it as in-flight (push / draft-PR, §5), never reset. The §3 delta check is the backstop, but match the SHA first.
 - **Open PR, unpushed commits** (ahead of `origin/<branch>`) → the in-flight work needs a **push**. Surface it; don't force-resync.
 - **In-flight, no PR, has uncommitted or unpushed work** → candidate for a **draft PR** or at least a commit so it survives. **Never discard.** Recommend, then act only on confirmation.
 - **Stale / obsolete / superseded** (unmerged, far behind, and its diff would *revert* recent main work) → **flag for discard with the rationale**; do not auto-delete unmerged branches.
@@ -57,7 +58,8 @@ A recurring corruption appears as two commits authored `Test <t@example.com>` ti
 A worktree showing everything as untracked is usually just stale + corrupted, but **prove it holds no unique authored work** before resetting. Use a throwaway index so you don't mutate the real one:
 
 ```bash
-idx=$(mktemp)
+idx="$(mktemp -u)"                       # a path, not an empty file — read-tree writes a valid index here
+trap 'rm -f "$idx"' RETURN               # clean up even on early return/error
 GIT_INDEX_FILE="$idx" git -C "$wt" read-tree origin/main
 GIT_INDEX_FILE="$idx" git -C "$wt" add -A
 GIT_INDEX_FILE="$idx" git -C "$wt" diff --cached --stat origin/main   # delta vs main
