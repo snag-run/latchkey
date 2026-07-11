@@ -35,7 +35,7 @@ Launch the agents **in a single message** (multiple Agent tool calls) so they ru
 > 1. `gh issue view N` — read the full issue and acceptance criteria.
 > 2. Branch off fresh `origin/main`: `git fetch origin && git checkout -b <type>/N-<slug> origin/main`. Confirm worktree + branch first.
 > 3. Implement the smallest tracer-bullet vertical slice that satisfies the issue. Add regression tests.
-> 4. Run the full local gate: `mix precommit` (compile --warnings-as-errors, deps.unlock --unused, format, test). This repo has no CI, so the local gate is the whole gate. Fix everything red.
+> 4. Run the full local gate: `mix precommit` (audits, compile --warnings-as-errors, format check, credo --strict, sobelow, tests + coverage floor). It's enforced by the `.githooks/pre-push` hook; this repo has no CI, so the local gate is the whole gate. Fix everything red; never lower the coverage floor.
 > 5. Push once. Open a PR with `Closes #N` (repeat `Closes` per issue if it closes several). **No** `Co-Authored-By` / "Generated with" trailer.
 > 6. Trigger review: comment `@coderabbitai review` (auto-review is off repo-wide). Babysit to green — address each comment or skip with justification, reply in-thread, resolve.
 > 7. **Do not merge.** Report back: issue #, branch, PR URL, review status, and any blocker or major decision that needs David.

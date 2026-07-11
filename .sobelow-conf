@@ -1,0 +1,13 @@
+# Sobelow configuration. Run with `mix sobelow --config`.
+[
+  verbose: false,
+  private: false,
+  skip: true,
+  exit: "low",
+  threshold: "low",
+  # Config.CSP: no Content-Security-Policy yet. Deferred deliberately — a real
+  # CSP needs per-asset tuning (LiveView socket, esbuild/tailwind, heroicons)
+  # and a wrong policy silently breaks the dashboard. Tracked as follow-up.
+  ignore: ["Config.CSP"],
+  ignore_files: []
+]
