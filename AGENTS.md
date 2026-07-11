@@ -2,6 +2,32 @@ This is a web application written using the Phoenix web framework.
 
 > **Editing this file:** `CLAUDE.md` is a symlink to `AGENTS.md` — edit `AGENTS.md` (the real target), and the change reflects in both. Likewise the skills under `.claude/skills/<name>` are symlinks to `.agents/skills/<name>` (the canonical, agent-agnostic source); edit the files under `.agents/skills/`.
 
+## Planning workflow (SDLC)
+
+Non-trivial features move through a staged flow before implementation, each
+stage producing a durable doc the next stage builds on:
+
+1. **Brief** — `grill-brief` → `docs/brief/<slug>.md`. The *why*: problem,
+   users, alternatives, cut-line, success criteria, and assumptions to test.
+2. **Spec** — `grill-spec` (interactive) or `to-spec` (no-interview synthesis)
+   → `docs/spec/<slug>.md`. The *how*: solution, user stories, and
+   implementation + testing decisions; draws its problem/stories from the brief.
+3. **Tickets** — `to-tickets` → tracer-bullet vertical slices with blocking
+   edges, sized by breadth and tagged HITL/AFK, published to the tracker.
+4. **Run plan** — `to-run-plan` → orchestrates the tickets into merge-gated
+   waves for multi-agent execution.
+
+Decision & doc homes:
+
+- Glossary / ubiquitous language → `CONTEXT.md` (repo root).
+- Cross-cutting, durable decisions → an ADR in `docs/adr/`; feature-scoped
+  decisions → the spec's *Implementation Decisions* section; project-wide
+  terms → `CONTEXT.md`.
+
+Small changes skip the flow — it earns its keep on features big enough to
+warrant a written why/how. All docs are created lazily, when the first
+decision in them resolves.
+
 ## Project guidelines
 
 - Use `mix precommit` alias when you are done with all changes and fix any pending issues. It runs the full local gate (dep/hex audits, compile-as-errors, format check, `credo --strict`, `sobelow`, tests under a coverage floor) and is enforced before every push by `.githooks/pre-push` (wired per-clone by `mix setup`). Emergency bypass: `SKIP_PREPUSH=1 git push`
