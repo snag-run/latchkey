@@ -68,7 +68,7 @@ fi
 run_elixir=0
 if [ "$force_all" = "1" ]; then
   run_elixir=1
-elif grep -qE '(^|/)(mix\.(exs|lock)|\.formatter\.exs)$|\.exs?$|^(lib|test|config|priv)/' <<<"$changed"; then
+elif grep -qE '(^|/)(mix\.(exs|lock)|\.formatter\.exs|\.sobelow-conf|coveralls\.json|\.credo\.exs)$|\.exs?$|^(lib|test|config|priv)/' <<<"$changed"; then
   run_elixir=1
 fi
 
