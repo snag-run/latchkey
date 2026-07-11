@@ -2,6 +2,10 @@ name: CI
 
 on:
   pull_request:
+    # Include ready_for_review: the `test` job skips draft PRs, and the default
+    # pull_request types (opened/synchronize/reopened) don't fire when a draft is
+    # promoted — without this, a drafted PR could merge with `test` never run.
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
@@ -25,7 +29,10 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
+      # No git token needed after checkout; paths-filter uses the API token.
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: dorny/paths-filter@v4.0.1
         id: filter
         with:
@@ -70,7 +77,10 @@ jobs:
       MIX_ENV: test
 
     steps:
+      # This job runs PR-controlled Mix code; don't leave the token in git config.
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Elixir/OTP
         uses: erlef/setup-beam@v1
@@ -101,18 +111,24 @@ jobs:
         run: mix precommit
 
   # Required status check. Always runs so it reports even on docs-only changes;
-  # fails only if the test job actually failed (skipped/success both pass).
+  # fails if either dependency failed. `test` legitimately reports `skipped`
+  # (docs-only / draft) which passes — but if `changes` itself fails, `test` is
+  # also skipped, so we must gate on both results, not just `test`.
   ci:
     name: ci
     needs: [changes, test]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Gate on test result
+      - name: Gate on dependency results
         run: |
-          result="${{ needs.test.result }}"
-          if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
-            echo "test job did not pass (result: $result)"
-            exit 1
-          fi
-          echo "CI passed (test result: $result)"
+          changes="${{ needs.changes.result }}"
+          test="${{ needs.test.result }}"
+          for dep in "changes=$changes" "test=$test"; do
+            result="${dep#*=}"
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              echo "${dep%=*} job did not pass (result: $result)"
+              exit 1
+            fi
+          done
+          echo "CI passed (changes: $changes, test: $test)"
