@@ -111,7 +111,7 @@ defmodule Latchkey.PropertyManagement.Tenancy do
 
   # ── Decisions (execute) — {:ok, [event]} | {:error, reason} ──────────────────
 
-  def decide_commence(%State{status: :pending}, cmd) do
+  def decide_commence(%State{status: :pending}, %{cycle: :weekly} = cmd) do
     {:ok,
      [
        %{
@@ -123,6 +123,9 @@ defmodule Latchkey.PropertyManagement.Tenancy do
        }
      ]}
   end
+
+  # Slice supports weekly accrual only; refuse cycles we'd silently mischarge.
+  def decide_commence(%State{status: :pending}, _cmd), do: {:error, :unsupported_cycle}
 
   # L2 — a tenancy commences at most once.
   def decide_commence(%State{}, _cmd), do: {:error, :already_commenced}

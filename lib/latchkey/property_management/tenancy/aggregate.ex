@@ -101,7 +101,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
       type: :tenancy_commenced,
       tenancy_id: e.tenancy_id,
       rent_amount_cents: e.rent_amount_cents,
-      cycle: to_atom(e.cycle),
+      cycle: decode_cycle(e.cycle),
       first_due_date: to_date(e.first_due_date)
     }
   end
@@ -122,7 +122,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
   defp to_normalized(%E.TerminationNoticeGiven{} = e) do
     %{
       type: :termination_notice_given,
-      grounds: to_atom(e.grounds),
+      grounds: decode_grounds(e.grounds),
       termination_date: to_date(e.termination_date),
       given_on: to_date(e.given_on)
     }
@@ -131,6 +131,8 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
   defp to_date(%Date{} = d), do: d
   defp to_date(s) when is_binary(s), do: Date.from_iso8601!(s)
 
-  defp to_atom(a) when is_atom(a), do: a
-  defp to_atom(s) when is_binary(s), do: String.to_existing_atom(s)
+  # Decode the fixed vocabularies explicitly — no dynamic atom conversion of
+  # persisted strings. Unknown values crash the replay loudly rather than silently.
+  defp decode_cycle(c) when c in [:weekly, "weekly"], do: :weekly
+  defp decode_grounds(g) when g in [:arrears, "arrears"], do: :arrears
 end

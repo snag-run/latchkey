@@ -69,6 +69,16 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
              })
   end
 
+  test "refuses an unsupported (non-weekly) cycle" do
+    assert {:error, :unsupported_cycle} =
+             Agg.execute(%Agg{}, %C.CommenceTenancy{
+               tenancy_id: "t1",
+               rent_amount_cents: 250_000,
+               cycle: :monthly,
+               first_due_date: ~D[2026-01-05]
+             })
+  end
+
   test "L2 refuses a second commence" do
     assert {:error, :already_commenced} =
              Agg.execute(commenced_agg(), %C.CommenceTenancy{
