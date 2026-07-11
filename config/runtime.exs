@@ -50,9 +50,15 @@ if config_env() == :prod do
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
+  # Fly's Postgres requires TLS (it rejects plaintext with sslmode=require).
+  # verify_none: Fly terminates TLS with an internal cert that isn't in the
+  # public CA bundle, and traffic stays on Fly's private 6PN network. Harden
+  # later by pinning the cluster CA: ssl: [cacertfile: "/path/to/ca.crt"].
+  db_ssl = [verify: :verify_none]
+
   config :latchkey, Latchkey.Repo,
-    # ssl: true,
     url: database_url,
+    ssl: db_ssl,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
     # For machines with several cores, consider starting multiple pools of `pool_size`
     # pool_count: 4,
@@ -63,6 +69,7 @@ if config_env() == :prod do
   config :latchkey, Latchkey.EventStore,
     url: database_url,
     schema: "event_store",
+    ssl: db_ssl,
     pool_size: String.to_integer(System.get_env("EVENTSTORE_POOL_SIZE") || "5"),
     socket_options: maybe_ipv6
 
