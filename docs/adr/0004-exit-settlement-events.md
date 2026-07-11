@@ -75,11 +75,12 @@ and the double-entry-native shape. Nothing here depends on it.
 
 Every event carries a uniform pair: `effective_date` (when the fact is true in the
 tenancy's world) and `recorded_on` (when it was booked). `recorded_on` is **simulated**
-time — deliberately distinct from Commanded's EventStore `created_at` metadata, which
-is real wall-clock time and is excluded from the #16 hash preimage. **Backdated**
-(`effective < recorded` *and* correcting posted events) is the rare deferred case.
-Uniform (rather than per-event date names) so the timeline projection (#5) can render
-effective-vs-recorded without special-casing each event.
+time (the Oban-advanced clock, issue #4) — deliberately distinct from Commanded's
+EventStore `created_at` metadata, which is real wall-clock time and is excluded from
+the #16 hash preimage. The common relationship is **forward-dated** (`effective >
+recorded`: a pre-entered rent-increase notice); **backdated** (`effective < recorded`)
+is the rare deferred case. Uniform (rather than per-event date names) so the timeline
+projection (#5) can render effective-vs-recorded without special-casing each event.
 
 ### 6. Refund is declared, not disbursed
 

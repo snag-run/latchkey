@@ -118,8 +118,13 @@ recorded`); **accrual ticks lag** (`recorded ≥ effective`); **true backdating*
 
 A daily Oban cron, per live tenancy, dispatches `CatchUp{as_of: today}`, booking the
 `RentFellDue`s owed through `min(today, effective_end_date)` and advancing
-`due_through`. Idempotent by the pointer, so double-runs are harmless. **It never
-issues notices** (decision 1).
+`due_through`. Idempotent by the pointer, so double-runs are harmless — and the
+pointer's idempotency is only *safe under concurrency* because **Commanded serializes
+commands per aggregate instance**: two overlapping sweeps for the same tenancy route to
+the same aggregate process and run in sequence, so the second sees the advanced
+`due_through` and emits nothing. (Were dispatch ever parallelised per stream, this
+would instead need optimistic-concurrency retry on the expected-version conflict.) **It
+never issues notices** (decision 1).
 
 Its essential job is **making silence visible, not warming a cache.** `decide_payment`
 already calls `catch_up_events` before recording a payment, so a **paying tenant
@@ -137,7 +142,9 @@ Lean toward per-tenancy child jobs for retry isolation and per-tenancy observabi
 ### 6. `days_behind` is computed on read, as-of today
 
 Store only `oldest_unpaid_due_date` (event-driven); derive `days_behind =
-Date.utc_today() − oldest_unpaid` **at query time**. `oldest_unpaid` *doesn't move* as
+Clock.today() − oldest_unpaid` **at query time** (Sydney, decision 2 — *not*
+`Date.utc_today()`, whose boundary drift is the whole reason decision 2 exists).
+`oldest_unpaid` *doesn't move* as
 a tenant keeps missing (new misses grow the *balance*, not the pointer), so
 `days_behind` climbs **purely from the clock, with no new event** — an idle arrears
 tenant's counter is always correct on read, and the sweep is freed from re-stamping a
@@ -201,9 +208,12 @@ construction, so a demo reliably shows the interesting case and tests are stable
 Backhistory is produced by calling the **same decision functions** (behaviour engine +
 `catch_up`) parameterised with **historical dates** instead of `Date.utc_today()`,
 iterating each tenancy's **due/payment schedule** in the window (a handful of steps,
-not 90 calendar days). Seeded history is therefore **byte-identical to what live would
-have produced** — no synthetic-looking artifacts in the exhibit, and "seed = the live
-loop run over past dates" is literally true. This is **not** the rejected speed knob
+not 90 calendar days). Seeded history is therefore **identical to what live would have
+produced in decision path and ledger outcomes** (the same events, amounts, and
+`effective_date`s) — modulo the deliberately-divergent `recorded_on` (seeder-assigned,
+decision 3) and the store's `created_at`. No synthetic-looking artifacts in the
+exhibit, and "seed = the live loop run over past dates" is literally true. This is
+**not** the rejected speed knob
 (decision 2): it's a write-side history generator iterating a schedule; the live
 wall-clock is untouched.
 

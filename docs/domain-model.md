@@ -312,7 +312,8 @@ but allow**.
     itself up**; only tenancies that **stopped paying** never get a command, and an
     unbooked due date reads as paid-up (`oldest_unpaid = nil`). The sweep exists to
     **make that silence visible**. `days_behind` is then computed **on read** as
-    `today − oldest_unpaid_due_date` — no stored counter to re-stamp.
+    `Clock.today() − oldest_unpaid_due_date` (Sydney — ADR 0005 decision 2, not UTC) —
+    no stored counter to re-stamp.
   - *Heuristic:* **discrete change ⇒ event; linear ramp ⇒ derive.**
 - **Daily rate appears only at the boundary:** the single partial period at exit,
   and the overstay ramp. Everywhere else is whole periods at exact amounts.

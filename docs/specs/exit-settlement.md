@@ -113,12 +113,27 @@ Complete the lifecycle to `Terminal` and record the exit reckoning, per ADR 0004
   full period no longer fits before E; the boundary period (the one containing E) is
   emitted **pro-rated daily to E**. No step charge fires past E — hold-over is handled by
   overstay at keys-return.
+- **Interval convention (half-open `[from, to)`):** every `RentPeriod` is **`period_from`
+  inclusive, `period_to` exclusive**. This makes adjacent periods abut without
+  double-counting a day, and in particular makes **E belong to exactly one period** — the
+  overstay span, never the boundary period. `days_in_period` = `Date.diff(period_to,
+  period_from)`.
 - **Boundary pro-ration:** charge `= round_half_up(period_rent × days_in_period_to_E ÷
-  period_length)`, using `DayCountConvention` actual/actual and `Money`'s round-half-up-
-  once-on-the-final-amount rule (§9). Emitted as a `RentFellDue` whose `period_to` is E.
+  period_length)`, where `days_in_period_to_E = Date.diff(E, period_from)` (E exclusive),
+  using `DayCountConvention` actual/actual and `Money`'s round-half-up-once-on-the-final-
+  amount rule (§9). Emitted as a `RentFellDue` whose `period_to` is E (so E is **not**
+  charged here).
 - **Overstay charge:** if the keys-return date is after E, emit a **single** `RentFellDue`
-  spanning `E → keys` at the daily rate (`period_from = E`, `period_to = keys date`),
-  computed at keys-return. Linear ramp ⇒ one derived figure, not per-day events.
+  spanning `E → keys` at the daily rate (`period_from = E` **inclusive**, `period_to =
+  keys date` **exclusive**), computed at keys-return. Linear ramp ⇒ one derived figure,
+  not per-day events.
+- **Worked boundary examples** (weekly $700, period_length 7, so daily = $100):
+  - *Keys returned on E (same-day):* boundary period `[.., E)` charges the days up to E;
+    overstay span is `[E, E)` = **empty** ⇒ no overstay `RentFellDue`. E is counted once,
+    in neither an overcharge nor a gap.
+  - *Keys returned E+3 (next-days):* boundary charges `[.., E)`; overstay charges `[E,
+    E+3)` = **3 days** = $300. E, E+1, E+2 billed once each; the keys-return day itself is
+    excluded (possession recovered — the tenancy no longer accrues).
 - **`RentFellDue` gains `period_from`/`period_to`** (already listed in domain-model §3;
   the struct currently lacks them).
 - **Return-keys decision composition:** catch rent up to `min(keys, E)` → append overstay
@@ -128,17 +143,29 @@ Complete the lifecycle to `Terminal` and record the exit reckoning, per ADR 0004
   after the boundary/overstay charges are folded, recorded (signed) on `TenancySettled`.
   Negative = refund owed to tenant; positive = debt. "Consumes credit first" and "prepaid
   excess refunded" both fall out of this with no special handling.
+- **Snapshot, not the live balance.** `final_balance_cents` is an **immutable snapshot
+  captured at settlement** — the reckoning frozen for the exhibit (ADR 0004 §2). It is
+  **not** the current balance: P4 accepts payments after Terminal, and each crosses ACL-1
+  as a `RentPaymentRecorded` that the fold absorbs, so the **live folded balance keeps
+  moving** while `TenancySettled.final_balance_cents` stays fixed at what was owed on the
+  keys-return date. A read model must treat the two as distinct fields (snapshot vs.
+  current), never overwrite the snapshot.
 - **Refund is declared, not disbursed:** no refund/payment-out event in PM. The terminal
   balance persists. A future Accounts un-stub would cross ACL-1 as a negative
   `RentPaymentRecorded` to zero it — additive, out of scope here.
 - **Bitemporal envelope:** `KeysReturned` and `TenancySettled` (and the exit `RentFellDue`s)
-  carry `effective_date` + `recorded_on`. `recorded_on` is domain (simulated) time, not
-  the EventStore's wall-clock `created_at`.
+  carry `effective_date` + `recorded_on`. Per [ADR 0005](../adr/0005-simulation-and-time-model.md),
+  `recorded_on` is the **Sydney booking date for live events** and **seeder-assigned for
+  seeded history** — there is no stored simulation clock; it is distinct from the
+  EventStore's wall-clock `created_at`.
 - **Invariant L9:** `KeysReturned` requires an effective end date (tenancy `Ending`/
   overstaying), reaches Terminal, fires at most once; a second is refused, as is
   keys-return on an `active`/`pending` tenancy. L3 keeps Terminal final.
-- **Read model:** the projection reflects the tenancy as **terminal** with its final
-  balance, projected from `TenancySettled`. Payments after terminal remain accepted (P4).
+- **Read model:** the projection reflects the tenancy as **terminal**, carrying both the
+  **settlement snapshot** (`final_balance_cents` from `TenancySettled`, frozen) and the
+  **current folded balance** (which post-Terminal payments still move — P4). The two are
+  separate fields; a post-Terminal `RentPaymentRecorded` updates the current balance,
+  never the snapshot.
 - **Aggregate stays framework-free:** all new decisions/folds live in the pure
   `Tenancy` decide/evolve core; the Commanded shell only adapts events.
 
