@@ -52,13 +52,15 @@ time rather than all at once.
 
 **Domain modelling is the first-class concern; event sourcing is the supporting
 implementation** that makes the append-only, auditable timeline fall out almost for free.
-Built **Ash-native** — Ash 3 / AshPostgres, CQRS/ES via **AshCommanded** (the
-Commanded library + its Postgres EventStore as source of truth).
-The write model is genuinely event-sourced: state is **derived from the fold**,
+Built **Ash-native** — Ash 3 / AshPostgres — with a genuinely event-sourced write
+model. The **specific ES foundation is parked**: AshCommanded was evaluated and
+**rejected** (it action-sources rather than event-sources, so a write-side
+invariant can't be enforced from the fold) — **do not build on it**. The write
+model is event-sourced regardless of tool: state is **derived from the fold**,
 never a mutated status column — so **no `AshStateMachine`** (the §4 state machine
 lives on as domain rules over derived state, not a stored status). A hand-rolled,
 frameworkless ES core is a **parked, optional descent** (§10), not the spine.
-**(decided — see [ADR 0001](adr/0001-domain-first-ash-native-es.md))**
+**(foundation parked — see [ADR 0002](adr/0002-ash-commanded-nogo-foundation-parked.md))**
 
 - **One physical event store** (a single append-only Postgres table). Simplest
   thing that works; in-process, no separate services. **(decided)**
