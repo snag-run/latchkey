@@ -12,6 +12,18 @@ import Config
 # behavior and ensures a seamless upgrade. See the backwards compatibility
 # guide for an explanation of each setting:
 # https://hexdocs.pm/ash/backwards-compatibility-config.html
+# Spike (branch spike/es-bakeoff): pure-Ash events-as-resources foundation.
+config :latchkey, ash_domains: [Spike.AshEvents]
+
+# Spike A — raw Commanded + its Postgres EventStore.
+config :latchkey, event_stores: [Spike.Commanded.EventStore]
+
+config :latchkey, Spike.Commanded.App,
+  event_store: [
+    adapter: Commanded.EventStore.Adapters.EventStore,
+    event_store: Spike.Commanded.EventStore
+  ]
+
 config :ash,
   allow_forbidden_field_for_relationships_by_default?: true,
   include_embedded_source_by_default?: false,
