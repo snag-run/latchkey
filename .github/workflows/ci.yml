@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  pull_request:
+    # Include ready_for_review: the `test` job skips draft PRs, and the default
+    # pull_request types (opened/synchronize/reopened) don't fire when a draft is
+    # promoted — without this, a drafted PR could merge with `test` never run.
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege token; paths-filter needs to read PR metadata to diff.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # Detect whether anything outside docs/.github/markdown changed. The `ci` gate
+  # job below always runs and reports the required status check, so docs-only
+  # PRs still go green without spinning up the full test job.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      # No git token needed after checkout; paths-filter uses the API token.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@v4.0.1
+        id: filter
+        with:
+          # `every` = AND across patterns: a file is "code" only if it matches
+          # `**` and none of the excludes. The default (`some`/OR) would treat
+          # e.g. AGENTS.md as code because it matches `!docs/**`.
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!.github/**'
+              - '!**/*.md'
+
+  test:
+    name: test
+    needs: changes
+    # Run when code changed AND it isn't a draft PR. Drafts skip this expensive
+    # job to save CI minutes. The `github.event_name != 'pull_request'` clause
+    # keeps `push` events running: on push `github.event.pull_request` is null
+    # and `null == false` is falsey, so a bare `.draft == false` would wrongly
+    # skip pushes.
+    if: ${{ needs.changes.outputs.code == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MIX_ENV: test
+
+    steps:
+      # This job runs PR-controlled Mix code; don't leave the token in git config.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Elixir/OTP
+        uses: erlef/setup-beam@v1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+
+      - name: Cache deps and _build
+        uses: actions/cache@v6
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      # Generic project bootstrap: deps.get, the AshPostgres repo, AND the
+      # Commanded event-store DB (ash.setup alone doesn't create it). Same alias
+      # a dev runs after cloning, so CI provisions exactly like local.
+      - name: mix setup
+        run: mix setup
+
+      # Runs the full local gate — the exact same `mix precommit` the pre-push
+      # hook enforces (dep/hex audits, compile-as-errors, format check,
+      # credo --strict, sobelow, ash.setup, coveralls). Keeping CI on the single
+      # alias means the gate can never drift between local, pre-push, and CI.
+      - name: mix precommit
+        run: mix precommit
+
+  # Required status check. Always runs so it reports even on docs-only changes;
+  # fails if either dependency failed. `test` legitimately reports `skipped`
+  # (docs-only / draft) which passes — but if `changes` itself fails, `test` is
+  # also skipped, so we must gate on both results, not just `test`.
+  ci:
+    name: ci
+    needs: [changes, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on dependency results
+        run: |
+          changes="${{ needs.changes.result }}"
+          test="${{ needs.test.result }}"
+          for dep in "changes=$changes" "test=$test"; do
+            result="${dep#*=}"
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              echo "${dep%=*} job did not pass (result: $result)"
+              exit 1
+            fi
+          done
+          echo "CI passed (changes: $changes, test: $test)"
