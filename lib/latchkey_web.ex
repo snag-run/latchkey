@@ -88,8 +88,8 @@ defmodule LatchkeyWeb do
       import LatchkeyWeb.CoreComponents
 
       # Common modules used in templates
-      alias Phoenix.LiveView.JS
       alias LatchkeyWeb.Layouts
+      alias Phoenix.LiveView.JS
 
       # Routes generation with the ~p sigil
       unquote(verified_routes())

@@ -20,13 +20,15 @@ Confirm out loud: which worktree, which branch, what diverges from `origin/main`
 
 ## 2. Run the FULL local gate (this repo has no CI — local IS the gate)
 
-There is no pre-push hook wired yet, so this is manual discipline. `mix precommit` runs compile-as-errors, unused-dep check, format, and the test suite (which runs `ash.setup --quiet` first):
+`mix precommit` is the whole gate and is **enforced before every push** by `.githooks/pre-push` (wired per-clone by `mix setup`). It runs the audits, compile-as-errors, format check, `credo --strict`, `sobelow`, and the test suite under coverage:
 
 ```bash
-mix precommit   # compile --warnings-as-errors, deps.unlock --unused, format, test
+mix precommit
+# deps.unlock --check-unused · hex.audit · deps.audit · compile --warnings-as-errors
+# · format --check-formatted · credo --strict · sobelow --config · ash.setup · coveralls
 ```
 
-If you only want the fast pieces while iterating, run them individually — but **`mix precommit` must be green before you push**. Fix everything red here; don't push a partial. Never file unrequested issues to route around a failure — surface it to David.
+If you only want the fast pieces while iterating, run them individually — but **`mix precommit` must be green before you push**. Fix everything red here; don't push a partial. **Never lower the coverage floor** (`coveralls.json`) or file unrequested issues to route around a failure — surface it to David. Emergency bypass (rare, and you own the risk): `SKIP_PREPUSH=1 git push`.
 
 ## 3. Push once, open the PR
 

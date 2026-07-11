@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+#
+# Pre-push gate — change-scoped and worktree-safe.
+#
+# Runs `mix precommit` only when the push actually touches Elixir-relevant
+# files (lib/test/config/priv, *.ex[s], mix.exs/lock, .formatter.exs). A push
+# that touches only docs/JSON/CI config runs nothing and leaves fast.
+#
+# Worktree-safe: fresh git worktrees don't share deps/ _build/, so the gate
+# bootstraps deps on demand. If it genuinely can't (offline, or mix isn't
+# installed) it warns and lets the push through rather than hard-failing —
+# this is fast local feedback, not the authoritative gate.
+#
+# Wired per-clone by `mix setup` (sets core.hooksPath=.githooks). To run it
+# manually: `git config core.hooksPath .githooks`.
+#
+# Emergency bypass:
+#   SKIP_PREPUSH=1 git push      # or: git push --no-verify
+
+set -euo pipefail
+
+if [ "${SKIP_PREPUSH:-}" = "1" ]; then
+  echo "pre-push: gate skipped (SKIP_PREPUSH=1)."
+  exit 0
+fi
+
+# --- Work out which files this push would add to the remote -----------------
+# Git feeds "<local ref> <local sha> <remote ref> <remote sha>" per ref on
+# stdin. We union the changed files across all non-delete refs. If we can't
+# scope confidently, force_all runs the gate (safe default).
+zero="$(git hash-object --stdin </dev/null | tr '0-9a-f' '0')"  # all-zero oid, matching hash length
+base_ref="$(git rev-parse --verify --quiet origin/main || git rev-parse --verify --quiet origin/HEAD || true)"
+changed=""
+force_all=0
+saw_ref=0
+
+if [ -t 0 ]; then
+  # Run manually from a terminal (no ref data piped in): gate everything.
+  force_all=1
+else
+  while read -r _local_ref local_sha _remote_ref remote_sha; do
+    saw_ref=1
+    [ "$local_sha" = "$zero" ] && continue   # branch deletion: nothing to gate
+    if [ "$remote_sha" = "$zero" ]; then
+      # New branch on the remote: scope to commits not yet on the base branch.
+      mb=""
+      [ -n "$base_ref" ] && mb="$(git merge-base "$local_sha" "$base_ref" 2>/dev/null || true)"
+      if [ -n "$mb" ]; then
+        range="$mb..$local_sha"
+      else
+        force_all=1
+        continue
+      fi
+    else
+      range="$remote_sha..$local_sha"
+    fi
+    if ! diff_names="$(git diff --name-only "$range" 2>/dev/null)"; then
+      force_all=1   # range not diffable (stale/absent remote sha) — don't let
+      continue      # a failed diff masquerade as an empty (skip-everything) set
+    fi
+    changed+=$'\n'"$diff_names"
+  done
+
+  [ "$saw_ref" = "0" ] && force_all=1   # no ref info (piped but empty): be safe
+fi
+
+# --- Decide whether the Elixir gate is in scope -----------------------------
+run_elixir=0
+if [ "$force_all" = "1" ]; then
+  run_elixir=1
+elif grep -qE '(^|/)(mix\.(exs|lock)|\.formatter\.exs)$|\.exs?$|^(lib|test|config|priv)/' <<<"$changed"; then
+  run_elixir=1
+fi
+
+if [ "$run_elixir" = "0" ]; then
+  echo "pre-push: no Elixir changes detected — nothing to gate."
+  exit 0
+fi
+
+# --- Gate -------------------------------------------------------------------
+# Strip git-exported env before running mix. Git sets GIT_DIR / GIT_INDEX_FILE
+# (etc.) for hook processes; a gate step that shells out to git would otherwise
+# operate on THIS repo's HEAD/index instead of its own context. The hook's own
+# git scoping above has already run, so scrubbing here only affects the gate
+# child-processes; `unset` of an already-unset var is a no-op under `set -u`.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_QUARANTINE_PATH GIT_PREFIX
+
+if ! command -v mix >/dev/null 2>&1; then
+  echo "pre-push: WARN mix not found; skipping Elixir gate." >&2
+  exit 0
+fi
+# Refresh when deps are absent (fresh worktree) or the manifest/lockfile is
+# part of this push (otherwise the gate runs against stale deps).
+if [ ! -d deps ] || grep -qE '(^|/)mix\.(exs|lock)$' <<<"$changed"; then
+  echo "pre-push: ensuring Elixir deps are up to date…"
+  mix deps.get || {
+    echo "pre-push: WARN could not fetch Elixir deps (offline?); skipping gate." >&2
+    exit 0
+  }
+fi
+echo "pre-push: Elixir gate — mix precommit…"
+mix precommit
+echo "pre-push: gate passed."

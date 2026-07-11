@@ -12,7 +12,8 @@ defmodule Latchkey.MixProject do
       deps: deps(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader],
-      consolidate_protocols: Mix.env() != :dev
+      consolidate_protocols: Mix.env() != :dev,
+      test_coverage: [tool: ExCoveralls]
     ]
   end
 
@@ -28,7 +29,12 @@ defmodule Latchkey.MixProject do
 
   def cli do
     [
-      preferred_envs: [precommit: :test]
+      preferred_envs: [
+        precommit: :test,
+        coveralls: :test,
+        "coveralls.html": :test,
+        "coveralls.json": :test
+      ]
     ]
   end
 
@@ -42,6 +48,10 @@ defmodule Latchkey.MixProject do
   defp deps do
     [
       {:sourceror, "~> 1.8", only: [:dev, :test]},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
+      {:excoveralls, "~> 0.18", only: :test},
       {:ash_postgres, "~> 2.0"},
       {:ash_phoenix, "~> 2.0"},
       {:ash, "~> 3.0"},
@@ -94,7 +104,16 @@ defmodule Latchkey.MixProject do
   # See the documentation for `Mix` for more info on aliases.
   defp aliases do
     [
-      setup: ["deps.get", "ash.setup", "assets.setup", "assets.build", "run priv/repo/seeds.exs"],
+      setup: [
+        "deps.get",
+        "ash.setup",
+        "assets.setup",
+        "assets.build",
+        "run priv/repo/seeds.exs",
+        # Point git at the committed pre-push gate (.githooks/pre-push). hooksPath
+        # is per-clone local config, so each checkout wires it once via setup.
+        "cmd git config core.hooksPath .githooks"
+      ],
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ash.setup --quiet", "test"],
@@ -105,7 +124,25 @@ defmodule Latchkey.MixProject do
         "esbuild latchkey --minify",
         "phx.digest"
       ],
-      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
+      # The full local gate. Enforced before every push by .githooks/pre-push
+      # (wired per-clone by `mix setup`). Uses the non-mutating checks
+      # (--check-unused, --check-formatted) that fail loud, rather than the
+      # auto-fixing variants, so a green `mix precommit` is a real gate.
+      # Audits run before the first compile on purpose: compiling in the same OS
+      # process purges the Hex archive, after which `mix hex.audit` can no longer
+      # be resolved. `hex.audit` runs before `deps.audit` because mix_audit
+      # itself compiles when invoked, which is enough to purge the archive.
+      precommit: [
+        "deps.unlock --check-unused",
+        "hex.audit",
+        "deps.audit",
+        "compile --warnings-as-errors",
+        "format --check-formatted",
+        "credo --strict",
+        "sobelow --config",
+        "ash.setup --quiet",
+        "coveralls"
+      ]
     ]
   end
 end
