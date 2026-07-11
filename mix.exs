@@ -107,6 +107,8 @@ defmodule Latchkey.MixProject do
       setup: [
         "deps.get",
         "ash.setup",
+        # Create the Commanded EventStore's `event_store` schema in the Ash DB.
+        "event_store.init --quiet",
         "assets.setup",
         "assets.build",
         "run priv/repo/seeds.exs",
@@ -116,7 +118,7 @@ defmodule Latchkey.MixProject do
       ],
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
-      test: ["ash.setup --quiet", "test"],
+      test: ["ash.setup --quiet", "event_store.init --quiet", "test"],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
       "assets.build": ["compile", "tailwind latchkey", "esbuild latchkey"],
       "assets.deploy": [

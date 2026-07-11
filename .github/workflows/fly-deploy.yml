@@ -1,0 +1,28 @@
+# See https://fly.io/docs/app-guides/continuous-deployment-with-github-actions/
+
+name: Fly Deploy
+on:
+  push:
+    tags:
+      # Deploy fires only when you deliberately cut a release tag — never on a
+      # plain push to main. Needs fly.toml + Dockerfile + the FLY_API_TOKEN repo
+      # secret in place first; until then, cutting a v* tag is the "go" signal.
+      - 'v*'
+  workflow_dispatch:
+jobs:
+  deploy:
+    name: Deploy app
+    runs-on: ubuntu-latest
+    concurrency: deploy-group    # ensure only one deploy runs at a time
+    steps:
+      # Pinned to commit SHAs (mutable refs let a compromised tag run arbitrary
+      # code in a job that holds the FLY_API_TOKEN). persist-credentials: false
+      # keeps the GITHUB_TOKEN out of the checkout — this job only deploys, it
+      # never pushes back to the repo.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # v1.6
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

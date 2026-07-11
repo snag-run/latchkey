@@ -1,0 +1,2 @@
+# Windows batch launch scripts (mix release overlays) must use CRLF
+*.bat text eol=crlf

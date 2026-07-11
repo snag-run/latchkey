@@ -17,14 +17,15 @@ config :latchkey, Latchkey.Repo,
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
 
-# Commanded EventStore DB for integration tests (not sandboxed — Commanded runs
-# outside the Ecto sandbox; integration tests start the app and use unique streams).
+# Commanded EventStore — shares the Repo's test database, isolated in its own
+# `event_store` schema. Not sandboxed: Commanded runs outside the Ecto sandbox,
+# so integration tests start the app and use unique streams.
 config :latchkey, Latchkey.EventStore,
-  serializer: Commanded.Serialization.JsonSerializer,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",
-  database: "latchkey_eventstore_test#{System.get_env("MIX_TEST_PARTITION")}",
+  database: "latchkey_test#{System.get_env("MIX_TEST_PARTITION")}",
+  schema: "event_store",
   port: 5432,
   pool_size: 2
 
