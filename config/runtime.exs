@@ -51,11 +51,27 @@ if config_env() == :prod do
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
   config :latchkey, Latchkey.Repo,
-    # ssl: true,
     url: database_url,
+    # Neon requires TLS. `ssl: true` uses Postgrex's secure defaults: the system
+    # CA bundle (ca-certificates ships in the runner image), verify_peer with
+    # hostname checking, and SNI set from the host — which Neon needs to route.
+    ssl: true,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
     # For machines with several cores, consider starting multiple pools of `pool_size`
     # pool_count: 4,
+    socket_options: maybe_ipv6
+
+  # Commanded EventStore — same database as the Repo, isolated in the
+  # `event_store` schema, so a single DATABASE_URL provisions both. Unlike Ecto,
+  # EventStore's URL parser rejects unknown query params (e.g. Neon's `sslmode`),
+  # so strip the query string — TLS is enabled explicitly via `ssl: true` below.
+  event_store_url = URI.to_string(%{URI.parse(database_url) | query: nil})
+
+  config :latchkey, Latchkey.EventStore,
+    url: event_store_url,
+    schema: "event_store",
+    ssl: true,
+    pool_size: String.to_integer(System.get_env("EVENTSTORE_POOL_SIZE") || "5"),
     socket_options: maybe_ipv6
 
   # The secret key base is used to sign/encrypt cookies and other secrets.

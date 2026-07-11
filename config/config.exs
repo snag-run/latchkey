@@ -11,6 +11,10 @@ import Config
 config :latchkey, ash_domains: [Latchkey.PropertyManagement]
 config :latchkey, event_stores: [Latchkey.EventStore]
 
+# Serializer is env-independent, so it lives here; per-env files add only the
+# connection details (hostname/database or url + ssl).
+config :latchkey, Latchkey.EventStore, serializer: Commanded.Serialization.JsonSerializer
+
 config :latchkey, Latchkey.CommandedApp,
   event_store: [
     adapter: Commanded.EventStore.Adapters.EventStore,
