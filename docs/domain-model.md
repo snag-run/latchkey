@@ -438,6 +438,19 @@ values. It's where small domain rules live, keeping the aggregate clean.
   toward it without foreclosing**. Additive over the existing log: Accounts already
   produces the facts; double-entry is new read models + disbursement events. May
   not be reached; direction is set.
+- **PII & erasure posture — deliberately unsolved.** Names/addresses recorded in
+  events land in the **immutable log** by definition — the classic ES ↔ "right to be
+  forgotten" conflict. Not solving it here (synthetic data, learning sim), but the
+  reasoning is on record: for a **tribunal-evidence** timeline the recorded PII often
+  *is* the evidence (who was served what, when), and legal-retention / "defence of
+  legal claims" grounds would typically **override** blanket erasure — so the honest
+  posture is *retain, don't erase*, not *support scrub*. Distinguish PII that **is the
+  evidence** (frozen at event time, like a folded fact) from **incidental** PII; the
+  escape hatch for the latter, if ever needed, is **crypto-shredding** (per-subject key
+  in a mutable store, destroy the key to render ciphertext-in-events unreadable) rather
+  than mutating the log. Reference-only events (id in log, PII in a mutable table) is
+  the other option but sacrifices event self-containment. **Out of scope** — noted, not
+  designed.
 - **UNKNOWN / suspense matching (secondary/tertiary goal).** A read model + workflow
   in **Accounts** to hold and cross-reference unmatched receipts, then reallocate
   (reverse + fresh receive). Suspense is an **Accounts** entity, *never* a PM
