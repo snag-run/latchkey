@@ -14,7 +14,6 @@ config :latchkey, Latchkey.Repo,
 # Commanded EventStore — shares the Ecto/Ash database above, isolated in its own
 # `event_store` schema (created by `mix event_store.init`, wired into setup/test).
 config :latchkey, Latchkey.EventStore,
-  serializer: Commanded.Serialization.JsonSerializer,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",

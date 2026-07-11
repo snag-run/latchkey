@@ -21,7 +21,6 @@ config :latchkey, Latchkey.Repo,
 # `event_store` schema. Not sandboxed: Commanded runs outside the Ecto sandbox,
 # so integration tests start the app and use unique streams.
 config :latchkey, Latchkey.EventStore,
-  serializer: Commanded.Serialization.JsonSerializer,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",
