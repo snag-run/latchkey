@@ -65,9 +65,13 @@ if config_env() == :prod do
     socket_options: maybe_ipv6
 
   # Commanded EventStore — same database as the Repo, isolated in the
-  # `event_store` schema, so a single DATABASE_URL provisions both.
+  # `event_store` schema, so a single DATABASE_URL provisions both. Unlike Ecto,
+  # EventStore's URL parser rejects unknown query params (e.g. Fly's `sslmode`),
+  # so strip the query string — TLS, schema, and pool are set explicitly below.
+  event_store_url = URI.to_string(%{URI.parse(database_url) | query: nil})
+
   config :latchkey, Latchkey.EventStore,
-    url: database_url,
+    url: event_store_url,
     schema: "event_store",
     ssl: db_ssl,
     pool_size: String.to_integer(System.get_env("EVENTSTORE_POOL_SIZE") || "5"),
