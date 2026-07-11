@@ -1,5 +1,7 @@
 This is a web application written using the Phoenix web framework.
 
+> **Editing this file:** `CLAUDE.md` is a symlink to `AGENTS.md` — edit `AGENTS.md` (the real target), and the change reflects in both. Likewise the skills under `.claude/skills/<name>` are symlinks to `.agents/skills/<name>` (the canonical, agent-agnostic source); edit the files under `.agents/skills/`.
+
 ## Project guidelines
 
 - Use `mix precommit` alias when you are done with all changes and fix any pending issues
