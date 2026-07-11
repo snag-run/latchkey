@@ -11,13 +11,15 @@ config :latchkey, Latchkey.Repo,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10
 
-# Commanded EventStore DB (separate from the Ecto/Ash DB above).
+# Commanded EventStore — shares the Ecto/Ash database above, isolated in its own
+# `event_store` schema (created by `mix event_store.init`, wired into setup/test).
 config :latchkey, Latchkey.EventStore,
   serializer: Commanded.Serialization.JsonSerializer,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",
-  database: "latchkey_eventstore_dev",
+  database: "latchkey_dev",
+  schema: "event_store",
   port: 5432,
   pool_size: 5
 
