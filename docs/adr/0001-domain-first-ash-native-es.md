@@ -2,13 +2,19 @@
 
 Status: **on hold** — the AshCommanded choice was rejected after a go/no-go smoke test; see [ADR 0002](0002-ash-commanded-nogo-foundation-parked.md). The domain-first framing below still stands; the AshCommanded-specific design is **historical context only — do not build on it**.
 
+> **⚠️ Historical — do not build on AshCommanded.** Everything below is the
+> original AshCommanded proposal, which the go/no-go smoke test **reversed**
+> ([ADR 0002](0002-ash-commanded-nogo-foundation-parked.md)). It is retained as the
+> record of what was decided and why, **not** as current guidance.
+
 Latchkey is first a **DDD / domain-modelling** exercise — the tenancy lifecycle, the
 arrears gate, the Accounts ↔ PM anti-corruption seam. **Event sourcing is a
 supporting implementation**, chosen because it makes the append-only, auditable tribunal
-timeline (domain-model.md §1) fall out almost for free. We build it **Ash-native via
-[AshCommanded](https://github.com/accountex-org/ash_commanded)** — a declarative
-CQRS/ES extension wrapping the **Commanded** library, with **Commanded's Postgres
-EventStore** as the source of truth.
+timeline (domain-model.md §1) fall out almost for free. This ADR **proposed** building it
+**Ash-native via [AshCommanded](https://github.com/accountex-org/ash_commanded)** — a
+declarative CQRS/ES extension wrapping the **Commanded** library, with **Commanded's
+Postgres EventStore** as the source of truth. *(That proposal was later reversed — see
+[ADR 0002](0002-ash-commanded-nogo-foundation-parked.md).)*
 
 ## Why AshCommanded
 
@@ -49,7 +55,7 @@ framework encodes the exact argument the model makes.
 
 ## Consequences
 
-- Domain model (§4, §7) needs **no rewrite** — AshCommanded realises it as written.
+- Domain model (§4, §7) would need **no rewrite** — AshCommanded was expected to realise it as written. *(This claim was **falsified** by the smoke test — see ADR 0002.)*
 - **Maturity risk accepted.** AshCommanded is **v0.2.0**, by a community org (not
   core Ash). Expect rough edges / thin docs / possible missing features; acceptable
   for a learning sim, and dropping to raw Commanded when the wrapper leaks is itself
