@@ -36,3 +36,21 @@ updates:
       mix-production:
         dependency-type: "production"
         update-types: ["minor", "patch", "major"]
+
+  # GitHub Actions used by our workflows. Never ships to users -> `chore`, no
+  # release; one grouped PR keeps the noise down.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    cooldown:
+      default-days: 3
+    groups:
+      github-actions:
+        patterns: ["*"]

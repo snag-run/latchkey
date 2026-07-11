@@ -1,0 +1,47 @@
+name: actionlint
+
+# Lints the workflow files themselves (expressions, runs-on labels, shell in
+# `run:` blocks via shellcheck). Scoped to workflow changes so it stays cheap.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: actionlint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      # This job only reads the workflow files and runs a downloaded binary, so
+      # it never needs the checkout token left behind in .git/config.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Pinned release binary + sha256 check — no third-party marketplace action,
+      # no floating `latest`. Bump VERSION and SHA256 together from the release's
+      # actionlint_<ver>_checksums.txt. shellcheck ships on ubuntu-latest, so
+      # actionlint also lints the shell in `run:` steps automatically.
+      - name: Run actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.7
+          ACTIONLINT_SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+        run: |
+          set -euo pipefail
+          url="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSL -o actionlint.tar.gz "$url"
+          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint -color

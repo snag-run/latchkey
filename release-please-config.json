@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "027b82c79d521922a8f61471749c0745550b65ac",
+  "include-component-in-tag": false,
+  "packages": {
+    ".": {
+      "release-type": "elixir",
+      "package-name": "latchkey",
+      "changelog-path": "CHANGELOG.md",
+      "initial-version": "0.1.0"
+    }
+  }
+}

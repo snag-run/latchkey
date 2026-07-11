@@ -1,0 +1,36 @@
+name: release-please
+
+# Maintains the rolling release PR and, on merge, cuts the git tag + GitHub
+# Release for the Elixir app at the repo root. Tags are bare `v*` (no component
+# prefix) — see release-please-config.json (`include-component-in-tag: false`).
+#
+# IMPORTANT — if you later add downstream automation (e.g. a Fly deploy that
+# fires on a `v*` tag), the default GITHUB_TOKEN will NOT trigger it: tags/
+# releases created with GITHUB_TOKEN don't cascade to other workflows (GitHub's
+# recursion guard). Add a fine-grained PAT or GitHub App token as the
+# RELEASE_PLEASE_TOKEN secret (contents: write, pull-requests: write) so the tag
+# pushes trigger downstream. Until then GITHUB_TOKEN is fine — it still opens
+# the PR and cuts the tag/release.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: release-please
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

@@ -107,6 +107,12 @@ defmodule Latchkey.MixProject do
       setup: [
         "deps.get",
         "ash.setup",
+        # Provision the Commanded Postgres event store (ADR 0003). ash.setup
+        # only handles the AshPostgres repo, not the separate event-store DB, so
+        # a clean checkout (and CI) needs these to make `mix test` pass. Both are
+        # idempotent, so re-running setup is safe.
+        "event_store.create",
+        "event_store.init",
         "assets.setup",
         "assets.build",
         "run priv/repo/seeds.exs",
