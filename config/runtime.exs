@@ -50,15 +50,12 @@ if config_env() == :prod do
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
-  # Fly's Postgres requires TLS (it rejects plaintext with sslmode=require).
-  # verify_none: Fly terminates TLS with an internal cert that isn't in the
-  # public CA bundle, and traffic stays on Fly's private 6PN network. Harden
-  # later by pinning the cluster CA: ssl: [cacertfile: "/path/to/ca.crt"].
-  db_ssl = [verify: :verify_none]
-
   config :latchkey, Latchkey.Repo,
     url: database_url,
-    ssl: db_ssl,
+    # Neon requires TLS. `ssl: true` uses Postgrex's secure defaults: the system
+    # CA bundle (ca-certificates ships in the runner image), verify_peer with
+    # hostname checking, and SNI set from the host — which Neon needs to route.
+    ssl: true,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
     # For machines with several cores, consider starting multiple pools of `pool_size`
     # pool_count: 4,
@@ -66,14 +63,14 @@ if config_env() == :prod do
 
   # Commanded EventStore — same database as the Repo, isolated in the
   # `event_store` schema, so a single DATABASE_URL provisions both. Unlike Ecto,
-  # EventStore's URL parser rejects unknown query params (e.g. Fly's `sslmode`),
-  # so strip the query string — TLS, schema, and pool are set explicitly below.
+  # EventStore's URL parser rejects unknown query params (e.g. Neon's `sslmode`),
+  # so strip the query string — TLS is enabled explicitly via `ssl: true` below.
   event_store_url = URI.to_string(%{URI.parse(database_url) | query: nil})
 
   config :latchkey, Latchkey.EventStore,
     url: event_store_url,
     schema: "event_store",
-    ssl: db_ssl,
+    ssl: true,
     pool_size: String.to_integer(System.get_env("EVENTSTORE_POOL_SIZE") || "5"),
     socket_options: maybe_ipv6
 
