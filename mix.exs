@@ -80,7 +80,7 @@ defmodule Latchkey.MixProject do
        depth: 1},
       {:daisyui,
        github: "saadeghi/daisyui",
-       tag: "v5.5.20",
+       tag: "v5.6.15",
        sparse: "packages/bundle",
        app: false,
        compile: false,
