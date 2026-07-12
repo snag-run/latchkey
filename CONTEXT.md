@@ -43,6 +43,30 @@ A read model is served one of two ways:
 "Projection" (strict sense) = the materialised kind. The timeline is *not* a
 projection in that sense — it's a compute-on-read query.
 
+## Vacant possession · `V` vs `E`
+
+**Vacant possession (`V`)** — the inked date the tenant actually hands back
+possession (keys returned). It is the **reckoning point**: the exit settlement
+(final pro-ration, arrears, refund) is computed *against `V`*, not against the
+notice's effective end date.
+
+**Effective end date (`E`)** — the date the termination notice takes effect. It
+is **not** the reckoning point. It is the **earliest-permissible** end date and
+the **clamp for live accrual** while `V` is still unknown (a live tenancy can't
+be reckoned to a keys date that hasn't happened yet).
+
+The two diverge, and which side they fall on is the whole shape of the exit:
+
+- **Overstay (`V ≥ E`)** — the tenant holds over; possession recovered *after*
+  `E`. The exit **appends** the extra `[E, V)` accrual (issue #32).
+- **Early leave (`V ≤ E`)** — legitimate early hand-back (sale, old no-grounds);
+  possession recovered *before* `E`, so periods booked out to `E` were
+  **over-charged** and need a **correcting entry** — a visible reversal, never a
+  silent un-charge (issue #64).
+
+The exit is **always a forward append** against the append-only log: reckoning at
+`V` never rewrites or re-pro-rates already-booked periods.
+
 ## The three time axes
 
 An event carries two domain dates in its envelope; the store adds a third,

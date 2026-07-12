@@ -21,12 +21,20 @@ matters, and it's currently missing.
 Complete the lifecycle to `Terminal` and record the exit reckoning, per ADR 0004:
 
 - A **`KeysReturned`** command/event records possession being recovered on a date — the
-  raw input fact.
-- Accrual clamps to the **effective end date E**: full rent periods accrue until a full
-  period no longer fits before E, then the boundary period is **pro-rated daily to E**
-  (lazy, forward — never charged whole and clawed back).
-- **Overstay** (keys returned after E) is booked as a single crystallised `RentFellDue`
-  for the `E → keys` span at the daily rate.
+  **vacant-possession date `V`**, the raw input fact and the **reckoning point** the exit
+  is settled against (see `CONTEXT.md` → *Vacant possession · `V` vs `E`*).
+- **`E` is not the reckoning point.** The effective end date `E` is the
+  **earliest-permissible** end date and the **clamp for live accrual** while `V` is still
+  unknown — a live tenancy can't be reckoned to a keys date that hasn't happened yet.
+- Live accrual clamps to `E`: full rent periods accrue until a full period no longer fits
+  before `E`, then the boundary period is **pro-rated daily to `E`** (lazy, forward —
+  never charged whole and clawed back).
+- **Overstay** (`V ≥ E` — keys returned on/after `E`) is reckoned at `V`: the exit
+  **appends** the `[E, V)` span as a single crystallised `RentFellDue` at the daily rate.
+  This is a **forward append** — reckoning at `V` never rewrites already-booked periods.
+- **Early leave** (`V ≤ E` — legitimate early hand-back) over-charges periods booked out
+  to `E` and needs a **correcting entry** (visible reversal, never a silent un-charge) —
+  deferred to **#64**, out of scope here.
 - **`TenancySettled`** records the reckoning — a signed `final_balance_cents` (negative =
   refund owed to the tenant, positive = debt) — and transitions the tenancy to
   **Terminal**. It carries no money of its own; all money lives in `RentFellDue` /
@@ -123,10 +131,13 @@ Complete the lifecycle to `Terminal` and record the exit reckoning, per ADR 0004
   using `DayCountConvention` actual/actual and `Money`'s round-half-up-once-on-the-final-
   amount rule (§9). Emitted as a `RentFellDue` whose `period_to` is E (so E is **not**
   charged here).
-- **Overstay charge:** if the keys-return date is after E, emit a **single** `RentFellDue`
-  spanning `E → keys` at the daily rate (`period_from = E` **inclusive**, `period_to =
-  keys date` **exclusive**), computed at keys-return. Linear ramp ⇒ one derived figure,
-  not per-day events.
+- **Overstay charge (reckoned at `V`):** the keys-return date **is** the vacant-possession
+  date `V`. If `V` is after `E`, emit a **single** `RentFellDue` spanning `E → V` at the
+  daily rate (`period_from = E` **inclusive**, `period_to = V` **exclusive**), computed at
+  keys-return. Linear ramp ⇒ one derived figure, not per-day events. This is a **forward
+  append** of the `[E, V)` delta on top of whatever live accrual already booked to `E` —
+  reckoning at `V` never rewrites or re-pro-rates an already-booked period. The mirror case
+  `V ≤ E` (over-booked periods needing a correcting entry) is **#64**, not this slice.
 - **Worked boundary examples** (weekly $700, period_length 7, so daily = $100):
   - *Keys returned on E (same-day):* boundary period `[.., E)` charges the days up to E;
     overstay span is `[E, E)` = **empty** ⇒ no overstay `RentFellDue`. E is counted once,
