@@ -188,6 +188,10 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   # §6 lazy sweep as a first-class no-decision op (keeps the read model warm).
   def decide_catch_up(%State{status: :pending}, _cmd), do: {:ok, []}
 
+  # A settled tenancy is done (L3): no rent accrues after Terminal, so the daily
+  # sweep (#41) must not keep emitting `RentFellDue`. No-op like the pending case.
+  def decide_catch_up(%State{status: :terminal}, _cmd), do: {:ok, []}
+
   def decide_catch_up(%State{} = s, %{as_of: as_of} = cmd),
     do: {:ok, catch_up_events(s, as_of, cmd.recorded_on)}
 
@@ -223,32 +227,44 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   def decide_return_keys(%State{status: status}, _cmd) when status != :ending,
     do: {:error, :no_effective_end_date}
 
-  def decide_return_keys(%State{effective_end_date: e} = s, cmd) do
-    # Catch rent up to — but not past — E: whole periods only. E is a period boundary
-    # in this slice, so the period *starting on* E belongs to the post-exit span and
-    # must not fire (half-open `[from, to)`, ADR 0004 / spec). Clamp the sweep at the
-    # day before E so no step `RentFellDue` lands on or after E.
-    catch_up = catch_up_events(s, Date.add(e, -1), cmd.recorded_on)
-    s_now = Enum.reduce(catch_up, s, &evolve(&2, &1))
+  # A malformed/legacy `:ending` state carrying no effective end date can't settle:
+  # refuse with the same L9 reason rather than crash on `Date.add(nil, -1)`.
+  def decide_return_keys(%State{effective_end_date: nil}, _cmd),
+    do: {:error, :no_effective_end_date}
 
-    # `final_balance_cents` is the fold snapshot after the boundary charges land
-    # (signed: negative = refund owed, positive = debt). Declared, not disbursed.
-    final = balance_cents(s_now)
+  def decide_return_keys(%State{effective_end_date: %Date{} = e} = s, cmd) do
+    if Date.compare(cmd.keys_on, e) == :lt do
+      # L9 — keys returned *before* E would terminalize the tenancy prematurely; the
+      # tenant is still on the hook through E. A valid return is dated on or after E
+      # (the after-E overstay reckoning is a later slice, #32).
+      {:error, :keys_returned_before_end_date}
+    else
+      # Catch rent up to — but not past — E: whole periods only. E is a period boundary
+      # in this slice, so the period *starting on* E belongs to the post-exit span and
+      # must not fire (half-open `[from, to)`, ADR 0004 / spec). Clamp the sweep at the
+      # day before E so no step `RentFellDue` lands on or after E.
+      catch_up = catch_up_events(s, Date.add(e, -1), cmd.recorded_on)
+      s_now = Enum.reduce(catch_up, s, &evolve(&2, &1))
 
-    keys = %{
-      type: :keys_returned,
-      # occurrence = the keys-return (possession-recovered) date.
-      occurred_on: cmd.keys_on,
-      recorded_on: cmd.recorded_on
-    }
+      # `final_balance_cents` is the fold snapshot after the boundary charges land
+      # (signed: negative = refund owed, positive = debt). Declared, not disbursed.
+      final = balance_cents(s_now)
 
-    settled = %{
-      type: :tenancy_settled,
-      occurred_on: cmd.keys_on,
-      recorded_on: cmd.recorded_on,
-      final_balance_cents: final
-    }
+      keys = %{
+        type: :keys_returned,
+        # occurrence = the keys-return (possession-recovered) date.
+        occurred_on: cmd.keys_on,
+        recorded_on: cmd.recorded_on
+      }
 
-    {:ok, catch_up ++ [keys, settled]}
+      settled = %{
+        type: :tenancy_settled,
+        occurred_on: cmd.keys_on,
+        recorded_on: cmd.recorded_on,
+        final_balance_cents: final
+      }
+
+      {:ok, catch_up ++ [keys, settled]}
+    end
   end
 end

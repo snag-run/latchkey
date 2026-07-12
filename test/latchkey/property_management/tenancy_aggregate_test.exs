@@ -14,6 +14,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
   alias Latchkey.PropertyManagement.Tenancy.Events.TenancyCommenced
   alias Latchkey.PropertyManagement.Tenancy.Events.TenancySettled
   alias Latchkey.PropertyManagement.Tenancy.Events.TerminationNoticeGiven
+  alias Latchkey.PropertyManagement.Tenancy.State
 
   defp apply_all(agg, events), do: Enum.reduce(List.wrap(events), agg, &Agg.apply(&2, &1))
 
@@ -346,6 +347,49 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
                  tenancy_id: "t1",
                  keys_on: ~D[2026-02-23],
                  recorded_on: ~D[2026-02-23]
+               })
+    end
+
+    test "L9 refuses (no crash) an `:ending` state carrying no effective end date" do
+      # A malformed/legacy fold: :ending with a nil E must not reach `Date.add(nil, -1)`.
+      malformed = %State{status: :ending, effective_end_date: nil}
+
+      assert {:error, :no_effective_end_date} =
+               Tenancy.decide_return_keys(malformed, %{
+                 keys_on: ~D[2026-02-16],
+                 recorded_on: ~D[2026-02-16]
+               })
+    end
+
+    test "L9 refuses keys returned before the effective end date E" do
+      # ending_agg has E = 02-16; returning keys on 02-15 would terminalize early.
+      assert {:error, :keys_returned_before_end_date} =
+               Agg.execute(ending_agg(), %C.ReturnKeys{
+                 tenancy_id: "t1",
+                 keys_on: ~D[2026-02-15],
+                 recorded_on: ~D[2026-02-15]
+               })
+    end
+
+    test "a Terminal tenancy accrues no more rent on the catch-up sweep" do
+      # Settle the tenancy, then sweep past E — no `RentFellDue` may be emitted (#41).
+      agg = ending_agg()
+
+      settled =
+        Agg.execute(agg, %C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-02-16],
+          recorded_on: ~D[2026-02-16]
+        })
+
+      terminal = apply_all(agg, settled)
+      assert terminal.core.status == :terminal
+
+      assert [] =
+               Agg.execute(terminal, %C.CatchUp{
+                 tenancy_id: "t1",
+                 as_of: ~D[2026-04-01],
+                 recorded_on: ~D[2026-04-01]
                })
     end
 
