@@ -47,6 +47,18 @@ defmodule Latchkey.PropertyManagement.TimelineTest do
     }
   end
 
+  defp reversal(occurred, amount, id, opts) do
+    %RentPaymentRecorded{
+      tenancy_id: @tid,
+      occurred_on: occurred,
+      recorded_on: Keyword.get(opts, :recorded, occurred),
+      amount_cents: amount,
+      source_payment_id: id,
+      reason: Keyword.get(opts, :reason),
+      reverses: Keyword.get(opts, :reverses)
+    }
+  end
+
   defp notice(occurred, termination_date) do
     %TerminationNoticeGiven{
       tenancy_id: @tid,
@@ -218,5 +230,79 @@ defmodule Latchkey.PropertyManagement.TimelineTest do
 
     assert Enum.map(entries, & &1.kind) == [:commenced, :rent_fell_due, :payment, :rent_fell_due]
     assert Enum.map(entries, & &1.balance_snapshot_cents) == [0, 50_000, 0, 50_000]
+  end
+
+  describe "reversal rendering (ADR 0006 §7)" do
+    # week-1 rent falls due, the tenant pays, then the payment dishonours and is
+    # reversed. The reversal is a NEGATIVE RentPaymentRecorded at its own reversed_on.
+    #   commenced 01-05 (seq 0)          -> 0
+    #   rent      01-05 (seq 1)  +50000  -> 50000
+    #   payment   01-10 (seq 2)  -50000  -> 0        (clears the week)
+    #   reversal  01-20 (seq 3)  +50000  -> 50000    (undoes the payment)
+    setup do
+      events = [
+        {0, commenced(~D[2026-01-05])},
+        {1, rent(~D[2026-01-05])},
+        {2, payment(~D[2026-01-10], 50_000, "p-1")},
+        {3, reversal(~D[2026-01-20], -50_000, "rev-1", reason: "dishonoured", reverses: "p-1")}
+      ]
+
+      %{entries: Timeline.fold(events)}
+    end
+
+    test "a negative payment renders as a reversal DEBIT row at its own occurred_on", %{
+      entries: entries
+    } do
+      rev = List.last(entries)
+
+      assert rev.kind == :reversal
+      assert rev.occurred_on == ~D[2026-01-20]
+      # re-expanded into the debit column — never shown as a negative credit
+      assert rev.debit_cents == 50_000
+      assert rev.credit_cents == nil
+    end
+
+    test "the reversal restores the running balance", %{entries: entries} do
+      assert Enum.map(entries, & &1.balance_snapshot_cents) == [0, 50_000, 0, 50_000]
+    end
+
+    test "the original payment credit row is left untouched", %{entries: entries} do
+      payment = Enum.find(entries, &(&1.kind == :payment))
+
+      assert payment.occurred_on == ~D[2026-01-10]
+      assert payment.credit_cents == 50_000
+      assert payment.debit_cents == nil
+      # exactly one credit row and one debit reversal row — nothing was mutated/hidden
+      assert Enum.count(entries, &(&1.kind == :payment)) == 1
+      assert Enum.count(entries, &(&1.kind == :reversal)) == 1
+    end
+
+    test "the reversal surfaces its reason and the payment it reverses", %{entries: entries} do
+      rev = List.last(entries)
+
+      assert rev.reason == "dishonoured"
+      assert rev.reverses == "p-1"
+      assert rev.description =~ "dishonoured"
+    end
+
+    test "days_behind climbs again once the payment is undone", %{entries: entries} do
+      # paid-up on the payment row, back 15 days behind (01-20 − 01-05) on the reversal
+      assert Enum.map(entries, & &1.days_behind) == [0, 0, 0, 15]
+    end
+  end
+
+  test "a reversal with no reason degrades to a bare 'Payment reversed' description" do
+    events = [
+      {0, commenced(~D[2026-01-05])},
+      {1, rent(~D[2026-01-05])},
+      {2, payment(~D[2026-01-10], 50_000, "p-1")},
+      {3, reversal(~D[2026-01-20], -50_000, "rev-1", reverses: "p-1")}
+    ]
+
+    rev = List.last(Timeline.fold(events))
+
+    assert rev.kind == :reversal
+    assert rev.reason == nil
+    assert rev.description == "Payment reversed"
   end
 end

@@ -27,8 +27,11 @@ defmodule Latchkey.PropertyManagement.Timeline do
   ## Snapshots (ADR 0006 §5–6)
 
   - `balance_snapshot_cents` = `Σ debits − Σ credits` folded in `(occurred_on,
-    stream_sequence)` order up to and including each row (debit = `rent_fell_due`,
-    credit = `payment`). The final balance equals the `Arrears` fold
+    stream_sequence)` order up to and including each row (debit = `rent_fell_due` or a
+    reversal, credit = `payment`). A reversal is a **negative** `RentPaymentRecorded`
+    re-expanded into the debit column at its own `occurred_on`, restoring the balance the
+    reversed credit had reduced (ADR 0006 §7); the original credit row stays untouched.
+    The final balance equals the `Arrears` fold
     (`Tenancy.balance_cents/1`) — Σ is order-invariant.
   - `days_behind` per row = `occurred_on − oldest_unpaid_due_date` as-at that row, or
     `0` when paid-up (`oldest_unpaid_due_date` is `nil`) — a stable non-null integer.
@@ -86,8 +89,11 @@ defmodule Latchkey.PropertyManagement.Timeline do
         acc.charges
       end
 
+    # Both a forward payment and a reversal move the FIFO payments total: a reversal's
+    # `amount_cents` is negative, so absorbing it un-pays the credit it undoes and the
+    # oldest-unpaid due date (and `days_behind`) honestly climbs back (ADR 0006 §7).
     payments =
-      if n.kind == :payment do
+      if n.kind in [:payment, :reversal] do
         acc.payments + n.amount_cents
       else
         acc.payments
@@ -108,7 +114,9 @@ defmodule Latchkey.PropertyManagement.Timeline do
       days_behind: days_behind,
       period_from: period_from,
       period_to: period_to,
-      kick_in_date: kick_in(n)
+      kick_in_date: kick_in(n),
+      reason: Map.get(n, :reason),
+      reverses: Map.get(n, :reverses)
     }
 
     %{
@@ -151,6 +159,9 @@ defmodule Latchkey.PropertyManagement.Timeline do
 
   defp money(%{kind: :rent_fell_due, amount_cents: amount}), do: {amount, nil}
   defp money(%{kind: :payment, amount_cents: amount}), do: {nil, amount}
+  # A reversal's `amount_cents` is negative; sign picks the column (ADR 0006 §7) — it
+  # re-expands into the debit column as a positive magnitude, never a "negative credit".
+  defp money(%{kind: :reversal, amount_cents: amount}), do: {-amount, nil}
   defp money(_marker), do: {nil, nil}
 
   defp period(%{kind: :rent_fell_due, occurred_on: due}), do: {due, Date.add(due, 6)}
@@ -162,6 +173,13 @@ defmodule Latchkey.PropertyManagement.Timeline do
   defp describe(%{kind: :commenced}), do: "Tenancy commenced"
   defp describe(%{kind: :rent_fell_due}), do: "Rent due"
   defp describe(%{kind: :payment}), do: "Payment received"
+
+  # ACL-1 propagates the reversal's `reason`; degrade to a bare label when it is absent
+  # (a pre-ACL-1 or unexplained reversal still renders honestly — spec dependency note).
+  defp describe(%{kind: :reversal, reason: reason}) when is_binary(reason) and reason != "",
+    do: "Payment reversed — #{reason}"
+
+  defp describe(%{kind: :reversal}), do: "Payment reversed"
 
   defp describe(%{kind: :notice_given, termination_date: date}) do
     "Termination notice served (arrears) — takes effect #{Date.to_iso8601(date)}"
@@ -189,13 +207,18 @@ defmodule Latchkey.PropertyManagement.Timeline do
     }
   end
 
-  defp normalize(%E.RentPaymentRecorded{} = e) do
+  # Sign selects the kind (ADR 0006 §7): a negative amount is a reversal (rendered as a
+  # debit), a positive amount a forward payment (credit). `reason`/`reverses` are carried
+  # through — ACL-1 sets them only on the reversal path, `nil` on the forward path.
+  defp normalize(%E.RentPaymentRecorded{amount_cents: amount} = e) do
     %{
-      kind: :payment,
+      kind: if(amount < 0, do: :reversal, else: :payment),
       tenancy_id: e.tenancy_id,
       occurred_on: to_date(e.occurred_on),
       recorded_on: to_date(e.recorded_on),
-      amount_cents: e.amount_cents
+      amount_cents: amount,
+      reason: e.reason,
+      reverses: e.reverses
     }
   end
 
