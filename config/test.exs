@@ -1,4 +1,5 @@
 import Config
+config :latchkey, Oban, testing: :manual
 config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
 
 # Don't boot Commanded in the sandboxed suite; integration tests start it explicitly.

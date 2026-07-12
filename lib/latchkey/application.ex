@@ -12,6 +12,7 @@ defmodule Latchkey.Application do
         LatchkeyWeb.Telemetry,
         Latchkey.Repo,
         {DNSCluster, query: Application.get_env(:latchkey, :dns_cluster_query) || :ignore},
+        {Oban, Application.fetch_env!(:latchkey, Oban)},
         {Phoenix.PubSub, name: Latchkey.PubSub}
       ] ++
         commanded_children() ++
