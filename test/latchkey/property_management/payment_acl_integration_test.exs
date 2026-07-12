@@ -125,6 +125,106 @@ defmodule Latchkey.PropertyManagement.PaymentAclIntegrationTest do
     assert recorded_count(tenancy_stream) == 1
   end
 
+  test "translates a PaymentReversed into a negative RentPaymentRecorded carrying reason/reverses",
+       %{tid: tid, tenancy_stream: tenancy_stream, accounts_stream: accounts_stream} do
+    # First a forward payment PM records, so there is something to reverse.
+    assert :ok =
+             Accounts.append(tenancy_receipt(tid, "acl-rev-fwd", 50_000), stream: accounts_stream)
+
+    assert %RentPaymentRecorded{} = await_source("acl-rev-fwd")
+
+    reversal =
+      Accounts.payment_reversed(%{
+        payment_id: "acl-rev-neg",
+        reverses: "acl-rev-fwd",
+        amount_cents: -50_000,
+        reversed_on: ~D[2026-01-10],
+        recorded_on: ~D[2026-01-11],
+        reason: "dishonoured"
+      })
+
+    assert :ok = Accounts.append(reversal, stream: accounts_stream)
+
+    booked = await_source("acl-rev-neg")
+
+    # Signed negative, carrying the reason and the link to the payment it undoes.
+    assert booked.amount_cents == -50_000
+    assert booked.reason == "dishonoured"
+    assert booked.reverses == "acl-rev-fwd"
+    assert to_date(booked.occurred_on) == ~D[2026-01-10]
+
+    # Forward receipt + its reversal: exactly two RentPaymentRecorded on the stream.
+    assert recorded_count(tenancy_stream) == 2
+  end
+
+  test "a re-delivered reversal (same source_payment_id) books no duplicate",
+       %{tid: tid, tenancy_stream: tenancy_stream, accounts_stream: accounts_stream} do
+    assert :ok =
+             Accounts.append(tenancy_receipt(tid, "acl-ridem-fwd", 50_000),
+               stream: accounts_stream
+             )
+
+    assert %RentPaymentRecorded{} = await_source("acl-ridem-fwd")
+
+    reversal =
+      Accounts.payment_reversed(%{
+        payment_id: "acl-ridem-neg",
+        reverses: "acl-ridem-fwd",
+        amount_cents: -50_000,
+        reversed_on: ~D[2026-01-10],
+        reason: "dishonoured"
+      })
+
+    assert :ok = Accounts.append(reversal, stream: accounts_stream)
+    assert %RentPaymentRecorded{} = await_source("acl-ridem-neg")
+
+    # Re-deliver the identical reversal; source_payment_id idempotency makes it a no-op.
+    assert :ok = Accounts.append(reversal, stream: accounts_stream)
+
+    sentinel = tenancy_receipt(tid, "acl-ridem-sentinel", 10_000)
+    assert :ok = Accounts.append(sentinel, stream: accounts_stream)
+    assert %RentPaymentRecorded{} = await_source("acl-ridem-sentinel")
+
+    # forward + reversal (once) + sentinel = 3; a double-booked reversal would push to 4.
+    assert recorded_count(tenancy_stream) == 3
+  end
+
+  test "defensively rejects a reversal referencing a payment PM never recorded (§5 P2)",
+       %{tid: tid, tenancy_stream: tenancy_stream, accounts_stream: accounts_stream} do
+    # A payment attributed to a tenancy that never commenced: PM refuses to record it
+    # (:not_active), so PM never books it — yet its holder is a well-formed tenancy_ref,
+    # so ACL-1 can still route the reversal and the aggregate is the one that rejects.
+    ghost = "acl-ghost-#{System.unique_integer([:positive])}"
+
+    assert :ok =
+             Accounts.append(tenancy_receipt(ghost, "acl-ghost-pay", 50_000),
+               stream: accounts_stream
+             )
+
+    reversal =
+      Accounts.payment_reversed(%{
+        payment_id: "acl-ghost-rev",
+        reverses: "acl-ghost-pay",
+        amount_cents: -50_000,
+        reversed_on: ~D[2026-01-10],
+        reason: "dishonoured"
+      })
+
+    assert :ok = Accounts.append(reversal, stream: accounts_stream)
+
+    # Sync on a known-good receipt for the committed tenancy appended AFTER the reversal:
+    # once its RentPaymentRecorded is acked, the reversal has definitively been processed
+    # (and, being defensively rejected, booked nothing on either stream).
+    sentinel = tenancy_receipt(tid, "acl-ghost-sentinel", 10_000)
+    assert :ok = Accounts.append(sentinel, stream: accounts_stream)
+    assert %RentPaymentRecorded{} = await_source("acl-ghost-sentinel")
+
+    # The rejected reversal booked nothing against the never-commenced tenancy.
+    assert recorded_count("tenancy-" <> ghost) == 0
+    # Only the sentinel landed on the committed tenancy — the reversal never leaked here.
+    assert recorded_count(tenancy_stream) == 1
+  end
+
   # A known-good, tenancy-attributed receipt — used as a positive checkpoint the async
   # handler must observably reach, so earlier events are provably processed-or-skipped.
   defp tenancy_receipt(tid, payment_id, amount_cents) do
@@ -154,10 +254,17 @@ defmodule Latchkey.PropertyManagement.PaymentAclIntegrationTest do
   end
 
   defp recorded_count(tenancy_stream) do
-    tenancy_stream
-    |> EventStore.stream_forward()
-    |> Enum.map(& &1.data)
-    |> Enum.count(&match?(%RentPaymentRecorded{}, &1))
+    case EventStore.stream_forward(tenancy_stream) do
+      # A never-written stream (e.g. a rejected reversal against a never-commenced
+      # tenancy) simply does not exist — that is zero booked payments.
+      {:error, :stream_not_found} ->
+        0
+
+      stream ->
+        stream
+        |> Enum.map(& &1.data)
+        |> Enum.count(&match?(%RentPaymentRecorded{}, &1))
+    end
   end
 
   defp to_date(%Date{} = d), do: d

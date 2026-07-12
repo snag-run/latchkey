@@ -46,6 +46,20 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
     emit(Tenancy.decide_payment(core, cmd), c.tenancy_id)
   end
 
+  def execute(%__MODULE__{core: core}, %C.ReversePayment{} = c) do
+    cmd = %{
+      tenancy_id: c.tenancy_id,
+      amount_cents: c.amount_cents,
+      reversed_on: c.reversed_on,
+      source_payment_id: c.source_payment_id,
+      recorded_on: booked_on(c),
+      reason: c.reason,
+      reverses: c.reverses
+    }
+
+    emit(Tenancy.decide_reversal(core, cmd), c.tenancy_id)
+  end
+
   def execute(%__MODULE__{core: core}, %C.CatchUp{} = c) do
     emit(
       Tenancy.decide_catch_up(core, %{as_of: c.as_of, recorded_on: booked_on(c)}),
@@ -122,7 +136,10 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
       occurred_on: e.occurred_on,
       recorded_on: e.recorded_on,
       amount_cents: e.amount_cents,
-      source_payment_id: e.source_payment_id
+      source_payment_id: e.source_payment_id,
+      # nil on the forward path; carried on the reversal path (ACL-1 §7).
+      reason: Map.get(e, :reason),
+      reverses: Map.get(e, :reverses)
     }
   end
 
@@ -185,7 +202,9 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
       occurred_on: to_date(e.occurred_on),
       recorded_on: to_date(e.recorded_on),
       amount_cents: e.amount_cents,
-      source_payment_id: e.source_payment_id
+      source_payment_id: e.source_payment_id,
+      reason: e.reason,
+      reverses: e.reverses
     }
   end
 

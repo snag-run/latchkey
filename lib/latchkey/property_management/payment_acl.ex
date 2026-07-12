@@ -31,9 +31,27 @@ defmodule Latchkey.PropertyManagement.PaymentAcl do
     is **logged and skipped**, not retried forever — a single mis-attributed fact
     must not wedge the subscription.
 
-  This module owns only the **forward** path (`PaymentReceived → RentPaymentRecorded`).
-  The reversal path (`PaymentReversed → negative RentPaymentRecorded`) is a separate
-  ticket; §10's "not seen yet vs never coming" reversal-ordering wrinkle is deferred.
+  ## Reversal path (`PaymentReversed → negative RentPaymentRecorded`)
+
+  A `PaymentReversed` translates to a **negative** `RentPaymentRecorded` carrying the
+  reversal's `reason` and its `reverses` link (the original payment id), so the timeline
+  (ADR 0006 §7) can render "Payment reversed — <reason>" and tie it to the credit it
+  undoes. Two seam-specific wrinkles:
+
+  - **Routing.** `PaymentReversed` carries no `holder`, so PM recovers the target
+    tenancy by reading the *source* accounts stream (the handler's `metadata.stream_id`)
+    for the original `PaymentReceived` (matched by `reverses`) and taking its holder.
+    This read is over the durable log, so it is replay-safe — no in-memory index that a
+    restart-from-checkpoint would lose. An `UNKNOWN`-held (or absent) original means PM
+    never recorded that money, so the reversal is skipped, never routed.
+  - **Defensive P2** (§5 P2). The `Tenancy` aggregate refuses (`:unknown_payment`) a
+    reversal whose `reverses` it never applied — a seam bug under today's single ordered
+    store. Like the forward path, that is logged and skipped, not retried forever.
+    §10's "not seen *yet*" vs "never coming" ordering wrinkle (once Accounts un-stubs)
+    is still deferred.
+
+  Both paths keep ACL-1's checkpoint + `source_payment_id` idempotency, so a re-seen
+  reversal is a harmless no-op re-folded on replay, never re-translated.
   """
   use Commanded.Event.Handler,
     application: Latchkey.CommandedApp,
@@ -45,8 +63,11 @@ defmodule Latchkey.PropertyManagement.PaymentAcl do
 
   alias Latchkey.Accounts
   alias Latchkey.Accounts.Events.PaymentReceived
+  alias Latchkey.Accounts.Events.PaymentReversed
   alias Latchkey.CommandedApp
+  alias Latchkey.EventStore
   alias Latchkey.PropertyManagement.Tenancy.Commands.RecordPayment
+  alias Latchkey.PropertyManagement.Tenancy.Commands.ReversePayment
 
   @ref_prefix "tenancy-"
 
@@ -70,6 +91,53 @@ defmodule Latchkey.PropertyManagement.PaymentAcl do
         )
 
         :ok
+    end
+  end
+
+  @impl Commanded.Event.Handler
+  def handle(%PaymentReversed{} = event, metadata) do
+    with {:ok, holder} <- source_holder(event.reverses, metadata),
+         true <- Accounts.known_holder?(holder),
+         {:ok, tenancy_id} <- ref_to_tenancy_id(holder),
+         {:ok, %ReversePayment{} = command} <- translate_reversal(event, tenancy_id) do
+      dispatch_reversal(command)
+    else
+      # The original payment never crossed the seam (UNKNOWN/blank/ill-formed holder)
+      # or PM cannot find it on the source stream: PM never recorded it, so there is
+      # nothing to reverse. Skip and advance the checkpoint.
+      false ->
+        :ok
+
+      :error ->
+        :ok
+
+      :not_found ->
+        Logger.warning(
+          "ACL-1 skipped reversal #{inspect(event.payment_id)}: original payment " <>
+            "#{inspect(event.reverses)} not found on source stream"
+        )
+
+        :ok
+
+      # A structurally-invalid date can never parse on retry — non-retryable skip.
+      {:error, :malformed_date} ->
+        Logger.warning(
+          "ACL-1 skipped reversal #{inspect(event.payment_id)}: malformed date " <>
+            "(occurred_on=#{inspect(event.occurred_on)}, recorded_on=#{inspect(event.recorded_on)})"
+        )
+
+        :ok
+
+      # A transient source-stream read failure (NOT a missing stream) may recover: return
+      # the error so Commanded does NOT advance the checkpoint and retries — a legit
+      # reversal must never be dropped on a recoverable read failure.
+      {:error, reason} = error ->
+        Logger.error(
+          "ACL-1 retrying reversal #{inspect(event.payment_id)}: source read failed " <>
+            "(#{inspect(reason)})"
+        )
+
+        error
     end
   end
 
@@ -98,6 +166,71 @@ defmodule Latchkey.PropertyManagement.PaymentAcl do
         error
     end
   end
+
+  defp dispatch_reversal(%ReversePayment{source_payment_id: id, tenancy_id: tid} = command) do
+    case CommandedApp.dispatch(command) do
+      :ok ->
+        :ok
+
+      # KNOWN, non-retryable seam bug (§5 P2): the aggregate refuses a reversal whose
+      # `reverses` it never recorded. Log and skip — a single mis-routed reversal must
+      # not wedge the subscription; advancing the checkpoint keeps it alive.
+      {:error, :unknown_payment} ->
+        Logger.warning(
+          "ACL-1 rejected reversal #{inspect(id)} for #{inspect(tid)}: " <>
+            "references a payment PM never recorded"
+        )
+
+        :ok
+
+      # KNOWN, non-retryable structural rejection: a non-negative "reversal" is malformed
+      # and never becomes valid on retry (it would inflate the balance). Log and skip.
+      {:error, :non_negative_reversal} ->
+        Logger.warning(
+          "ACL-1 rejected reversal #{inspect(id)} for #{inspect(tid)}: " <>
+            "amount is not negative (compensating)"
+        )
+
+        :ok
+
+      # Anything else (dispatch/consistency timeout, infrastructure failure) may be
+      # transient: return the error so Commanded does NOT advance the checkpoint and
+      # the handler retries — a dropped reversal must never happen on a recoverable one.
+      {:error, reason} = error ->
+        Logger.error(
+          "ACL-1 retrying reversal #{inspect(id)} for #{inspect(tid)}: #{inspect(reason)}"
+        )
+
+        error
+    end
+  end
+
+  # `PaymentReversed` carries no `holder`; recover the original payment's holder by
+  # reading the *source* accounts stream (the handler's `metadata.stream_id`) for the
+  # `PaymentReceived` whose `payment_id` is the reversal's `reverses`. Reading the
+  # durable log (not an in-memory index) keeps routing replay-safe across restarts.
+  defp source_holder(reverses, %{stream_id: stream_id}) when is_binary(stream_id) do
+    case EventStore.stream_forward(stream_id) do
+      # A *missing* source stream is permanent: PM cannot route this reversal, so skip
+      # it as "original not found" (advance the checkpoint) rather than retry forever.
+      {:error, :stream_not_found} ->
+        :not_found
+
+      # Any OTHER read error may be transient (adapter/connection failure) — surface it
+      # so the caller returns it and Commanded retries WITHOUT advancing the checkpoint.
+      # Swallowing it here would drop a legit reversal.
+      {:error, _reason} = error ->
+        error
+
+      stream ->
+        Enum.find_value(stream, :not_found, fn
+          %{data: %PaymentReceived{payment_id: ^reverses, holder: holder}} -> {:ok, holder}
+          _other -> nil
+        end)
+    end
+  end
+
+  defp source_holder(_reverses, _metadata), do: :not_found
 
   # ── pure translation (Accounts fact → PM command) ─────────────────────────────
 
@@ -131,6 +264,36 @@ defmodule Latchkey.PropertyManagement.PaymentAcl do
       false -> :skip
       :error -> :skip
       {:error, :malformed_date} = err -> err
+    end
+  end
+
+  @doc """
+  Translate a `PaymentReversed` fact — with its target `tenancy_id` already resolved
+  from the source stream — into a **negative** `ReversePayment` command carrying the
+  reversal's `reason` and `reverses` (the original payment id). Returns
+  `{:error, :malformed_date}` when a carried date is neither a `%Date{}` nor a parseable
+  ISO-8601 string (handled as a non-retryable skip at the call site).
+
+  Pure and total: the impure part (recovering the holder/`tenancy_id`) is done by the
+  handler; this function is the deterministic fact→command translation, unit-testable
+  without a store. The reversal's own `payment_id` becomes the command's idempotency key
+  (`source_payment_id`); `amount_cents` is already negative (Accounts' sign invariant).
+  """
+  @spec translate_reversal(PaymentReversed.t(), String.t()) ::
+          {:ok, ReversePayment.t()} | {:error, :malformed_date}
+  def translate_reversal(%PaymentReversed{} = event, tenancy_id) do
+    with {:ok, reversed_on} <- to_date(event.occurred_on),
+         {:ok, recorded_on} <- to_date(event.recorded_on) do
+      {:ok,
+       %ReversePayment{
+         tenancy_id: tenancy_id,
+         amount_cents: event.amount_cents,
+         reversed_on: reversed_on,
+         recorded_on: recorded_on,
+         source_payment_id: event.payment_id,
+         reason: event.reason,
+         reverses: event.reverses
+       }}
     end
   end
 
