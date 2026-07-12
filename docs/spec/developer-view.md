@@ -185,13 +185,15 @@ asymmetry rather than force-fitting:
   second implementation of the D1 fold; explicitly rejected ("no JS as the source
   of truth"). The scrubber's whole state is one integer **`k`** (current position)
   in socket assigns; each change recomputes the panes via the **shared fold over
-  the prefix `events[0..k]`**. Streams are short, so per-step server recompute is
-  cheap.
-- **UX:** a position slider over `[0..N]`, plus step-back / step-forward and a
-  **play/pause** that auto-advances one event per ~1s (tunable LiveView timer tick,
-  halting at the head). At position `k`: highlight event `k` in the events pane and
-  rebuild the **aggregate**, **read-model**, and **ledger** panes as-of `[0..k]`,
-  with `days_behind` as-at event `k`'s `occurred_on` (D1).
+  the first `k` events (`Enum.take(events, k)`)**. Streams are short, so per-step
+  server recompute is cheap.
+- **UX:** `k` is a **prefix length** over `0..N` (`N` = event count) — `k = 0` is the
+  empty prefix (before any event), `k = N` is the head (all `N` events). A position
+  slider over that range, plus step-back / step-forward and a **play/pause** that
+  auto-advances one event per ~1s (tunable LiveView timer tick, halting at the head).
+  At position `k > 0`: highlight event `k - 1` (the last event in the prefix) and
+  rebuild the **aggregate**, **read-model**, and **ledger** panes as-of the first `k`
+  events, with `days_behind` as-at that event's `occurred_on` (D1).
 - **Scrubber only on streams with state to fold — tenancy streams.** The Accounts
   `"accounts"` stream is events-only (no scrubber; at most a position highlighter),
   consistent with D3.

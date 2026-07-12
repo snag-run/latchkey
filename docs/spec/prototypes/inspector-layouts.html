@@ -202,7 +202,7 @@ function money(c){ if(c==null)return'—'; const neg=c<0; const v=Math.abs(c)/10
 /* ---------- fake domain data (shaped like the real thing) ---------- */
 const TENANTS = {
   'paid-up':          {name:'Amara Okafor',   addr:'12/45 Marrickville Rd, Marrickville NSW 2204', tag:'Paid up',              tone:'ok'},
-  'arrears-no-notice':{name:'Daniel Whitmore', addr:'3/210 Enmore Rd, Enmore NSW 2042',            tag:'20 days behind',       tone:'crit'},
+  'arrears-no-notice':{name:'Daniel Whitmore', addr:'3/210 Enmore Rd, Enmore NSW 2042',            tag:'14 days behind',       tone:'crit'},
   'notice-then-paid': {name:'Priya Nair',      addr:'8/17 Addison Rd, Petersham NSW 2049',         tag:'Notice, then paid up', tone:'info'},
 };
 const RENT = 50000;
@@ -249,7 +249,7 @@ const STREAMS = {
     {t:'PaymentReceived', o:-33,r:-33, pid:'pay-101', amt:RENT, holder:'tenancy-arrears-no-notice'},
     {t:'PaymentReceived', o:-29,r:-29, pid:'pay-001', amt:RENT, holder:'tenancy-paid-up'},
     {t:'PaymentReceived', o:-38,r:-38, pid:'pay-201', amt:RENT, holder:'tenancy-notice-then-paid'},
-    {t:'PaymentReversed', o:-33,r:-33, pid:'pay-201', reverses:'pay-201', amt:-RENT, reason:'dishonoured (bounced)'},
+    {t:'PaymentReversed', o:-33,r:-33, pid:'pay-201', reverses:'pay-201', amt:-RENT, reason:'dishonoured (bounced)', holder:'tenancy-notice-then-paid'},
     {t:'PaymentReceived', o:-26,r:-26, pid:'pay-102', amt:RENT, holder:'tenancy-arrears-no-notice'},
     {t:'PaymentReceived', o:-18,r:-18, pid:'pay-777', amt:60000, holder:'UNKNOWN'},
     {t:'PaymentReceived', o:-14,r:-14, pid:'pay-202', amt:350000, holder:'tenancy-notice-then-paid'},
@@ -436,7 +436,8 @@ function crumbHTML(){
   if(APP.view==='landing') return '<span class="crumb">Orientation map</span>';
   const id=APP.stream, ctx=STREAMS[id].context;
   const cn=CONTEXTS.find(c=>c.id===ctx);
-  return `<span class="crumb"><a onclick="goLanding()">Contexts</a> / ${cn.name}${cn.agg?' / '+cn.agg:''} / <b style="color:var(--ink)">tenancy-${id}${ctx==='accounts'?'':''}</b></span>`;
+  const label = ctx==='accounts' ? id : `tenancy-${id}`;
+  return `<span class="crumb"><a onclick="goLanding()">Contexts</a> / ${cn.name}${cn.agg?' / '+cn.agg:''} / <b style="color:var(--ink)">${label}</b></span>`;
 }
 function streamLabel(id){
   if(id==='accounts') return {name:'accounts', sub:'edge stream — all payment facts', sid:'accounts'};
@@ -726,8 +727,8 @@ function stepFwd(){ if(APP.k<streamCount(APP.stream)){APP.k++; APP.following=(AP
 function playPause(){
   if(playTimer){ clearInterval(playTimer); playTimer=null; render(); return; }
   if(APP.k>=streamCount(APP.stream)) APP.k=1;
-  render();
   playTimer=setInterval(()=>{ if(APP.k>=streamCount(APP.stream)){clearInterval(playTimer);playTimer=null;render();return;} APP.k++; updatePanes(); },900);
+  render();
 }
 function selectStream(id){ stopPlay(); APP.view='stream'; APP.stream=id; APP.k=streamCount(id); APP.following=true; render(); }
 function goLanding(){ stopPlay(); APP.view='landing'; render(); }
