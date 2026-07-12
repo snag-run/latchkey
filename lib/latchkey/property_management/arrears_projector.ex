@@ -13,8 +13,7 @@ defmodule Latchkey.PropertyManagement.ArrearsProjector do
 
   alias Latchkey.EventStore
   alias Latchkey.PropertyManagement.Arrears
-  alias Latchkey.PropertyManagement.Tenancy
-  alias Latchkey.PropertyManagement.Tenancy.Aggregate
+  alias Latchkey.PropertyManagement.ArrearsFold
   alias Latchkey.PropertyManagement.Tenancy.Events, as: E
 
   def handle(%E.TenancyCommenced{tenancy_id: tid}, _meta), do: project(tid)
@@ -25,11 +24,15 @@ defmodule Latchkey.PropertyManagement.ArrearsProjector do
   def handle(%E.TenancySettled{tenancy_id: tid}, _meta), do: project(tid)
 
   defp project(tenancy_id) do
-    core = fold_stream(tenancy_id)
+    # Rebuild by folding the whole stream through the shared fold-and-derive
+    # (spec D1) — the same code path the read-only inspector runs over a prefix, so
+    # the two can never drift. The read model is disposable/rebuildable from the log.
+    derived = fold_stream(tenancy_id)
 
-    # Persist only the event-driven pointer. `days_behind` is derived on read
+    # Persist only the event-driven pointers. `days_behind` is derived on read
     # (Arrears.days_behind/2, ADR 0005 decision 6) — no frozen `as_of` here, so an
-    # idle arrears tenant's counter climbs from the clock with no new event.
+    # idle arrears tenant's counter climbs from the clock with no new event; the
+    # `days_behind` the shared fold computes is unused on this write path.
     # `balance_cents` is the **live** fold — it keeps moving on post-terminal
     # payments. `final_balance_cents` is the **frozen** settlement snapshot captured
     # in the `TenancySettled` fold; refolding never re-derives it, so a later payment
@@ -37,21 +40,20 @@ defmodule Latchkey.PropertyManagement.ArrearsProjector do
     Arrears
     |> Ash.Changeset.for_create(:upsert, %{
       tenancy_id: tenancy_id,
-      status: core.status,
-      balance_cents: Tenancy.balance_cents(core),
-      oldest_unpaid_due_date: Tenancy.oldest_unpaid_due_date(core),
-      final_balance_cents: core.final_balance_cents
+      status: derived.status,
+      balance_cents: derived.balance_cents,
+      oldest_unpaid_due_date: derived.oldest_unpaid_due_date,
+      final_balance_cents: derived.final_balance_cents
     })
     |> Ash.create!()
 
     :ok
   end
 
-  # Rebuild by folding the whole stream — the read model is disposable.
   defp fold_stream(tenancy_id) do
     ("tenancy-" <> tenancy_id)
     |> EventStore.stream_forward()
-    |> Enum.reduce(%Aggregate{}, fn recorded, agg -> Aggregate.apply(agg, recorded.data) end)
-    |> Map.fetch!(:core)
+    |> Enum.map(& &1.data)
+    |> ArrearsFold.fold_and_derive()
   end
 end
