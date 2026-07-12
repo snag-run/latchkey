@@ -4,9 +4,15 @@ defmodule LatchkeyWeb.InspectorLive do
   decisions D2/D3/D6).
 
   This slice is the **web spine**: the public `/inspector` route, the Workbench
-  shell (nav rail · content · firehose placeholder), and the orientation-map
-  landing. Deeper slices hang the three-pane fold, the replay scrubber, and the
-  live firehose off this shell.
+  shell (nav rail · content · live firehose), and the orientation-map landing.
+  Deeper slices hang the three-pane fold and the replay scrubber off this shell.
+
+  The firehose (spec D5) subscribes to `Latchkey.Inspector.Broadcaster`'s
+  global `dev:events` PubSub topic on connected mount and appends new events
+  live via a LiveView stream (`LatchkeyWeb.Inspector.Firehose`), following at
+  head. Each row is clickable and carries its `{stream_id, position}`, but
+  navigating into a stream-detail view at that position is issue #86 — this
+  slice only acknowledges the click structurally.
 
   Strictly read-only: it navigates and renders domain-event data. It issues no
   commands and exposes no create/update/delete affordance. The log is
@@ -14,9 +20,16 @@ defmodule LatchkeyWeb.InspectorLive do
   """
   use LatchkeyWeb, :live_view
 
+  import LatchkeyWeb.Inspector.Firehose
   import LatchkeyWeb.InspectorComponents
 
+  alias Latchkey.Inspector.Broadcaster
   alias Latchkey.PropertyManagement.Arrears
+
+  # Bound on the firehose feed's live retained rows — old rows fall off the head
+  # as new ones arrive, so the stream can't balloon memory over a long-running
+  # session (spec D5: "LiveView streams ... so the feed can't balloon memory").
+  @firehose_limit 200
 
   # ── Static context map (spec D2/D3) ─────────────────────────────────────────
   # The named-only subdomains (context-map.md) — rendered as honestly-labelled
@@ -63,6 +76,12 @@ defmodule LatchkeyWeb.InspectorLive do
     tenancy_context = Map.put(@tenancy_context_base, :streams, list_tenancy_streams())
     contexts = [tenancy_context, @accounts_context]
 
+    # Connected mount only (spec D5) — the static render on initial HTTP GET
+    # doesn't need a live subscription, only the socket that survives.
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(Latchkey.PubSub, Broadcaster.global_topic())
+    end
+
     socket =
       socket
       |> assign(:contexts, contexts)
@@ -72,6 +91,7 @@ defmodule LatchkeyWeb.InspectorLive do
       |> assign(:acl_edge_label, @acl_edge_label)
       |> assign(:docs, @docs)
       |> assign(:stream_found?, false)
+      |> stream(:firehose, [])
 
     {:ok, socket}
   end
@@ -80,6 +100,45 @@ defmodule LatchkeyWeb.InspectorLive do
   def handle_params(params, _uri, socket) do
     {:noreply, apply_action(socket, socket.assigns.live_action, params)}
   end
+
+  # ── Live firehose (spec D5) ─────────────────────────────────────────────────
+  # Every event Latchkey.Inspector.Broadcaster re-broadcasts lands here. This is
+  # the "follow at head" half of D5 — the pinned-when-parked scrub interaction
+  # is owned by the (not-yet-built) stream-detail view.
+  @impl true
+  def handle_info({:dev_event, event, metadata}, socket) do
+    row = to_firehose_row(event, metadata)
+
+    {:noreply, stream_insert(socket, :firehose, row, at: 0, limit: @firehose_limit)}
+  end
+
+  # Structural click-to-scrub only (spec D5 / issue #82 scope): the row already
+  # carries its {stream_id, position}, but there is no stream-detail view to
+  # navigate into yet — that lands at issue #86, once it exists. Never use a
+  # ~p route to a path that doesn't compile.
+  @impl true
+  def handle_event(
+        "firehose_row_click",
+        %{"stream_id" => _stream_id, "position" => _position},
+        socket
+      ) do
+    # Deferred to #86: navigate to the stream-detail view, scrubbed to this
+    # {stream_id, position}. (Not spelled as a TODO tag — this repo's credo
+    # config fails the gate on Credo.Check.Design.TagTODO.)
+    {:noreply, socket}
+  end
+
+  defp to_firehose_row(event, %{event_number: event_number, stream_id: stream_id} = metadata) do
+    %{
+      id: event_number,
+      stream_id: stream_id,
+      position: Map.get(metadata, :stream_version),
+      event_type: event_type(event),
+      timestamp: Map.get(metadata, :created_at)
+    }
+  end
+
+  defp event_type(%module{}), do: module |> Module.split() |> List.last()
 
   defp apply_action(socket, :landing, _params) do
     socket
@@ -146,7 +205,7 @@ defmodule LatchkeyWeb.InspectorLive do
           </main>
 
           <aside class="w-72 shrink-0 border-l border-base-300 bg-base-100">
-            <.firehose_placeholder />
+            <.firehose_feed stream={@streams.firehose} />
           </aside>
         </div>
       </div>

@@ -5,9 +5,9 @@ defmodule LatchkeyWeb.InspectorComponents do
 
   These render the **Workbench** shell from the layout spike: a
   context → aggregate → stream nav rail, the orientation-map landing (the two
-  live context boxes, the ACL-1 seam edge, and the named-only static boxes), the
-  firehose right-rail placeholder, and interaction-anchored teaching captions
-  (spec developer-view.md, D2/D3).
+  live context boxes, the ACL-1 seam edge, and the named-only static boxes), and
+  interaction-anchored teaching captions (spec developer-view.md, D2/D3). The
+  live firehose feed itself is `LatchkeyWeb.Inspector.Firehose` (D5).
 
   Everything here is **read-only**: it navigates and renders, never mutating. No
   component issues commands or exposes an edit/delete affordance.
@@ -190,33 +190,6 @@ defmodule LatchkeyWeb.InspectorComponents do
         </span>
       </.link>
     </div>
-    """
-  end
-
-  @doc """
-  Right-rail firehose placeholder. The live feed itself lands in a later slice
-  (#82); here we render a labelled empty region so the shell shows where it goes.
-  """
-  def firehose_placeholder(assigns) do
-    ~H"""
-    <aside
-      id="firehose-placeholder"
-      aria-label="Live event firehose (placeholder)"
-      class="flex flex-col h-full"
-    >
-      <div class="flex items-baseline justify-between gap-2 px-3.5 py-3 border-b border-base-300">
-        <span class="text-xs font-bold uppercase tracking-wide text-base-content/70">
-          Firehose
-        </span>
-        <span class="font-mono text-[11px] text-base-content/50">dev:events</span>
-      </div>
-      <div class="flex-1 grid place-items-center p-4 text-center">
-        <p class="text-xs text-base-content/50 max-w-[24ch]">
-          The live event feed arrives in a later slice. Events will stream in here as the
-          simulation emits them.
-        </p>
-      </div>
-    </aside>
     """
   end
 
