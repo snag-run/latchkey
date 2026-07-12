@@ -20,11 +20,11 @@ defmodule LatchkeyWeb.InspectorLiveTest do
 
   describe "route" do
     test "/inspector is reachable, public and renders the shell", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/inspector")
+      {:ok, view, _html} = live(conn, ~p"/inspector")
 
       assert has_element?(view, "#inspector")
       assert has_element?(view, "#inspector-nav")
-      assert html =~ "/inspector"
+      assert has_element?(view, "#orientation-map")
     end
 
     test "the shell is read-only — no mutating form on the landing", %{conn: conn} do
@@ -50,8 +50,7 @@ defmodule LatchkeyWeb.InspectorLiveTest do
     test "renders the ACL-1 seam edge with the language-flip label", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/inspector")
 
-      assert has_element?(view, "#acl-1-edge")
-      assert view |> element("#acl-1-edge") |> render() =~ "payment → arrears reduction"
+      assert has_element?(view, "#acl-1-edge", "payment → arrears reduction")
     end
 
     test "carries a read-more link out to the canonical docs", %{conn: conn} do
@@ -109,6 +108,15 @@ defmodule LatchkeyWeb.InspectorLiveTest do
       assert has_element?(view, "#stream-view-tenancy-paid-up")
       # nav marks it active
       assert has_element?(view, "#nav-stream-tenancy-paid-up.bg-primary\\/10")
+    end
+
+    test "an unknown stream id surfaces not-found, not a defaulted context", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/inspector/streams/does-not-exist")
+
+      assert has_element?(view, "#stream-not-found")
+      # it must NOT masquerade as a valid stream/context view
+      refute has_element?(view, "#stream-view")
+      refute has_element?(view, "#inspector-breadcrumb")
     end
   end
 

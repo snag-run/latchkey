@@ -71,6 +71,7 @@ defmodule LatchkeyWeb.InspectorLive do
       |> assign(:named_contexts, @named_contexts)
       |> assign(:acl_edge_label, @acl_edge_label)
       |> assign(:docs, @docs)
+      |> assign(:stream_found?, false)
 
     {:ok, socket}
   end
@@ -87,10 +88,23 @@ defmodule LatchkeyWeb.InspectorLive do
   end
 
   defp apply_action(socket, :stream, %{"stream_id" => stream_id}) do
-    socket
-    |> assign(:page_title, "Inspector — #{stream_id}")
-    |> assign(:active_stream, stream_id)
-    |> assign(:context_name, context_name_for(stream_id))
+    # Validate against the streams enumerable at mount, so a typo'd or stale URL
+    # surfaces as "unknown" instead of masquerading as a valid Tenancy stream.
+    case owning_context(socket.assigns.contexts, stream_id) do
+      nil ->
+        socket
+        |> assign(:page_title, "Inspector — unknown stream")
+        |> assign(:active_stream, nil)
+        |> assign(:stream_found?, false)
+        |> assign(:unknown_stream_id, stream_id)
+
+      context ->
+        socket
+        |> assign(:page_title, "Inspector — #{stream_id}")
+        |> assign(:active_stream, stream_id)
+        |> assign(:stream_found?, true)
+        |> assign(:context_name, context.name)
+    end
   end
 
   @impl true
@@ -108,23 +122,26 @@ defmodule LatchkeyWeb.InspectorLive do
 
         <div class="flex flex-1 min-w-0">
           <main class="flex-1 min-w-0 overflow-y-auto p-6">
-            <%= if @live_action == :stream do %>
-              <nav id="inspector-breadcrumb" class="mb-4 text-xs text-base-content/50">
-                <.link patch={~p"/inspector"} class="hover:text-base-content">Contexts</.link>
-                <span aria-hidden="true">/</span>
-                <span class="text-base-content">{@context_name}</span>
-                <span aria-hidden="true">/</span>
-                <span class="font-mono text-base-content">{@active_stream}</span>
-              </nav>
-              <.stream_placeholder stream_id={@active_stream} context_name={@context_name} />
-            <% else %>
-              <.orientation_map
-                deep_context={@tenancy_context}
-                edge_context={@accounts_context}
-                named_contexts={@named_contexts}
-                acl_edge_label={@acl_edge_label}
-                docs={@docs}
-              />
+            <%= cond do %>
+              <% @live_action == :stream and @stream_found? -> %>
+                <nav id="inspector-breadcrumb" class="mb-4 text-xs text-base-content/50">
+                  <.link patch={~p"/inspector"} class="hover:text-base-content">Contexts</.link>
+                  <span aria-hidden="true">/</span>
+                  <span class="text-base-content">{@context_name}</span>
+                  <span aria-hidden="true">/</span>
+                  <span class="font-mono text-base-content">{@active_stream}</span>
+                </nav>
+                <.stream_placeholder stream_id={@active_stream} context_name={@context_name} />
+              <% @live_action == :stream -> %>
+                <.stream_not_found stream_id={@unknown_stream_id} />
+              <% true -> %>
+                <.orientation_map
+                  deep_context={@tenancy_context}
+                  edge_context={@accounts_context}
+                  named_contexts={@named_contexts}
+                  acl_edge_label={@acl_edge_label}
+                  docs={@docs}
+                />
             <% end %>
           </main>
 
@@ -166,6 +183,9 @@ defmodule LatchkeyWeb.InspectorLive do
     end
   end
 
-  defp context_name_for("accounts"), do: @accounts_context.name
-  defp context_name_for(_stream_id), do: @tenancy_context_base.name
+  # The context that owns `stream_id`, or nil if no live stream matches. Streams
+  # are enumerated at mount, so this is an exact membership check — not a guess.
+  defp owning_context(contexts, stream_id) do
+    Enum.find(contexts, fn ctx -> Enum.any?(ctx.streams, &(&1.id == stream_id)) end)
+  end
 end

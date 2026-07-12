@@ -246,6 +246,32 @@ defmodule LatchkeyWeb.InspectorComponents do
     """
   end
 
+  @doc """
+  Shown when a `/inspector/streams/:id` URL names no known stream (a typo'd or
+  stale link). Surfaces the unknown id honestly rather than defaulting to a
+  context, with a way back to the orientation map.
+  """
+  attr :stream_id, :string, required: true
+
+  def stream_not_found(assigns) do
+    ~H"""
+    <section id="stream-not-found" class="max-w-2xl">
+      <div class="rounded-xl border border-warning/50 bg-base-100 p-6">
+        <p class="text-[11px] font-semibold uppercase tracking-widest text-warning">
+          Unknown stream
+        </p>
+        <h2 class="mt-1 text-lg font-semibold font-mono">{@stream_id}</h2>
+        <.caption class="mt-3">
+          No live stream matches this id. It may be a stale or mistyped link.
+          <.link patch={~p"/inspector"} class="font-semibold text-primary">
+            Back to the map →
+          </.link>
+        </.caption>
+      </div>
+    </section>
+    """
+  end
+
   @doc "A thin, interaction-anchored teaching caption (spec D2 altitude split)."
   attr :class, :string, default: nil
   slot :inner_block, required: true
