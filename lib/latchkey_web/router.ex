@@ -18,6 +18,16 @@ defmodule LatchkeyWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+
+    # Public, read-only ES/DDD inspector (spec developer-view.md, D6). Deliberately
+    # NOT behind the `dev_routes` compile flag below: it is enabled in all envs
+    # (incl. prod) so it can serve as a shareable portfolio artifact. It renders
+    # domain-event data only — never runtime/system internals (those stay behind
+    # the compile-gated LiveDashboard). No auth in v1; no commands, no mutation.
+    live_session :inspector do
+      live "/inspector", InspectorLive, :landing
+      live "/inspector/streams/:stream_id", InspectorLive, :stream
+    end
   end
 
   # Other scopes may use custom stacks.
