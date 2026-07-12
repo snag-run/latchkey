@@ -63,12 +63,31 @@ reproduces identical identities. Slug ids stay stable and legible.
 
 ### 3. The demo store is periodically reset-to-healthy via a config-guarded Oban cron
 
-A monthly `Oban.Plugins.Cron` job wipes the store and reseeds a fresh board anchored to
-the new `today`, so the board stays curated without anyone operating it. The runtime
-reset — pause the projector → reset the EventStore streams/subscriptions → truncate the
-read tables (`Arrears`, `Directory`) → restart the projector from `:origin` → reseed —
-is designed as a single operation, **guarded behind a config flag** so it can only fire
-in the demo environment and never a store with data worth keeping.
+A monthly `Oban.Plugins.Cron` job wipes the **simulation-owned** data and reseeds a
+fresh board anchored to the new `today`, so the board stays curated without anyone
+operating it. The runtime reset — pause the projector → delete the simulation event
+streams + their subscriptions → truncate the simulation read models (`Arrears`,
+`Directory`) → restart the projector from `:origin` → reseed — is designed as a single
+operation.
+
+Crucially, reset is scoped by an **allowlist of simulation-owned data, never a blanket
+store/database drop**. It deletes only the simulation event streams (`tenancy-*`, the
+Accounts stream) and truncates only the projections derived from them; **durable
+application data — users/auth and anything not derived from the simulation — is
+explicitly preserved**. That allowlist is the primary safety boundary: the reset can
+regenerate the board without ever being able to touch data it did not seed.
+
+The guard also **fails closed**: the job reads an explicit demo-reset config flag that
+is set *only* in the demo environment; absent (or false), the job is a hard no-op that
+touches nothing — so a mis-scoped deploy or a config regression can never fire the reset
+at all. Reset is a destructive default-deny, not a default-allow.
+
+Recovery is **re-run, not repair**. The reset is a full wipe-then-reseed to a board that
+is a pure function of `today` (decision 9 / decision 2 above), so it is idempotent under
+interruption or retry: a reset that dies partway is recovered by simply running it again
+— it never leaves a half-seeded store to be hand-mended. This matches the seeder's
+existing fresh-store contract (ADR 0005 / the seeder: drop-and-recreate, not in-place
+repair).
 
 - *Rejected — leave reset as the manual `mix ecto.reset && mix run priv/repo/seeds.exs`
   convention.* Fine for a developer at a keyboard, but the goal is an unattended demo
