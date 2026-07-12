@@ -163,21 +163,85 @@ defmodule Latchkey.Simulation.BehaviourTest do
     end
   end
 
-  describe "decide/3 (the live per-day maybe)" do
-    test "returns the single payment received that day" do
+  describe "decide/3 (the live per-day payments)" do
+    test "returns the single payment received that day, as a list" do
       profile = Profile.reliable()
 
-      assert %PaymentReceived{payment_id: "tenancy-t1-pmt-1"} =
+      assert [%PaymentReceived{payment_id: "tenancy-t1-pmt-1"}] =
                Behaviour.decide(profile, schedule(3), ~D[2026-01-12])
     end
 
-    test "returns nil on a day with no payment" do
-      assert Behaviour.decide(Profile.reliable(), schedule(3), ~D[2026-01-13]) == nil
+    test "returns [] on a day with no payment" do
+      assert Behaviour.decide(Profile.reliable(), schedule(3), ~D[2026-01-13]) == []
     end
 
-    test "returns nil on a missed period's due date" do
+    test "returns [] on a missed period's due date" do
       profile = Profile.with_override(Profile.reliable(), 0, :miss)
-      assert Behaviour.decide(profile, schedule(3), @first_due) == nil
+      assert Behaviour.decide(profile, schedule(3), @first_due) == []
+    end
+
+    test "returns every payment when a late override collides with a later due date" do
+      # Period 0 paid 7 days late lands on period 1's own due date — both are due that
+      # day. Returning a single payment would silently drop one; decide/3 must not.
+      profile = Profile.with_override(Profile.reliable(), 0, {:pay, offset: 7})
+      collision_date = Date.add(@first_due, 7)
+
+      assert [
+               %PaymentReceived{payment_id: "tenancy-t1-pmt-0"},
+               %PaymentReceived{payment_id: "tenancy-t1-pmt-1"}
+             ] = Behaviour.decide(profile, schedule(3), collision_date)
+    end
+
+    test "iterating decide/3 over every date reproduces payments/2 exactly" do
+      # A schedule with a same-day collision, so the reconciliation is non-trivial.
+      profile = Profile.with_override(Profile.reliable(), 0, {:pay, offset: 7})
+      sched = schedule(3)
+      full = Behaviour.payments(profile, sched)
+
+      dates = full |> Enum.map(& &1.occurred_on) |> Enum.uniq()
+      reconstructed = Enum.flat_map(dates, &Behaviour.decide(profile, sched, &1))
+
+      assert shape(reconstructed) == shape(full)
+    end
+  end
+
+  describe "archetype option validation" do
+    test "deteriorating rejects a negative step_days (would pay before the due date)" do
+      assert_raise ArgumentError, fn -> Profile.deteriorating(step_days: -1) end
+    end
+
+    test "deteriorating rejects a non-positive period_length_days" do
+      assert_raise ArgumentError, fn -> Profile.deteriorating(period_length_days: 0) end
+    end
+
+    test "deteriorating rejects a negative grace_periods" do
+      assert_raise ArgumentError, fn -> Profile.deteriorating(grace_periods: -1) end
+    end
+
+    test "sporadic rejects a pay_probability above 1.0 (would always pay)" do
+      assert_raise ArgumentError, fn -> Profile.sporadic(pay_probability: 2.0) end
+    end
+
+    test "sporadic rejects a negative pay_probability" do
+      assert_raise ArgumentError, fn -> Profile.sporadic(pay_probability: -0.1) end
+    end
+
+    test "sporadic rejects a negative max_late_days" do
+      assert_raise ArgumentError, fn -> Profile.sporadic(max_late_days: -1) end
+    end
+  end
+
+  describe "override validation" do
+    test "rejects a non-positive amount_cents (Accounts rejects it downstream)" do
+      assert_raise ArgumentError, fn ->
+        Profile.with_override(Profile.reliable(), 0, {:pay, amount_cents: 0})
+      end
+    end
+
+    test "rejects a negative offset (payment before its due date)" do
+      assert_raise ArgumentError, fn ->
+        Profile.with_override(Profile.reliable(), 1, {:pay, offset: -1})
+      end
     end
   end
 

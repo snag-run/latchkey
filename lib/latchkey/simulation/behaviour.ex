@@ -1,7 +1,7 @@
 defmodule Latchkey.Simulation.Behaviour do
   @moduledoc """
   The tenant behaviour engine — the one simulated actor (ADR 0005 decision 8). A
-  **pure** function `(profile, schedule, date) → maybe PaymentReceived` that turns a
+  **pure** function `(profile, schedule, date) → [PaymentReceived]` that turns a
   deterministic archetype (`Latchkey.Simulation.Behaviour.Profile`) and a payment
   `Latchkey.Simulation.Schedule` into `Latchkey.Accounts.Events.PaymentReceived`
   facts. Those facts are appended to the Accounts stream and cross ACL-1 into PM's
@@ -19,9 +19,12 @@ defmodule Latchkey.Simulation.Behaviour do
     * `payments/2` — the full ordered sequence of `PaymentReceived` the tenant makes
       over the whole schedule (missed periods produce nothing). This is the primary
       surface for seeding and for Seam-1 tests.
-    * `decide/3` — the live per-day call: the single payment (if any) whose received
-      date is `date`, else `nil`. The engine's archetypes and builders guarantee at
-      most one payment per date, so this is a genuine *maybe*.
+    * `decide/3` — the live per-day call: **all** the payments whose received date is
+      `date`, as a list (empty when the tenant pays nothing that day). Usually a day
+      yields at most one payment, but a scripted override paying an earlier period
+      late can land on a later period's due date, so the call returns every payment
+      due that day rather than silently dropping the collision. Iterating `decide/3`
+      over every date reproduces `payments/2` exactly.
 
   ## `payment_id` and idempotency
 
@@ -65,15 +68,20 @@ defmodule Latchkey.Simulation.Behaviour do
   end
 
   @doc """
-  The single `PaymentReceived` whose received date is `date`, or `nil` when the
-  tenant pays nothing that day. This is the live loop's daily call
-  (`decide(profile, schedule, Clock.today())`).
+  Every `PaymentReceived` whose received date is `date`, in `payments/2` order (the
+  empty list when the tenant pays nothing that day). This is the live loop's daily
+  call (`decide(profile, schedule, Clock.today())`).
+
+  A day usually yields at most one payment, but a scripted override paying an earlier
+  period late can collide with a later period's due date; returning a list rather than
+  a single `PaymentReceived` guarantees no same-day payment is ever silently dropped.
+  Iterating this over every date reproduces `payments/2` exactly.
   """
-  @spec decide(Profile.t(), Schedule.t(), Date.t()) :: PaymentReceived.t() | nil
+  @spec decide(Profile.t(), Schedule.t(), Date.t()) :: [PaymentReceived.t()]
   def decide(%Profile{} = profile, %Schedule{} = schedule, %Date{} = date) do
     profile
     |> payments(schedule)
-    |> Enum.find(fn %PaymentReceived{occurred_on: on} -> Date.compare(on, date) == :eq end)
+    |> Enum.filter(fn %PaymentReceived{occurred_on: on} -> Date.compare(on, date) == :eq end)
   end
 
   # ── per-period action: scripted override wins, else the archetype rule ────────
