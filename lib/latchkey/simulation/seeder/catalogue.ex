@@ -207,6 +207,9 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
       end_age = notice_age - (14 + rem(idx, 2) * @week)
       overstay = rem(idx, 3) * 3
 
+      %{notice: notice, exit: exit_step} =
+        terminal_steps(today, notice_age, end_age, end_age - overstay)
+
       %Scenario{
         label: "exited-#{pad(idx + 1)}",
         tenancy_id: "exited-#{pad(idx + 1)}",
@@ -214,12 +217,8 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
         first_due_date: days_before(today, first_unpaid_age + paid * @week),
         profile: Profile.reliable(),
         schedule_count: paid,
-        notice: %{
-          given_on: days_before(today, notice_age),
-          as_of: days_before(today, notice_age),
-          termination_date: days_before(today, end_age)
-        },
-        exit: %{keys_on: days_before(today, end_age - overstay)}
+        notice: notice,
+        exit: exit_step
       }
     end
   end
@@ -247,6 +246,9 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
     prior_paid = 1 + rem(idx, 3)
     prior_keys_age = prior_end_age - rem(idx, 2) * 4
 
+    %{notice: notice, exit: exit_step} =
+      terminal_steps(today, prior_notice_age, prior_end_age, prior_keys_age)
+
     prior = %Scenario{
       label: "relet-#{n}-prior",
       tenancy_id: "relet-#{n}-prior",
@@ -255,12 +257,8 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
       first_due_date: days_before(today, prior_first_unpaid_age + prior_paid * @week),
       profile: Profile.reliable(),
       schedule_count: prior_paid,
-      notice: %{
-        given_on: days_before(today, prior_notice_age),
-        as_of: days_before(today, prior_notice_age),
-        termination_date: days_before(today, prior_end_age)
-      },
-      exit: %{keys_on: days_before(today, prior_keys_age)}
+      notice: notice,
+      exit: exit_step
     }
 
     # Current leg: a new tenancy on the same premises, commencing 2–4 weeks after the
@@ -285,6 +283,21 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   end
 
   # ── helpers ───────────────────────────────────────────────────────────────────
+
+  # The shared terminal-leg steps: a now-past termination notice (served and assessed
+  # `notice_age` days ago, effective end date `end_age` days ago) plus the keys-return
+  # that settles the tenancy (`keys_age` days ago, on/after the end date). Reused by
+  # `exited/1` and `relet_pair/2`'s prior leg so the two terminal shapes can't drift.
+  defp terminal_steps(today, notice_age, end_age, keys_age) do
+    %{
+      notice: %{
+        given_on: days_before(today, notice_age),
+        as_of: days_before(today, notice_age),
+        termination_date: days_before(today, end_age)
+      },
+      exit: %{keys_on: days_before(today, keys_age)}
+    }
+  end
 
   # How long ago the first unpaid period fell due for a noticed tenancy: the notice
   # landed `notice_age` days ago, by which point the tenant was 21..28 days in arrears

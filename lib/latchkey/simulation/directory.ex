@@ -53,9 +53,10 @@ defmodule Latchkey.Simulation.Directory do
     uuid_primary_key :id
     attribute :tenancy_id, :string, allow_nil?: false, public?: true
 
-    # Human-legible display identity (PII). Off-log by design.
-    attribute :tenant_name, :string, public?: true
-    attribute :property_address, :string, public?: true
+    # Human-legible display identity (PII). Off-log by design. Always populated by the
+    # single upsert writer (the seeder), so enforce presence at the schema level.
+    attribute :tenant_name, :string, allow_nil?: false, public?: true
+    attribute :property_address, :string, allow_nil?: false, public?: true
   end
 
   identities do

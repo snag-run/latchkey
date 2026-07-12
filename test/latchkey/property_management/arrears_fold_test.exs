@@ -207,6 +207,12 @@ defmodule Latchkey.PropertyManagement.ArrearsFoldTest do
         }
       ]
 
+      # The rehydrated commence event carries its non-PII property_ref through the
+      # replay path (ADR 0008) — exercises the property_ref mapping in the aggregate's
+      # `to_normalized/1` alongside the string-date coercion.
+      [commenced | _] = events
+      assert commenced.property_ref == "prop-" <> @tid
+
       derived = ArrearsFold.fold_and_derive(events)
 
       assert derived.status == :active

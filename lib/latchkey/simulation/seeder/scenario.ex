@@ -76,7 +76,9 @@ defmodule Latchkey.Simulation.Seeder.Scenario do
   @type t :: %__MODULE__{
           label: String.t(),
           tenancy_id: String.t(),
-          property_ref: String.t(),
+          # `nil` only in the transient pre-backfill state; `Catalogue.fill_property_ref/1`
+          # assigns a stable ref to every scenario the catalogue emits.
+          property_ref: String.t() | nil,
           rent_amount_cents: pos_integer(),
           first_due_date: Date.t(),
           profile: Profile.t(),
