@@ -154,6 +154,79 @@ defmodule Latchkey.PropertyManagement.TimelineIntegrationTest do
     assert proj.balance_cents == 50_000
   end
 
+  test "exit path: boundary charge, keys-returned marker, and the settlement punchline" do
+    tid = "tl-#{System.unique_integer([:positive])}"
+
+    assert :ok =
+             CommandedApp.dispatch(
+               %C.CommenceTenancy{
+                 tenancy_id: tid,
+                 rent_amount_cents: 70_000,
+                 cycle: :weekly,
+                 first_due_date: ~D[2026-01-05]
+               },
+               consistency: :strong
+             )
+
+    # 14 days behind on 01-19 → notice accepted (sweeps 3 whole weeks), ends mid-week
+    # at E = 01-29 so the boundary period [01-26, 01-29) is pro-rated at keys-return.
+    assert :ok =
+             CommandedApp.dispatch(
+               %C.GiveTerminationNotice{
+                 tenancy_id: tid,
+                 termination_date: ~D[2026-01-29],
+                 given_on: ~D[2026-01-19],
+                 as_of: ~D[2026-01-19]
+               },
+               consistency: :strong
+             )
+
+    # keys returned on E → catch up the pro-rated boundary week, then settle Terminal.
+    assert :ok =
+             CommandedApp.dispatch(
+               %C.ReturnKeys{tenancy_id: tid, keys_on: ~D[2026-01-29]},
+               consistency: :strong
+             )
+
+    entries = Timeline.for_tenancy(tid)
+
+    # 1 commenced + 3 whole rent + notice + 1 boundary rent + keys + settled
+    assert Enum.map(entries, & &1.kind) == [
+             :commenced,
+             :rent_fell_due,
+             :rent_fell_due,
+             :rent_fell_due,
+             :notice_given,
+             :rent_fell_due,
+             :keys_returned,
+             :settled
+           ]
+
+    # the boundary charge is an ordinary debit row carrying its true half-open span
+    boundary = Enum.find(entries, &(&1.occurred_on == ~D[2026-01-26]))
+    assert boundary.kind == :rent_fell_due
+    assert boundary.debit_cents == 30_000
+    assert boundary.period_from == ~D[2026-01-26]
+    assert boundary.period_to == ~D[2026-01-29]
+
+    # keys-returned is a dated marker with blank money
+    keys = Enum.find(entries, &(&1.kind == :keys_returned))
+    assert keys.occurred_on == ~D[2026-01-29]
+    assert keys.debit_cents == nil
+    assert keys.credit_cents == nil
+
+    # the settlement row's snapshot IS the final reckoning; parity with Arrears holds
+    settled = List.last(entries)
+    assert settled.kind == :settled
+    assert settled.debit_cents == nil
+    assert settled.balance_snapshot_cents == 240_000
+    assert settled.description =~ "owing"
+
+    proj = Arrears |> Ash.Query.filter(tenancy_id == ^tid) |> Ash.read_one!()
+    assert settled.balance_snapshot_cents == proj.balance_cents
+    assert proj.final_balance_cents == 240_000
+  end
+
   test "cross-tenancy reallocation: reversal on the wrong tenancy, fresh receipt on the right one" do
     wrong = "tl-wrong-#{System.unique_integer([:positive])}"
     right = "tl-right-#{System.unique_integer([:positive])}"

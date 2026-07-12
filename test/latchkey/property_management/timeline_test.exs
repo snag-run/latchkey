@@ -9,9 +9,11 @@ defmodule Latchkey.PropertyManagement.TimelineTest do
 
   alias Latchkey.PropertyManagement.Tenancy
   alias Latchkey.PropertyManagement.Tenancy.Aggregate, as: Agg
+  alias Latchkey.PropertyManagement.Tenancy.Events.KeysReturned
   alias Latchkey.PropertyManagement.Tenancy.Events.RentFellDue
   alias Latchkey.PropertyManagement.Tenancy.Events.RentPaymentRecorded
   alias Latchkey.PropertyManagement.Tenancy.Events.TenancyCommenced
+  alias Latchkey.PropertyManagement.Tenancy.Events.TenancySettled
   alias Latchkey.PropertyManagement.Tenancy.Events.TerminationNoticeGiven
   alias Latchkey.PropertyManagement.Timeline
 
@@ -66,6 +68,37 @@ defmodule Latchkey.PropertyManagement.TimelineTest do
       recorded_on: occurred,
       grounds: :arrears,
       termination_date: termination_date
+    }
+  end
+
+  # A `RentFellDue` carrying an explicit half-open `[period_from, period_to)` span —
+  # what the exit boundary/overstay charges emit (#31/#32), distinct from a whole
+  # weekly period.
+  defp rent_span(occurred, amount, period_from, period_to) do
+    %RentFellDue{
+      tenancy_id: @tid,
+      occurred_on: occurred,
+      recorded_on: occurred,
+      amount_cents: amount,
+      period_from: period_from,
+      period_to: period_to
+    }
+  end
+
+  defp keys_returned(occurred, recorded \\ nil) do
+    %KeysReturned{
+      tenancy_id: @tid,
+      occurred_on: occurred,
+      recorded_on: recorded || occurred
+    }
+  end
+
+  defp settled(occurred, final_balance_cents) do
+    %TenancySettled{
+      tenancy_id: @tid,
+      occurred_on: occurred,
+      recorded_on: occurred,
+      final_balance_cents: final_balance_cents
     }
   end
 
@@ -304,5 +337,167 @@ defmodule Latchkey.PropertyManagement.TimelineTest do
     assert rev.kind == :reversal
     assert rev.reason == nil
     assert rev.description == "Payment reversed"
+  end
+
+  describe "exit & terminal rows (#50)" do
+    # A weekly $700 tenancy runs out its arrears, is noticed to end mid-week at
+    # E = 01-29, then keys are returned on E. Accrual books three whole weeks, the
+    # boundary period [01-26, 01-29) is pro-rated (3/7 × $700 = $300), and settlement
+    # freezes the reckoning. Occurred-order after sort:
+    #   commenced 01-05 (seq 0)               -> 0
+    #   rent      01-05 (seq 1)  +70000       -> 70000
+    #   rent      01-12 (seq 2)  +70000       -> 140000
+    #   rent      01-19 (seq 3)  +70000       -> 210000
+    #   notice    01-19 (seq 4)               -> 210000, E = 01-29
+    #   rent      01-26 (seq 5)  +30000       -> 240000   (boundary [01-26, 01-29))
+    #   keys      01-29 (seq 6)               -> 240000
+    #   settled   01-29 (seq 7)               -> 240000   (= final reckoning, debt)
+    setup do
+      events = [
+        {0, commenced(~D[2026-01-05])},
+        {1, rent(~D[2026-01-05], 70_000)},
+        {2, rent(~D[2026-01-12], 70_000)},
+        {3, rent(~D[2026-01-19], 70_000)},
+        {4, notice(~D[2026-01-19], ~D[2026-01-29])},
+        {5, rent_span(~D[2026-01-26], 30_000, ~D[2026-01-26], ~D[2026-01-29])},
+        {6, keys_returned(~D[2026-01-29])},
+        {7, settled(~D[2026-01-29], 240_000)}
+      ]
+
+      %{entries: Timeline.fold(events)}
+    end
+
+    test "rows interleave the exit markers by occurred_on", %{entries: entries} do
+      assert Enum.map(entries, & &1.kind) == [
+               :commenced,
+               :rent_fell_due,
+               :rent_fell_due,
+               :rent_fell_due,
+               :notice_given,
+               :rent_fell_due,
+               :keys_returned,
+               :settled
+             ]
+    end
+
+    test "keys-returned is a dated marker with blank money", %{entries: entries} do
+      keys = Enum.find(entries, &(&1.kind == :keys_returned))
+
+      assert keys.occurred_on == ~D[2026-01-29]
+      assert keys.debit_cents == nil
+      assert keys.credit_cents == nil
+      assert keys.description =~ "Keys returned"
+    end
+
+    test "the boundary charge is an ordinary debit row carrying its own period", %{
+      entries: entries
+    } do
+      # the 4th rent charge — the pro-rated boundary week
+      boundary = Enum.find(entries, &(&1.occurred_on == ~D[2026-01-26]))
+
+      assert boundary.kind == :rent_fell_due
+      assert boundary.debit_cents == 30_000
+      assert boundary.credit_cents == nil
+      # its span is the true half-open [01-26, 01-29), NOT a hardcoded whole week
+      assert boundary.period_from == ~D[2026-01-26]
+      assert boundary.period_to == ~D[2026-01-29]
+    end
+
+    test "settlement is the punchline: its snapshot IS the final reckoning (debt)", %{
+      entries: entries
+    } do
+      settled = List.last(entries)
+
+      assert settled.kind == :settled
+      assert settled.debit_cents == nil
+      assert settled.credit_cents == nil
+      # the settlement figure is exactly the folded balance snapshot (no separate field)
+      assert settled.balance_snapshot_cents == 240_000
+      assert settled.description =~ "final balance"
+      assert settled.description =~ "$2,400.00"
+      assert settled.description =~ "owing"
+    end
+  end
+
+  test "a prepaid exit settles to a refund owed (negative snapshot), signed refund" do
+    # tenant overpays, then exits: settlement snapshot is negative — a refund owed.
+    #   commenced 01-05          -> 0
+    #   rent      01-05  +50000  -> 50000
+    #   payment   01-06  -80000  -> -30000  (overpaid)
+    #   keys      01-10          -> -30000
+    #   settled   01-10          -> -30000  (refund owed)
+    events = [
+      {0, commenced(~D[2026-01-05])},
+      {1, rent(~D[2026-01-05])},
+      {2, payment(~D[2026-01-06], 80_000, "p-1")},
+      {3, keys_returned(~D[2026-01-10])},
+      {4, settled(~D[2026-01-10], -30_000)}
+    ]
+
+    settled = List.last(Timeline.fold(events))
+
+    assert settled.kind == :settled
+    assert settled.balance_snapshot_cents == -30_000
+    assert settled.description =~ "$300.00"
+    assert settled.description =~ "refund owed"
+  end
+
+  test "a post-terminal (P4) payment is a credit row below settlement; the settlement row is unchanged" do
+    # after settlement froze a $500 debt, an ex-tenant pays it down. The payment is an
+    # ordinary credit row BELOW the settlement row and moves the running balance; the
+    # settlement snapshot itself never changes.
+    #   commenced 01-05          -> 0
+    #   rent      01-05  +50000  -> 50000
+    #   keys      01-10          -> 50000
+    #   settled   01-10          -> 50000  (debt frozen)
+    #   payment   01-15  -50000  -> 0      (P4 — below settlement)
+    events = [
+      {0, commenced(~D[2026-01-05])},
+      {1, rent(~D[2026-01-05])},
+      {2, keys_returned(~D[2026-01-10])},
+      {3, settled(~D[2026-01-10], 50_000)},
+      {4, payment(~D[2026-01-15], 50_000, "p4-1")}
+    ]
+
+    entries = Timeline.fold(events)
+    settled = Enum.find(entries, &(&1.kind == :settled))
+    p4 = List.last(entries)
+
+    # the settlement row is immutable history — still the frozen $500 debt
+    assert settled.balance_snapshot_cents == 50_000
+
+    # the P4 payment sorts below settlement and moves the running balance to zero
+    assert p4.kind == :payment
+    assert p4.credit_cents == 50_000
+    assert p4.balance_snapshot_cents == 0
+
+    assert Enum.find_index(entries, &(&1.kind == :settled)) <
+             Enum.find_index(entries, &(&1 == p4))
+  end
+
+  test "the settlement row renders the FOLDED balance, ignoring the event's final_balance_cents" do
+    # Guards the "no separate final-balance field to drift" contract (ADR 0006 §5):
+    # `normalize/1` drops `TenancySettled.final_balance_cents`, and the punchline is
+    # derived purely from the running fold. Here the stored field is deliberately bogus
+    # ($9,999.99) while the fold reckons a $500 debt — the render must follow the fold.
+    #   commenced 01-05          -> 0
+    #   rent      01-05  +50000  -> 50000  (the true folded reckoning)
+    #   keys      01-10          -> 50000
+    #   settled   01-10          -> 50000  (final_balance_cents lies: 999_999)
+    events = [
+      {0, commenced(~D[2026-01-05])},
+      {1, rent(~D[2026-01-05])},
+      {2, keys_returned(~D[2026-01-10])},
+      {3, settled(~D[2026-01-10], 999_999)}
+    ]
+
+    settled = List.last(Timeline.fold(events))
+
+    assert settled.kind == :settled
+    # follows the fold, NOT the event's stored (divergent) final_balance_cents
+    assert settled.balance_snapshot_cents == 50_000
+    assert settled.description =~ "$500.00"
+    assert settled.description =~ "owing"
+    refute settled.description =~ "9,999.99"
   end
 end

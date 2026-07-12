@@ -107,7 +107,7 @@ defmodule Latchkey.PropertyManagement.Timeline do
       kind: n.kind,
       occurred_on: n.occurred_on,
       recorded_on: n.recorded_on,
-      description: describe(n),
+      description: describe(n, balance),
       debit_cents: debit,
       credit_cents: credit,
       balance_snapshot_cents: balance,
@@ -164,15 +164,36 @@ defmodule Latchkey.PropertyManagement.Timeline do
   defp money(%{kind: :reversal, amount_cents: amount}), do: {-amount, nil}
   defp money(_marker), do: {nil, nil}
 
-  defp period(%{kind: :rent_fell_due, occurred_on: due}), do: {due, Date.add(due, 6)}
+  # A charge renders the exact half-open `[period_from, period_to)` span the event
+  # carries (a whole week, or the pro-rated boundary / overstay span at exit, #31/#32) so
+  # the exhibit is auditable line-by-line (spec story 12). Fall back to a whole weekly
+  # span only for legacy charges persisted before the period fields existed.
+  defp period(%{kind: :rent_fell_due, period_from: %Date{} = from, period_to: %Date{} = to}),
+    do: {from, to}
+
+  defp period(%{kind: :rent_fell_due, occurred_on: due}), do: {due, Date.add(due, 7)}
   defp period(_other), do: {nil, nil}
 
   defp kick_in(%{kind: :notice_given, termination_date: date}), do: date
   defp kick_in(_other), do: nil
 
+  # `describe/2` gets the folded `balance_snapshot` so the settlement punchline states the
+  # *folded* reckoning — the same number the balance column shows — leaving no room for a
+  # separate "final balance" to drift (ADR 0006 §5). Every other kind ignores the balance.
+  defp describe(%{kind: :settled}, balance) do
+    cond do
+      balance > 0 -> "Settlement — final balance #{money_str(balance)} owing (debt)"
+      balance < 0 -> "Settlement — final balance #{money_str(balance)} refund owed"
+      true -> "Settlement — final balance #{money_str(0)}, settled in full"
+    end
+  end
+
+  defp describe(n, _balance), do: describe(n)
+
   defp describe(%{kind: :commenced}), do: "Tenancy commenced"
   defp describe(%{kind: :rent_fell_due}), do: "Rent due"
   defp describe(%{kind: :payment}), do: "Payment received"
+  defp describe(%{kind: :keys_returned}), do: "Keys returned — possession recovered"
 
   # ACL-1 propagates the reversal's `reason`; degrade to a bare label when it is absent
   # (a pre-ACL-1 or unexplained reversal still renders honestly — spec dependency note).
@@ -183,6 +204,23 @@ defmodule Latchkey.PropertyManagement.Timeline do
 
   defp describe(%{kind: :notice_given, termination_date: date}) do
     "Termination notice served (arrears) — takes effect #{Date.to_iso8601(date)}"
+  end
+
+  # Cents → a signed-magnitude dollar string with thousands separators (e.g. 240_000 →
+  # "$2,400.00", -30_000 → "$300.00"). The sign is carried by the surrounding wording
+  # (owing / refund owed), so the magnitude reads plainly in the exhibit.
+  defp money_str(cents) do
+    magnitude = abs(cents)
+    dollars = magnitude |> div(100) |> Integer.to_string() |> group_thousands()
+    cents_part = magnitude |> rem(100) |> Integer.to_string() |> String.pad_leading(2, "0")
+    "$#{dollars}.#{cents_part}"
+  end
+
+  defp group_thousands(digits) do
+    digits
+    |> String.reverse()
+    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
+    |> String.reverse()
   end
 
   # ── normalize event structs → a uniform map (dates coerced from JSON strings) ──
@@ -203,7 +241,10 @@ defmodule Latchkey.PropertyManagement.Timeline do
       tenancy_id: e.tenancy_id,
       occurred_on: to_date(e.occurred_on),
       recorded_on: to_date(e.recorded_on),
-      amount_cents: e.amount_cents
+      amount_cents: e.amount_cents,
+      # Half-open `[period_from, period_to)`; optional (#31) — nil on pre-period history.
+      period_from: to_optional_date(e.period_from),
+      period_to: to_optional_date(e.period_to)
     }
   end
 
@@ -232,6 +273,30 @@ defmodule Latchkey.PropertyManagement.Timeline do
     }
   end
 
+  # Exit markers carry no money of their own — the reckoning lives in the folded balance.
+  defp normalize(%E.KeysReturned{} = e) do
+    %{
+      kind: :keys_returned,
+      tenancy_id: e.tenancy_id,
+      occurred_on: to_date(e.occurred_on),
+      recorded_on: to_date(e.recorded_on)
+    }
+  end
+
+  defp normalize(%E.TenancySettled{} = e) do
+    %{
+      kind: :settled,
+      tenancy_id: e.tenancy_id,
+      occurred_on: to_date(e.occurred_on),
+      recorded_on: to_date(e.recorded_on)
+    }
+  end
+
   defp to_date(%Date{} = d), do: d
   defp to_date(s) when is_binary(s), do: Date.from_iso8601!(s)
+
+  # Like `to_date/1` but nil passes through — for the optional `period_from`/`period_to`
+  # span (#31), absent on pre-#31 charge history.
+  defp to_optional_date(nil), do: nil
+  defp to_optional_date(d), do: to_date(d)
 end

@@ -4,13 +4,20 @@ defmodule Latchkey.PropertyManagement.Timeline.Entry do
   shape of the compute-on-read query — nothing is stored.
 
   `kind` is one of the event kinds that exist today: `:commenced`, `:rent_fell_due`,
-  `:payment`, `:reversal`, `:notice_given` (notice-voided / keys-returned / settled are
-  later fidelity slices — #50).
+  `:payment`, `:reversal`, `:notice_given`, `:keys_returned`, `:settled`
+  (notice-voided is a later notice-fidelity slice).
 
   Money rows (`:rent_fell_due`, `:payment`, `:reversal`) fill `debit_cents` /
-  `credit_cents`; lifecycle markers (`:commenced`, `:notice_given`) leave them `nil` but
-  still carry `balance_snapshot_cents` and `days_behind` — a notice row's balance +
-  days-behind *is* the L7 arrears evidence.
+  `credit_cents`; lifecycle markers (`:commenced`, `:notice_given`, `:keys_returned`,
+  `:settled`) leave them `nil` but still carry `balance_snapshot_cents` and
+  `days_behind` — a notice row's balance + days-behind *is* the L7 arrears evidence.
+
+  The `:keys_returned` marker dates the moment possession was recovered. The `:settled`
+  marker is the closing punchline: its `balance_snapshot_cents` **is** the final
+  reckoning (signed — a debt when positive, a refund owed when negative), so there is no
+  separate "final balance" field to drift from the ledger (ADR 0006 §5). Post-Terminal
+  (P4) payments render as ordinary credit rows **below** the settlement row and move the
+  running balance without altering the immutable settlement snapshot.
 
   A `:reversal` is a **negative** `RentPaymentRecorded` re-expanded into the **debit**
   column at its own `occurred_on` (the reversed date), restoring the running balance
@@ -23,7 +30,14 @@ defmodule Latchkey.PropertyManagement.Timeline.Entry do
   (ADR 0006 §4) — the data supports that render hint by exposing both values.
   """
 
-  @type kind :: :commenced | :rent_fell_due | :payment | :reversal | :notice_given
+  @type kind ::
+          :commenced
+          | :rent_fell_due
+          | :payment
+          | :reversal
+          | :notice_given
+          | :keys_returned
+          | :settled
 
   @type t :: %__MODULE__{
           tenancy_id: String.t(),
