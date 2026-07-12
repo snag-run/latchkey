@@ -130,6 +130,9 @@ defmodule Latchkey.Simulation.Seeder do
   defp commence(%Scenario{} = scenario, tenancy_id) do
     command = %CommenceTenancy{
       tenancy_id: tenancy_id,
+      # The non-PII property id on the log (ADR 0008). Not prefixed — a re-let pair
+      # shares it so the read side derives the same address for the same premises.
+      property_ref: scenario.property_ref,
       rent_amount_cents: scenario.rent_amount_cents,
       cycle: :weekly,
       first_due_date: scenario.first_due_date,

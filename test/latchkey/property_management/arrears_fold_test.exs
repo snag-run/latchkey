@@ -22,6 +22,7 @@ defmodule Latchkey.PropertyManagement.ArrearsFoldTest do
   defp commenced(occurred) do
     %TenancyCommenced{
       tenancy_id: @tid,
+      property_ref: "prop-" <> @tid,
       occurred_on: occurred,
       recorded_on: occurred,
       rent_amount_cents: @rent,
@@ -189,6 +190,7 @@ defmodule Latchkey.PropertyManagement.ArrearsFoldTest do
       events = [
         %TenancyCommenced{
           tenancy_id: @tid,
+          property_ref: "prop-" <> @tid,
           occurred_on: "2026-01-05",
           recorded_on: "2026-01-05",
           rent_amount_cents: @rent,

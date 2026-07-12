@@ -37,8 +37,17 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   @spec build(Date.t()) :: [Scenario.t()]
   def build(%Date{} = today) do
     (featured(today) ++ generated(today))
+    |> Enum.map(&fill_property_ref/1)
     |> Enum.map(fn scenario -> %{scenario | expected: Projection.derive(scenario, today)} end)
   end
+
+  # Every scenario carries a non-PII `property_ref` on its `TenancyCommenced` (ADR
+  # 0008). The 1:1 majority gets a **unique** ref derived from its own slug; re-let
+  # scenarios set a **shared** ref explicitly (both legs, same premises) — keep those.
+  defp fill_property_ref(%Scenario{property_ref: nil} = scenario),
+    do: %{scenario | property_ref: "prop-" <> scenario.tenancy_id}
+
+  defp fill_property_ref(%Scenario{} = scenario), do: scenario
 
   # ── featured (hand-authored, headline scenarios) ──────────────────────────────
 

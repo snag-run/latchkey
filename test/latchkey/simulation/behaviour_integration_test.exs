@@ -39,6 +39,7 @@ defmodule Latchkey.Simulation.BehaviourIntegrationTest do
       CommandedApp.dispatch(
         %CommenceTenancy{
           tenancy_id: tid,
+          property_ref: "prop-" <> tid,
           rent_amount_cents: @rent,
           cycle: :weekly,
           first_due_date: @first_due

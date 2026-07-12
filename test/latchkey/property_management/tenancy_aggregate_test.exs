@@ -24,6 +24,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     events =
       Agg.execute(agg, %C.CommenceTenancy{
         tenancy_id: "t1",
+        property_ref: "prop-t1",
         rent_amount_cents: 50_000,
         cycle: :weekly,
         first_due_date: ~D[2026-01-05],
@@ -135,6 +136,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     assert {:error, :unsupported_cycle} =
              Agg.execute(%Agg{}, %C.CommenceTenancy{
                tenancy_id: "t1",
+               property_ref: "prop-t1",
                rent_amount_cents: 250_000,
                cycle: :monthly,
                first_due_date: ~D[2026-01-05]
@@ -145,6 +147,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     assert {:error, :already_commenced} =
              Agg.execute(commenced_agg(), %C.CommenceTenancy{
                tenancy_id: "t1",
+               property_ref: "prop-t1",
                rent_amount_cents: 60_000,
                cycle: :weekly,
                first_due_date: ~D[2026-02-01]
@@ -204,6 +207,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       [event] =
         Agg.execute(%Agg{}, %C.CommenceTenancy{
           tenancy_id: "t1",
+          property_ref: "prop-t1",
           rent_amount_cents: 50_000,
           cycle: :weekly,
           first_due_date: ~D[2026-01-05],
@@ -212,6 +216,8 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
 
       assert %TenancyCommenced{occurred_on: ~D[2026-01-05], recorded_on: ~D[2026-01-06]} = event
       assert event.first_due_date == ~D[2026-01-05]
+      # The non-PII property id is carried onto the event (ADR 0008 allowlist).
+      assert event.property_ref == "prop-t1"
     end
 
     test "payment stamps occurred_on = received date" do
@@ -276,6 +282,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       [event] =
         Agg.execute(%Agg{}, %C.CommenceTenancy{
           tenancy_id: "t1",
+          property_ref: "prop-t1",
           rent_amount_cents: 50_000,
           cycle: :weekly,
           first_due_date: ~D[2026-01-05]

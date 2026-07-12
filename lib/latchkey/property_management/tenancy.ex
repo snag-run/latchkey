@@ -222,6 +222,9 @@ defmodule Latchkey.PropertyManagement.Tenancy do
        %{
          type: :tenancy_commenced,
          tenancy_id: cmd.tenancy_id,
+         # Non-PII property id (ADR 0008) — log metadata for the read side; recurs
+         # across re-lets. Does not affect accrual or the aggregate invariants.
+         property_ref: Map.get(cmd, :property_ref),
          # occurrence = commencement date (the first due date in this weekly slice).
          occurred_on: cmd.first_due_date,
          recorded_on: cmd.recorded_on,

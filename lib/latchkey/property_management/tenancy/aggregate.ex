@@ -25,6 +25,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
   def execute(%__MODULE__{core: core}, %C.CommenceTenancy{} = c) do
     cmd = %{
       tenancy_id: c.tenancy_id,
+      property_ref: c.property_ref,
       rent_amount_cents: c.rent_amount_cents,
       cycle: c.cycle,
       first_due_date: c.first_due_date,
@@ -111,6 +112,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
   defp to_struct(%{type: :tenancy_commenced} = e, _tid) do
     %E.TenancyCommenced{
       tenancy_id: e.tenancy_id,
+      property_ref: e.property_ref,
       occurred_on: e.occurred_on,
       recorded_on: e.recorded_on,
       rent_amount_cents: e.rent_amount_cents,
@@ -175,6 +177,8 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
     %{
       type: :tenancy_commenced,
       tenancy_id: e.tenancy_id,
+      # Non-PII opaque string; carried as-is (JSON round-trips it unchanged).
+      property_ref: e.property_ref,
       occurred_on: to_date(e.occurred_on),
       recorded_on: to_date(e.recorded_on),
       rent_amount_cents: e.rent_amount_cents,
