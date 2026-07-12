@@ -62,8 +62,16 @@ defmodule Latchkey.PropertyManagement.TenancyIntegrationTest do
     proj = Arrears |> Ash.Query.filter(tenancy_id == ^tid) |> Ash.read_one!()
     # 5 weekly charges booked (01-05..02-02), none paid
     assert proj.balance_cents == 250_000
-    assert proj.days_behind == 28
     assert proj.oldest_unpaid_due_date == ~D[2026-01-05]
+
+    # `days_behind` is derived on read (as-of the query date, Sydney) — NOT stored.
+    # Oldest unpaid is 01-05, so as-of 02-02 the tenant is 28 days behind.
+    assert Arrears.days_behind(proj, ~D[2026-02-02]) == 28
+
+    # And it climbs day-to-day off the same idle projection — no new event, the
+    # oldest-unpaid pointer never moved, only the clock advanced.
+    assert Arrears.days_behind(proj, ~D[2026-02-03]) == 29
+    assert Arrears.days_behind(proj, ~D[2026-03-04]) == 58
 
     # The bitemporal envelope survives the EventStore's JSON round-trip: each
     # swept RentFellDue carries {occurred_on, recorded_on}, and — booked live via
