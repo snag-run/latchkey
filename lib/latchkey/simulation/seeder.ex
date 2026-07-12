@@ -25,9 +25,17 @@ defmodule Latchkey.Simulation.Seeder do
 
   The catalogue is a pure function of `today` (`catalogue/1`); tenancy ids are stable
   slugs and payment ids derive purely from the schedule, so re-seeding a fresh store
-  reproduces the same catalogue byte-for-byte (ADR 0005 decision 8, seeded RNG). A
-  re-seed against an **already-seeded** store detects the commenced tenancy and skips
-  it, so `mix run priv/repo/seeds.exs` is coarse-idempotent.
+  reproduces the same catalogue byte-for-byte (ADR 0005 decision 8, seeded RNG).
+
+  ## Fresh-store seed, not a resumable checkpoint
+
+  This is a **dev/demo** seed: it targets a **fresh store** (`mix ecto.reset && mix run
+  priv/repo/seeds.exs`). A re-seed against an already-seeded store detects the commenced
+  tenancy and returns `:skipped` **without** re-running — a guard against accidentally
+  double-seeding a healthy board, **not** a resumable checkpoint. It deliberately does
+  **not** repair a partially-seeded tenancy (one commenced but whose payments/notice/
+  sweep did not finish): the intended recovery from a failed seed is drop-and-recreate,
+  not in-place repair. Hardening this into a resumable seeder is out of scope here.
 
   ## Await, then reveal
 

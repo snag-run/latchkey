@@ -82,9 +82,15 @@ defmodule Latchkey.Simulation.SeederTest do
   end
 
   describe "reproducible behaviour (seeded engine)" do
-    test "each scenario's engine payments are identical across catalogue builds" do
-      for %Scenario{} = scenario <- Seeder.catalogue(@today) do
-        assert engine_payments(scenario) == engine_payments(scenario)
+    test "each scenario's engine payments are identical across independent catalogue builds" do
+      # Two independently-generated catalogues — determinism means their matching
+      # scenarios yield byte-identical payment sequences.
+      first = Seeder.catalogue(@today)
+      second = Seeder.catalogue(@today)
+
+      for %Scenario{label: label} = scenario <- first do
+        twin = Enum.find(second, &(&1.label == label))
+        assert engine_payments(scenario) == engine_payments(twin)
       end
     end
 

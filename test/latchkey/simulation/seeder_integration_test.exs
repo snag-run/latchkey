@@ -27,18 +27,15 @@ defmodule Latchkey.Simulation.SeederIntegrationTest do
     prefix = "seed-it-#{System.unique_integer([:positive])}-"
     accounts_stream = "accounts-seed-it-#{System.unique_integer([:positive])}"
 
-    results =
-      Seeder.seed(
-        today: @today,
-        id_prefix: prefix,
-        accounts_stream: accounts_stream
-      )
+    seed_opts = [today: @today, id_prefix: prefix, accounts_stream: accounts_stream]
+    results = Seeder.seed(seed_opts)
 
-    {:ok, results: results}
+    {:ok, results: results, seed_opts: seed_opts}
   end
 
   test "every seeded tenancy lands at its intended arrears/exit state as of today", %{
-    results: results
+    results: results,
+    seed_opts: seed_opts
   } do
     # All three scenarios seeded (none skipped — fresh streams per run).
     assert length(results) == 3
@@ -62,6 +59,15 @@ defmodule Latchkey.Simulation.SeederIntegrationTest do
              "#{scenario.label}: days_behind #{Arrears.days_behind(record, @today)} " <>
                "!= #{expected.days_behind}"
     end
+
+    # Coarse-idempotent reseed (documented fresh-store guard): a second seed with the
+    # same options finds each tenancy already commenced, returns :skipped, and leaves
+    # the Arrears records byte-identical — no double-charge, no drift.
+    before = snapshot(results)
+    reseed = Seeder.seed(seed_opts)
+
+    assert Enum.all?(reseed, &(&1.status == :skipped))
+    assert snapshot(reseed) == before
   end
 
   test "the paid-up tenant is square and looks paid up", %{results: results} do
@@ -96,6 +102,18 @@ defmodule Latchkey.Simulation.SeederIntegrationTest do
 
   defp arrears(tenancy_id) do
     Arrears |> Ash.Query.filter(tenancy_id == ^tenancy_id) |> Ash.read_one!()
+  end
+
+  # A comparable snapshot of every seeded tenancy's persisted read-model fields — used
+  # to assert a reseed leaves the board unchanged.
+  defp snapshot(results) do
+    Map.new(results, fn %{tenancy_id: tenancy_id} ->
+      record = arrears(tenancy_id)
+
+      {tenancy_id,
+       {record.status, record.oldest_unpaid_due_date, record.balance_cents,
+        record.final_balance_cents}}
+    end)
   end
 
   defp tenancy_id_for(results, label) do
