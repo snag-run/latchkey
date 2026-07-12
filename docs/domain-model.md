@@ -115,9 +115,9 @@ access-control list.
 | `TerminationNoticeGiven` | `tenancy_id, grounds, termination_date, given_on` | **Landlord/agent-initiated**; grounds = arrears (≥14 days). Sets an effective end date |
 | `TerminationNoticeVoided` | `tenancy_id, reason, voided_on` | Arrears remedied (paid **or** repayment plan) before the date ⇒ notice void, tenancy continues |
 | `RepaymentPlanAgreed` **(proposal)** | `tenancy_id, terms, agreed_on` | An agreed catch-up plan; complying with it **stays** termination |
-| `EarlyReleaseAgreed` | `tenancy_id, effective_date` | Landlord consents to end liability early (shortens) |
-| `KeysReturned` | `tenancy_id, effective_date (keys date), recorded_on` | **Input fact** — possession recovered; triggers settlement (ADR 0004) |
-| `TenancySettled` | `tenancy_id, effective_date, recorded_on, final_balance_cents` (signed: −refund / +debt) | **Reckoning** — pure terminal marker, carries no money of its own; reaches Terminal (ADR 0004) |
+| `EarlyReleaseAgreed` | `tenancy_id, effective_end_date` | Landlord consents to end liability early — `effective_end_date` is the new, earlier end (payload; `occurred_on` = when agreed) |
+| `KeysReturned` | `tenancy_id, occurred_on (keys date), recorded_on` | **Input fact** — possession recovered; triggers settlement (ADR 0004) |
+| `TenancySettled` | `tenancy_id, occurred_on (settlement date), recorded_on, final_balance_cents` (signed: −refund / +debt) | **Reckoning** — pure terminal marker, carries no money of its own; reaches Terminal (ADR 0004) |
 
 ### Accounts (edge / stub)
 
