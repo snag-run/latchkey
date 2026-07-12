@@ -32,6 +32,7 @@ decision in them resolves.
 
 - Use `mix precommit` alias when you are done with all changes and fix any pending issues. It runs the full local gate (dep/hex audits, compile-as-errors, format check, `credo --strict`, `sobelow`, tests under a coverage floor) and is enforced before every push by `.githooks/pre-push` (wired per-clone by `mix setup`). Emergency bypass: `SKIP_PREPUSH=1 git push`
 - Use the already included and available `:req` (`Req`) library for HTTP requests, **avoid** `:httpoison`, `:tesla`, and `:httpc`. Req is included by default and is the preferred HTTP client for Phoenix apps
+- **Commit messages: no AI attribution trailers.** Do **not** append `Co-Authored-By: Claude ...` (or any similar AI/agent co-author/attribution trailer) to commits. These leak agent identity into the diff under review and can bias automated (AI) code review. Write the message as the change itself; omit the trailer even if a harness default suggests adding one.
 
 ### Phoenix v1.8 guidelines
 
