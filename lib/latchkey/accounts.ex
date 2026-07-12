@@ -66,7 +66,7 @@ defmodule Latchkey.Accounts do
   def payment_received(%{} = attrs) do
     %PaymentReceived{
       payment_id: fetch!(attrs, :payment_id),
-      amount_cents: fetch!(attrs, :amount_cents),
+      amount_cents: positive!(fetch!(attrs, :amount_cents)),
       occurred_on: fetch!(attrs, :received_on),
       recorded_on: booked_on(Map.get(attrs, :recorded_on)),
       holder: fetch!(attrs, :holder)
@@ -84,7 +84,7 @@ defmodule Latchkey.Accounts do
     %PaymentReversed{
       payment_id: fetch!(attrs, :payment_id),
       reverses: fetch!(attrs, :reverses),
-      amount_cents: fetch!(attrs, :amount_cents),
+      amount_cents: negative!(fetch!(attrs, :amount_cents)),
       occurred_on: fetch!(attrs, :reversed_on),
       recorded_on: booked_on(Map.get(attrs, :recorded_on)),
       reason: fetch!(attrs, :reason)
@@ -124,4 +124,25 @@ defmodule Latchkey.Accounts do
       :error -> raise ArgumentError, "missing required key #{inspect(key)}"
     end
   end
+
+  # Sign invariants that keep the ledger honest: a receipt is a positive credit,
+  # a reversal is a negative (compensating) entry. Enforced at the builder so a
+  # "negative receipt" or "positive reversal" can never reach the stream.
+  defp positive!(amount) when is_integer(amount) and amount > 0, do: amount
+
+  defp positive!(amount),
+    do:
+      raise(
+        ArgumentError,
+        "PaymentReceived amount_cents must be positive, got #{inspect(amount)}"
+      )
+
+  defp negative!(amount) when is_integer(amount) and amount < 0, do: amount
+
+  defp negative!(amount),
+    do:
+      raise(
+        ArgumentError,
+        "PaymentReversed amount_cents must be negative (compensating), got #{inspect(amount)}"
+      )
 end

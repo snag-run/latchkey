@@ -61,6 +61,19 @@ defmodule Latchkey.AccountsTest do
         Accounts.payment_received(%{amount_cents: 1, received_on: ~D[2026-01-05], holder: "t"})
       end
     end
+
+    test "rejects a non-positive amount (a receipt must be a positive credit)" do
+      for bad <- [0, -1] do
+        assert_raise ArgumentError, ~r/must be positive/, fn ->
+          Accounts.payment_received(%{
+            payment_id: "p1",
+            amount_cents: bad,
+            received_on: ~D[2026-01-05],
+            holder: "tenancy-1"
+          })
+        end
+      end
+    end
   end
 
   describe "payment_reversed/1" do
@@ -83,6 +96,20 @@ defmodule Latchkey.AccountsTest do
                recorded_on: ~D[2026-01-07],
                reason: "wrong_holder"
              } = event
+    end
+
+    test "rejects a non-negative amount (a reversal must be a negative, compensating entry)" do
+      for bad <- [0, 1] do
+        assert_raise ArgumentError, ~r/must be negative/, fn ->
+          Accounts.payment_reversed(%{
+            payment_id: "p1-rev",
+            reverses: "p1",
+            amount_cents: bad,
+            reversed_on: ~D[2026-01-07],
+            reason: "wrong_holder"
+          })
+        end
+      end
     end
   end
 
