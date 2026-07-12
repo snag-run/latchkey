@@ -160,6 +160,33 @@ defmodule Latchkey.PropertyManagement.TimelineTest do
     end
   end
 
+  test "days_behind is pinned to the canonical Tenancy.days_behind/2 (drift guard)" do
+    # Events already in (occurred_on, stream_sequence) order, so the aggregate's
+    # charge accumulation matches the timeline's occurred-order fold. No payments,
+    # so the final (notice) row is a meaningful non-zero arrears case.
+    events = [
+      {0, commenced(~D[2026-01-05])},
+      {1, rent(~D[2026-01-05])},
+      {2, rent(~D[2026-01-12])},
+      {3, rent(~D[2026-01-19])},
+      {4, notice(~D[2026-02-02], ~D[2026-03-01])}
+    ]
+
+    entries = Timeline.fold(events)
+    last = List.last(entries)
+
+    # The final row folds every event, so its as-at state == the full core state.
+    # Pin the timeline's local FIFO copy to the canonical fold — if the Tenancy
+    # days_behind semantics change (CORE lane), this fails instead of drifting.
+    core =
+      events
+      |> Enum.reduce(%Agg{}, fn {_seq, event}, agg -> Agg.apply(agg, event) end)
+      |> Map.fetch!(:core)
+
+    assert last.days_behind == Tenancy.days_behind(core, last.occurred_on)
+    assert last.days_behind > 0
+  end
+
   test "a late-booked (lazy accrual) tick sorts at its occurred_on, recorded_on shown" do
     # rent fell due 01-12 but was swept/booked on 02-01 (recorded lags occurred).
     events = [
