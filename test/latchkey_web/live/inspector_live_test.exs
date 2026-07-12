@@ -8,7 +8,9 @@ defmodule LatchkeyWeb.InspectorLiveTest do
 
   import Phoenix.LiveViewTest
 
+  alias Latchkey.Inspector.Broadcaster
   alias Latchkey.PropertyManagement.Arrears
+  alias Latchkey.PropertyManagement.Tenancy.Events.TenancyCommenced
 
   # Insert an Arrears read-model row directly (fast, no event replay) so the nav
   # has live tenancy streams to list.
@@ -120,11 +122,79 @@ defmodule LatchkeyWeb.InspectorLiveTest do
     end
   end
 
-  describe "firehose placeholder" do
-    test "renders the labelled empty firehose region", %{conn: conn} do
+  describe "firehose feed" do
+    defp broadcast_dev_event!(event, metadata) do
+      Phoenix.PubSub.broadcast(
+        Latchkey.PubSub,
+        Broadcaster.global_topic(),
+        {:dev_event, event, metadata}
+      )
+    end
+
+    test "renders the empty feed region on mount", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/inspector")
 
-      assert has_element?(view, "#firehose-placeholder")
+      assert has_element?(view, "#firehose-feed")
+    end
+
+    test "a broadcast dev_event appends a new row, labelled by event type + stream id",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/inspector")
+
+      event = %TenancyCommenced{
+        tenancy_id: "firehose-demo",
+        occurred_on: ~D[2026-07-13],
+        recorded_on: ~D[2026-07-13],
+        rent_amount_cents: 50_000,
+        cycle: :weekly,
+        first_due_date: ~D[2026-07-20]
+      }
+
+      metadata = %{
+        event_number: 1,
+        stream_id: "tenancy-firehose-demo",
+        stream_version: 1,
+        created_at: ~U[2026-07-13 10:00:00Z]
+      }
+
+      broadcast_dev_event!(event, metadata)
+
+      assert has_element?(view, "#firehose-1")
+      assert has_element?(view, "#firehose-1", "TenancyCommenced")
+      assert has_element?(view, "#firehose-1", "tenancy-firehose-demo")
+    end
+
+    test "each row is clickable and carries its stream_id/position (click-to-scrub is structural only, #86)",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/inspector")
+
+      event = %TenancyCommenced{
+        tenancy_id: "firehose-demo",
+        occurred_on: ~D[2026-07-13],
+        recorded_on: ~D[2026-07-13],
+        rent_amount_cents: 50_000,
+        cycle: :weekly,
+        first_due_date: ~D[2026-07-20]
+      }
+
+      metadata = %{
+        event_number: 1,
+        stream_id: "tenancy-firehose-demo",
+        stream_version: 1,
+        created_at: ~U[2026-07-13 10:00:00Z]
+      }
+
+      broadcast_dev_event!(event, metadata)
+
+      assert has_element?(
+               view,
+               "#firehose-1[phx-value-stream_id='tenancy-firehose-demo'][phx-value-position='1']"
+             )
+
+      # clicking acknowledges structurally — it does not crash or navigate, since
+      # the stream-detail view it will eventually scrub to doesn't exist yet (#86)
+      view |> element("#firehose-1") |> render_click()
+      assert has_element?(view, "#inspector")
     end
   end
 end

@@ -34,7 +34,8 @@ defmodule Latchkey.Application do
       [
         Latchkey.CommandedApp,
         Latchkey.PropertyManagement.ArrearsProjector,
-        Latchkey.PropertyManagement.PaymentAcl
+        Latchkey.PropertyManagement.PaymentAcl,
+        Latchkey.Inspector.Broadcaster
       ]
     else
       []
