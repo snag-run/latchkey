@@ -11,8 +11,10 @@ defmodule Latchkey.PropertyManagement.TenancyIntegrationTest do
   use Latchkey.DataCase, async: false
 
   alias Latchkey.CommandedApp
+  alias Latchkey.EventStore
   alias Latchkey.PropertyManagement.Arrears
   alias Latchkey.PropertyManagement.Tenancy.Commands, as: C
+  alias Latchkey.PropertyManagement.Tenancy.Events.RentFellDue
 
   require Ash.Query
 
@@ -62,5 +64,24 @@ defmodule Latchkey.PropertyManagement.TenancyIntegrationTest do
     assert proj.balance_cents == 250_000
     assert proj.days_behind == 28
     assert proj.oldest_unpaid_due_date == ~D[2026-01-05]
+
+    # The bitemporal envelope survives the EventStore's JSON round-trip: each
+    # swept RentFellDue carries {occurred_on, recorded_on}, and — booked live via
+    # Clock.today() while charges fell due back in January — demonstrates lazy
+    # accrual (recorded_on >= occurred_on), not backdating.
+    ticks =
+      ("tenancy-" <> tid)
+      |> EventStore.stream_forward()
+      |> Enum.map(& &1.data)
+      |> Enum.filter(&match?(%RentFellDue{}, &1))
+
+    assert length(ticks) == 5
+
+    for %RentFellDue{occurred_on: occurred, recorded_on: recorded} <- ticks do
+      assert Date.compare(to_date(recorded), to_date(occurred)) in [:gt, :eq]
+    end
   end
+
+  defp to_date(%Date{} = d), do: d
+  defp to_date(s) when is_binary(s), do: Date.from_iso8601!(s)
 end

@@ -1,5 +1,6 @@
 defmodule Latchkey.PropertyManagement.Tenancy.Events.RentPaymentRecorded do
   @moduledoc false
   @derive Jason.Encoder
-  defstruct [:tenancy_id, :amount_cents, :received_on, :source_payment_id]
+  # `occurred_on` is the payment's received date.
+  defstruct [:tenancy_id, :occurred_on, :recorded_on, :amount_cents, :source_payment_id]
 end
