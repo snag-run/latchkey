@@ -110,7 +110,9 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
       tenancy_id: tid,
       occurred_on: e.occurred_on,
       recorded_on: e.recorded_on,
-      amount_cents: e.amount_cents
+      amount_cents: e.amount_cents,
+      period_from: e.period_from,
+      period_to: e.period_to
     }
   end
 
@@ -169,7 +171,11 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
       type: :rent_fell_due,
       occurred_on: to_date(e.occurred_on),
       recorded_on: to_date(e.recorded_on),
-      amount_cents: e.amount_cents
+      amount_cents: e.amount_cents,
+      # Optional/additive (issue #31): tolerate nil for events persisted before the
+      # period span was added, and for the whole-period ticks that legacy history holds.
+      period_from: to_optional_date(e.period_from),
+      period_to: to_optional_date(e.period_to)
     }
   end
 
@@ -212,6 +218,11 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
 
   defp to_date(%Date{} = d), do: d
   defp to_date(s) when is_binary(s), do: Date.from_iso8601!(s)
+
+  # Like `to_date/1` but nil passes through — for the optional `period_from`/`period_to`
+  # span (issue #31), absent on pre-#31 history.
+  defp to_optional_date(nil), do: nil
+  defp to_optional_date(d), do: to_date(d)
 
   # Decode the fixed vocabularies explicitly — no dynamic atom conversion of
   # persisted strings. Unknown values crash the replay loudly rather than silently.

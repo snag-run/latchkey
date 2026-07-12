@@ -50,6 +50,34 @@ defmodule Latchkey.PropertyManagement.TenancyExitIntegrationTest do
     :ok
   end
 
+  # Drive a tenancy to `:ending` with a **mid-week** E = 02-12 (period [02-09, 02-16)),
+  # 28 days behind — so exit pro-rates the final boundary period.
+  defp midweek_ending_tenancy(tid) do
+    :ok =
+      CommandedApp.dispatch(
+        %C.CommenceTenancy{
+          tenancy_id: tid,
+          rent_amount_cents: 50_000,
+          cycle: :weekly,
+          first_due_date: ~D[2026-01-05]
+        },
+        consistency: :strong
+      )
+
+    :ok =
+      CommandedApp.dispatch(
+        %C.GiveTerminationNotice{
+          tenancy_id: tid,
+          termination_date: ~D[2026-02-12],
+          given_on: ~D[2026-02-02],
+          as_of: ~D[2026-02-02]
+        },
+        consistency: :strong
+      )
+
+    :ok
+  end
+
   defp projection(tid) do
     Arrears |> Ash.Query.filter(tenancy_id == ^tid) |> Ash.read_one!()
   end
@@ -100,6 +128,54 @@ defmodule Latchkey.PropertyManagement.TenancyExitIntegrationTest do
     # 6 × $500 − $3,500 = −$500 → refund owed, signed negative, declared not disbursed.
     assert proj.final_balance_cents == -50_000
     assert proj.balance_cents == -50_000
+  end
+
+  test "a mid-week exit pro-rates the final week through the seam (charged to E, never whole)" do
+    tid = "exit-#{System.unique_integer([:positive])}"
+    midweek_ending_tenancy(tid)
+
+    assert :ok =
+             CommandedApp.dispatch(
+               %C.ReturnKeys{tenancy_id: tid, keys_on: ~D[2026-02-12]},
+               consistency: :strong
+             )
+
+    proj = projection(tid)
+    # 5 whole weeks 01-05..02-02 ($2,500) + the boundary period [02-09, 02-12) = 3 days
+    # of $500/week = round_half_up(500×3/7) = $214.29, nothing paid.
+    assert proj.status == :terminal
+    assert proj.final_balance_cents == 271_429
+    assert proj.balance_cents == 271_429
+    assert proj.oldest_unpaid_due_date == ~D[2026-01-05]
+  end
+
+  test "a tenant who prepaid the whole final week exits with the correct refund owed" do
+    tid = "exit-#{System.unique_integer([:positive])}"
+    midweek_ending_tenancy(tid)
+
+    # Prepay six whole weeks ($3,000) — but only 5 whole + a 3-day boundary are charged.
+    assert :ok =
+             CommandedApp.dispatch(
+               %C.RecordPayment{
+                 tenancy_id: tid,
+                 amount_cents: 300_000,
+                 received_on: ~D[2026-02-10],
+                 source_payment_id: "p-#{tid}"
+               },
+               consistency: :strong
+             )
+
+    assert :ok =
+             CommandedApp.dispatch(
+               %C.ReturnKeys{tenancy_id: tid, keys_on: ~D[2026-02-12]},
+               consistency: :strong
+             )
+
+    proj = projection(tid)
+    assert proj.status == :terminal
+    # 271_429 charged − 300_000 paid = −28_571 → refund owed, signed negative, persists.
+    assert proj.final_balance_cents == -28_571
+    assert proj.balance_cents == -28_571
   end
 
   test "keys-return is refused on a live tenancy that has no effective end date" do
