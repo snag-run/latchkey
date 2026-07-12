@@ -52,6 +52,23 @@ the **Simulation** Ash domain) mapping `tenancy_id →` the tenant **names** and
 evidence chain. The inspector renders identity by merging a Directory row with the
 tenancy's `Arrears` row in Elixir — no PII off the raw log, no cross-schema join.
 
+## Re-let vs co-tenant change
+
+A **re-let** is a genuinely **new tenancy** on the **same premises**: a distinct
+`tenancy_id` and new tenants, sharing the prior tenancy's **`property_ref`**, and
+commencing only **after that prior tenancy reached terminal** (keys returned). The
+shared `property_ref` — carried on the log (ADR 0008) — is what makes "these
+successive tenancies are the same premises" a first-class fact; on the display side
+the two legs resolve to the **same address** but **different tenants** (address keys
+off `property_ref`, name off `tenancy_id`). Re-letting can legitimately double-charge
+overlapping days, since tenancies stay independent (`domain-model.md` §4).
+
+A **co-tenant change** is **not** a re-let and **not** a new tenancy: a joint tenant
+swapping out (one name off the lease, another on) stays **within the existing
+tenancy** — same stream, same `tenancy_id`, same `property_ref`, an unbroken ledger.
+It is **never** modelled as a second stream. Only premises re-lets (prior tenancy
+fully terminal, then a new tenancy) begin a new stream.
+
 ## Timeline
 
 The **feature under design (issue #5)**: a chronological, event-oriented view of

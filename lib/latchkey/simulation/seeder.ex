@@ -55,6 +55,8 @@ defmodule Latchkey.Simulation.Seeder do
   alias Latchkey.PropertyManagement.Tenancy.Commands.GiveTerminationNotice
   alias Latchkey.PropertyManagement.Tenancy.Commands.ReturnKeys
   alias Latchkey.PropertyManagement.Tenancy.Events.RentPaymentRecorded
+  alias Latchkey.Simulation.Directory
+  alias Latchkey.Simulation.Identity
   alias Latchkey.Simulation.Seeder.Catalogue
   alias Latchkey.Simulation.Seeder.Projection
   alias Latchkey.Simulation.Seeder.Scenario
@@ -114,15 +116,40 @@ defmodule Latchkey.Simulation.Seeder do
   defp seed_scenario(%Scenario{} = scenario, today, prefix, accounts_stream, await_ms) do
     tenancy_id = prefix <> scenario.tenancy_id
 
-    case commence(scenario, tenancy_id) do
-      :ok ->
-        replay(scenario, tenancy_id, today, accounts_stream, await_ms)
-        %{scenario: scenario, tenancy_id: tenancy_id, status: :seeded}
+    status =
+      case commence(scenario, tenancy_id) do
+        :ok ->
+          replay(scenario, tenancy_id, today, accounts_stream, await_ms)
+          :seeded
 
-      :already_commenced ->
-        Logger.info("Seeder skipped #{inspect(tenancy_id)}: already commenced")
-        %{scenario: scenario, tenancy_id: tenancy_id, status: :skipped}
-    end
+        :already_commenced ->
+          Logger.info("Seeder skipped #{inspect(tenancy_id)}: already commenced")
+          :skipped
+      end
+
+    # Populate the disposable Directory (ADR 0008) with the tenancy's display identity
+    # — a direct Ash upsert, off the event log. Done for `:seeded` **and** `:skipped`
+    # alike so a re-seed still refreshes identity for an already-commenced board.
+    upsert_directory(scenario, tenancy_id)
+
+    %{scenario: scenario, tenancy_id: tenancy_id, status: status}
+  end
+
+  # Resolve deterministic identity (name off tenancy_id, address off property_ref) and
+  # upsert it into the Directory read model. Idempotent on `tenancy_id`.
+  defp upsert_directory(%Scenario{} = scenario, tenancy_id) do
+    %{tenant_name: tenant_name, property_address: property_address} =
+      Identity.resolve(tenancy_id, scenario.property_ref)
+
+    Directory
+    |> Ash.Changeset.for_create(:upsert, %{
+      tenancy_id: tenancy_id,
+      tenant_name: tenant_name,
+      property_address: property_address
+    })
+    |> Ash.create!()
+
+    :ok
   end
 
   # Commence with a backdated booking date (`recorded_on = first_due_date`). Tolerates

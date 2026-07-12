@@ -104,8 +104,8 @@ defmodule Latchkey.Simulation.SeederTest do
   end
 
   describe "catalogue at demo scale (ADR 0007)" do
-    test "fills a ~100-tenancy board" do
-      assert length(Seeder.catalogue(@today)) == 100
+    test "fills a ~106-tenancy board" do
+      assert length(Seeder.catalogue(@today)) == 106
     end
 
     test "spreads across active, ending and terminal states" do
@@ -140,6 +140,45 @@ defmodule Latchkey.Simulation.SeederTest do
         assert %{keys_on: v} = exit
         assert Date.compare(v, e) != :lt
       end
+    end
+
+    test "seeds re-let pairs: a prior terminal + a live successor sharing property_ref" do
+      catalogue = Seeder.catalogue(@today)
+
+      priors = Enum.filter(catalogue, &String.ends_with?(&1.label, "-prior"))
+      currents = Enum.filter(catalogue, &String.ends_with?(&1.label, "-current"))
+
+      # A visible slice of re-let pairs (one prior + one current per premises).
+      assert priors != []
+      assert length(priors) == length(currents)
+
+      for %Scenario{tenancy_id: "relet-" <> n} = prior <- priors do
+        slice = String.trim_trailing(n, "-prior")
+        current = Enum.find(currents, &(&1.tenancy_id == "relet-#{slice}-current"))
+
+        # Same premises: shared property_ref → the read side derives one address.
+        assert prior.property_ref == current.property_ref
+        # Distinct tenancies: different ids → different tenants.
+        assert prior.tenancy_id != current.tenancy_id
+
+        # Prior is terminal (keys returned in the past); current is live, commencing
+        # after the prior keys-return.
+        assert prior.expected.status == :terminal
+        assert current.expected.status == :active
+        assert Date.compare(current.first_due_date, prior.exit.keys_on) == :gt
+      end
+    end
+
+    test "every property_ref is unique except across a re-let pair" do
+      catalogue = Seeder.catalogue(@today)
+      refs = Enum.map(catalogue, & &1.property_ref)
+
+      # Only the re-let pairs share a ref, so #shared refs = #pairs; all others unique.
+      shared = refs -- Enum.uniq(refs)
+      pairs = Enum.count(catalogue, &String.ends_with?(&1.label, "-prior"))
+
+      assert length(shared) == pairs
+      assert Enum.all?(catalogue, &is_binary(&1.property_ref))
     end
 
     test "generated notices all clear the L7 arrears gate (no domain-invalid scenario)" do
