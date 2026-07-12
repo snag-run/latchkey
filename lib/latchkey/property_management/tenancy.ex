@@ -11,9 +11,12 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   Events are normalized plain maps `%{type: atom, ...}`; the aggregate shell adapts
   Commanded's event structs to/from this shape.
 
-  Slice scope so far: weekly cycle; lifecycle `:pending → :active → :ending`;
-  invariants L2 (commence once), L1/L3 (notice needs a live tenancy), L7 (arrears
-  gate). See `docs/adr/0003-es-foundation-bakeoff.md`.
+  Slice scope so far: weekly cycle; lifecycle `:pending → :active → :ending →
+  :terminal`; invariants L2 (commence once), L1/L3 (notice needs a live tenancy),
+  L7 (arrears gate), L9 (keys-return needs an effective end date, reaches Terminal,
+  fires at most once). Exit is boundary-aligned here — catch-up clamps at the
+  effective end date E (whole periods only); mid-week pro-ration/overstay is a later
+  slice (ADR 0004). See `docs/adr/0003-es-foundation-bakeoff.md`.
   """
   alias Latchkey.PropertyManagement.Tenancy.State
 
@@ -51,8 +54,21 @@ defmodule Latchkey.PropertyManagement.Tenancy do
     }
   end
 
-  def evolve(%State{} = s, %{type: :termination_notice_given}) do
-    %State{s | status: :ending}
+  def evolve(%State{} = s, %{type: :termination_notice_given} = e) do
+    # Fold the effective end date E from the notice's kick-in date — this is the
+    # clamp for end-date-aware catch-up and the reference for settlement.
+    %State{s | status: :ending, effective_end_date: e.termination_date}
+  end
+
+  def evolve(%State{} = s, %{type: :keys_returned} = e) do
+    %State{s | keys_returned_on: e.occurred_on}
+  end
+
+  def evolve(%State{} = s, %{type: :tenancy_settled} = e) do
+    # Terminal (L3 keeps it final). `final_balance_cents` is the frozen settlement
+    # snapshot; the live folded `balance_cents/1` still moves on post-terminal
+    # payments (P4) — the two are deliberately distinct.
+    %State{s | status: :terminal, final_balance_cents: e.final_balance_cents}
   end
 
   def fold(events), do: Enum.reduce(events, initial_state(), &evolve(&2, &1))
@@ -172,6 +188,10 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   # §6 lazy sweep as a first-class no-decision op (keeps the read model warm).
   def decide_catch_up(%State{status: :pending}, _cmd), do: {:ok, []}
 
+  # A settled tenancy is done (L3): no rent accrues after Terminal, so the daily
+  # sweep (#41) must not keep emitting `RentFellDue`. No-op like the pending case.
+  def decide_catch_up(%State{status: :terminal}, _cmd), do: {:ok, []}
+
   def decide_catch_up(%State{} = s, %{as_of: as_of} = cmd),
     do: {:ok, catch_up_events(s, as_of, cmd.recorded_on)}
 
@@ -198,6 +218,53 @@ defmodule Latchkey.PropertyManagement.Tenancy do
       }
 
       {:ok, catch_up ++ [notice]}
+    end
+  end
+
+  # L9 — keys can only be returned on a tenancy that has an effective end date
+  # (status `:ending`). Refuses a live/never-ending tenancy, and — because settlement
+  # reaches `:terminal` — refuses a second keys-return (L3 keeps Terminal final).
+  def decide_return_keys(%State{status: status}, _cmd) when status != :ending,
+    do: {:error, :no_effective_end_date}
+
+  # A malformed/legacy `:ending` state carrying no effective end date can't settle:
+  # refuse with the same L9 reason rather than crash on `Date.add(nil, -1)`.
+  def decide_return_keys(%State{effective_end_date: nil}, _cmd),
+    do: {:error, :no_effective_end_date}
+
+  def decide_return_keys(%State{effective_end_date: %Date{} = e} = s, cmd) do
+    if Date.compare(cmd.keys_on, e) == :lt do
+      # L9 — keys returned *before* E would terminalize the tenancy prematurely; the
+      # tenant is still on the hook through E. A valid return is dated on or after E
+      # (the after-E overstay reckoning is a later slice, #32).
+      {:error, :keys_returned_before_end_date}
+    else
+      # Catch rent up to — but not past — E: whole periods only. E is a period boundary
+      # in this slice, so the period *starting on* E belongs to the post-exit span and
+      # must not fire (half-open `[from, to)`, ADR 0004 / spec). Clamp the sweep at the
+      # day before E so no step `RentFellDue` lands on or after E.
+      catch_up = catch_up_events(s, Date.add(e, -1), cmd.recorded_on)
+      s_now = Enum.reduce(catch_up, s, &evolve(&2, &1))
+
+      # `final_balance_cents` is the fold snapshot after the boundary charges land
+      # (signed: negative = refund owed, positive = debt). Declared, not disbursed.
+      final = balance_cents(s_now)
+
+      keys = %{
+        type: :keys_returned,
+        # occurrence = the keys-return (possession-recovered) date.
+        occurred_on: cmd.keys_on,
+        recorded_on: cmd.recorded_on
+      }
+
+      settled = %{
+        type: :tenancy_settled,
+        occurred_on: cmd.keys_on,
+        recorded_on: cmd.recorded_on,
+        final_balance_cents: final
+      }
+
+      {:ok, catch_up ++ [keys, settled]}
     end
   end
 end

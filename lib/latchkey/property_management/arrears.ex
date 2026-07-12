@@ -24,7 +24,7 @@ defmodule Latchkey.PropertyManagement.Arrears do
     defaults [:read, :destroy]
 
     create :upsert do
-      accept [:tenancy_id, :balance_cents, :oldest_unpaid_due_date]
+      accept [:tenancy_id, :status, :balance_cents, :oldest_unpaid_due_date, :final_balance_cents]
       upsert? true
       upsert_identity :tenancy
     end
@@ -33,8 +33,21 @@ defmodule Latchkey.PropertyManagement.Arrears do
   attributes do
     uuid_primary_key :id
     attribute :tenancy_id, :string, allow_nil?: false, public?: true
+
+    # Folded lifecycle status — reaches `:terminal` on settlement (issue #30).
+    attribute :status, :atom,
+      public?: true,
+      constraints: [one_of: [:pending, :active, :ending, :terminal]]
+
+    # The **live** folded balance (Σ charges − Σ payments) — keeps moving on
+    # post-terminal payments (P4).
     attribute :balance_cents, :integer, public?: true
     attribute :oldest_unpaid_due_date, :date, public?: true
+
+    # The **settlement snapshot**: `final_balance_cents` frozen from `TenancySettled`
+    # (signed: negative = refund owed, positive = debt). `nil` until settled, and
+    # never overwritten by a later payment — distinct from the live `balance_cents`.
+    attribute :final_balance_cents, :integer, public?: true
   end
 
   identities do
