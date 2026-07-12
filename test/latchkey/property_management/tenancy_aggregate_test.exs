@@ -132,14 +132,22 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
              })
   end
 
-  test "refuses a weekly commence missing the non-PII property_ref (ADR 0008)" do
-    assert {:error, :missing_property_ref} =
-             Agg.execute(%Agg{}, %C.CommenceTenancy{
-               tenancy_id: "t1",
-               rent_amount_cents: 50_000,
-               cycle: :weekly,
-               first_due_date: ~D[2026-01-05]
-             })
+  test "refuses a weekly commence with a missing or empty property_ref (ADR 0008)" do
+    base = %C.CommenceTenancy{
+      tenancy_id: "t1",
+      rent_amount_cents: 50_000,
+      cycle: :weekly,
+      first_due_date: ~D[2026-01-05]
+    }
+
+    # Both a missing (nil) and an empty-string property_ref are rejected at the domain
+    # boundary, and NO commencement event is emitted (the decision short-circuits to an
+    # error tuple, never a list of events).
+    for command <- [base, %{base | property_ref: ""}] do
+      result = Agg.execute(%Agg{}, command)
+      assert result == {:error, :missing_property_ref}
+      refute is_list(result)
+    end
   end
 
   test "refuses an unsupported (non-weekly) cycle" do
