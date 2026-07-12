@@ -97,16 +97,18 @@ jobs:
           key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-
 
-      # Generic project bootstrap: deps.get, the AshPostgres repo, AND the
-      # Commanded event-store DB (ash.setup alone doesn't create it). Same alias
-      # a dev runs after cloning, so CI provisions exactly like local.
-      - name: mix setup
-        run: mix setup
+      # Fetch deps explicitly. `mix setup` is the clone/bootstrap alias and, in
+      # `MIX_ENV=test`, also runs seeds that dispatch through Commanded before
+      # the app is started. The test gate should provision only the test DBs,
+      # which `mix precommit` now does via `db.setup.quiet`.
+      - name: mix deps.get
+        run: mix deps.get
 
       # Runs the full local gate — the exact same `mix precommit` the pre-push
       # hook enforces (dep/hex audits, compile-as-errors, format check,
-      # credo --strict, sobelow, ash.setup, coveralls). Keeping CI on the single
-      # alias means the gate can never drift between local, pre-push, and CI.
+      # credo --strict, sobelow, db.setup.quiet, coveralls). Keeping CI on the
+      # single alias means the gate can never drift between local, pre-push,
+      # and CI, without invoking dev-only seeds/assets in test.
       - name: mix precommit
         run: mix precommit
 

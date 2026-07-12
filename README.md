@@ -52,7 +52,7 @@ not yet wired up.)
 
 ## Getting started
 
-* `mix setup` — install deps, set up the database (`ash.setup`), build assets, seed
+* `mix setup` — install deps, provision the Ash and EventStore databases, build assets, seed
 * `mix phx.server` (or `iex -S mix phx.server`) — start the server
 
 Then visit [`localhost:4000`](http://localhost:4000).

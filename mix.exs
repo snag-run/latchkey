@@ -107,11 +107,12 @@ defmodule Latchkey.MixProject do
   # See the documentation for `Mix` for more info on aliases.
   defp aliases do
     [
+      "db.setup": ["ash.setup", "event_store.init --quiet"],
+      "db.setup.quiet": ["ash.setup --quiet", "event_store.init --quiet"],
       setup: [
         "deps.get",
-        "ash.setup",
-        # Create the Commanded EventStore's `event_store` schema in the Ash DB.
-        "event_store.init --quiet",
+        # Provision both the AshPostgres app DB and Commanded's EventStore schema.
+        "db.setup",
         "assets.setup",
         "assets.build",
         "run priv/repo/seeds.exs",
@@ -121,7 +122,7 @@ defmodule Latchkey.MixProject do
       ],
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
-      test: ["ash.setup --quiet", "event_store.init --quiet", "test"],
+      test: ["db.setup.quiet", "test"],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
       "assets.build": ["compile", "tailwind latchkey", "esbuild latchkey"],
       "assets.deploy": [
@@ -145,7 +146,7 @@ defmodule Latchkey.MixProject do
         "format --check-formatted",
         "credo --strict",
         "sobelow --config",
-        "ash.setup --quiet",
+        "db.setup.quiet",
         "coveralls"
       ]
     ]
