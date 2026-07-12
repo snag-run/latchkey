@@ -24,15 +24,15 @@ defmodule Latchkey.PropertyManagement.ArrearsProjector do
 
   defp project(tenancy_id) do
     core = fold_stream(tenancy_id)
-    as_of = core.due_through || core.first_due_date
 
+    # Persist only the event-driven pointer. `days_behind` is derived on read
+    # (Arrears.days_behind/2, ADR 0005 decision 6) — no frozen `as_of` here, so an
+    # idle arrears tenant's counter climbs from the clock with no new event.
     Arrears
     |> Ash.Changeset.for_create(:upsert, %{
       tenancy_id: tenancy_id,
       balance_cents: Tenancy.balance_cents(core),
-      days_behind: as_of && Tenancy.days_behind(core, as_of),
-      oldest_unpaid_due_date: Tenancy.oldest_unpaid_due_date(core),
-      as_of: as_of
+      oldest_unpaid_due_date: Tenancy.oldest_unpaid_due_date(core)
     })
     |> Ash.create!()
 
