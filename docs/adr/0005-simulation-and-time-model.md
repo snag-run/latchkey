@@ -4,6 +4,10 @@ Status: **accepted** — resolves issue #4. Decides how simulated time works so
 tenancy histories build up realistically instead of all at once, and what is
 simulated vs. driven by the human user. Supersedes part of
 [ADR 0004](0004-exit-settlement-events.md) §5 (`recorded_on` reframed, not retired).
+**Envelope date semantics (decisions 3–4) superseded by
+[ADR 0006](0006-tenancy-timeline-read-model.md)** — `effective_date` is renamed
+`occurred_on` (occurrence, uniform) and kick-in dates are payload; this body is
+left unchanged, only this Status pointer is added.
 
 ## Context
 
