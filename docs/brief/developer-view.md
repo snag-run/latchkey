@@ -38,10 +38,20 @@ shareable polish — not raw introspection speed.
 
 ## Why Now
 
-**Not now — sequenced after the ES foundation.** Explicitly deferred until:
-the ES foundation (issues #37–#44: clock, sweep, Accounts stub, ACL-1,
-projector fixes), the **seeder** (seed scenario catalogue), and ideally the
-**Oban event generators** (simulated tenant behaviour engine) are in.
+**Not now — sequenced after the ES foundation.** Explicitly deferred until the
+ES foundation (issues #37–#44: clock, sweep, Accounts stub, ACL-1, projector
+fixes) is in. Two dependencies, at different strengths:
+
+- **Hard prerequisite — a populated event store.** The core of the feature
+  (inspection + replay) folds over *stored* history, so it needs real events on
+  disk. The **seeder** (seed scenario catalogue) is the hard dependency that
+  provides them; without seeded streams there is nothing to inspect or replay.
+- **Hard prerequisite for the *live* quality only — a running event producer.**
+  The "events appear as they land" behaviour needs something emitting over
+  wall-clock time; the **Oban event generators** (simulated tenant behaviour
+  engine) are that producer. If they slip, the inspector still fully works over
+  seeded/stored history — the feed just isn't *live* yet. The specific producer
+  and its acceptance test are a spec (`grill-spec`) decision, not a brief one.
 
 Two reasons the ordering matters:
 
@@ -90,10 +100,13 @@ shape, end to end:
   **aggregate state** they fold into, and the **projector read model**
   (`ArrearsProjector`) — so the write-model / read-model distinction is *shown*.
 - **Replay (core, not a stretch):** a scrubber over a stream's stored history
-  that steps event-by-event and shows aggregate state **rebuilding at each step**
-  — rewind to `TenancyCommenced`, step through each `RentFellDue` /
-  `RentPaymentRecorded`, watch arrears climb and fall. This is the animated form
-  of "events fold to state," and the single most convincing ES interaction.
+  that steps event-by-event and shows both the aggregate state **and the
+  projector read model rebuilding at each step** — rewind to `TenancyCommenced`,
+  step through each `RentFellDue` / `RentPaymentRecorded`, watch arrears climb and
+  fall in both panes. Both are computed **in-memory over the selected event
+  prefix** (a read-only pedagogical fold), *not* by rewinding the real operational
+  projector — see cut #4. This is the animated form of "events fold to state" (and
+  "the read model is *also* just a fold"), the single most convincing ES interaction.
 - Events appear **live** as the simulation (Oban generators) emits them.
 
 **Where scope stops (and why there):**
@@ -107,8 +120,12 @@ shape, end to end:
    never rendered as empty boxes in the live inspector.
 3. **No mutation of the log — shown as a feature.** No editing/deleting events;
    immutability is a core ES lesson the view should make visible.
-4. **System-level replay (rebuilding projectors from the store) is out.** That's
-   operational infra; the replay here is a read-only pedagogical scrubber only.
+4. **Operational projector replay is out.** The scrubber never rewinds or
+   rebuilds the *real* `ArrearsProjector` / read-model tables. Its projector pane
+   is an **in-memory fold over the selected event prefix**, computed for display
+   only — the write-side aggregate state is folded the same way. Touching the
+   live projection state (Commanded's operational rebuild) is out; the read-only
+   pedagogical recompute is the whole point.
 5. **Bitemporal (valid-time vs transaction-time) display is a stretch, not v1.**
    Rich once the bitemporal envelope (#38) lands, but v1 must not be gated on it.
 
@@ -116,8 +133,9 @@ shape, end to end:
 
 - **Primary — the consolidation test:** David can open the view, pick a tenancy
   stream, replay it, and explain each step out loud **without notes** — this
-  event → folds into this aggregate state → surfaces in this projector read
-  model. If it can be taught from the screen, it worked.
+  event → folds into this aggregate state → and into this projector read model
+  (both recomputed in-memory for the step, per cut #4). If it can be taught from
+  the screen, it worked.
 - **Artifact test:** every core concept — event, aggregate, stream, bounded
   context, write-vs-read model, immutability — is *visibly represented*, not
   merely implied.
@@ -131,3 +149,11 @@ shape, end to end:
   raise David's profile. — Test: show one colleague the existing `domain-model.md`
   or a Mermaid diagram first. **Accepted as risk, not tested** — David is the
   primary user, so the value stands even if the secondary audience never engages.
+
+## Out of Scope
+
+- **Payload redaction / field allowlisting** — not a why-level concern: Latchkey
+  runs on **simulated tenants (synthetic data, no real PII)**, so exposing full
+  event payloads carries no privacy risk. If real data is ever introduced, revisit.
+- **Route authorization policy** (who may open the developer route) — a *how*
+  decision for `grill-spec`, not the brief. Noted so it isn't lost, not decided here.
