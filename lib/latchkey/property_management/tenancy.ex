@@ -35,7 +35,12 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   end
 
   def evolve(%State{} = s, %{type: :rent_fell_due} = e) do
-    %State{s | charges: s.charges ++ [{e.due_date, e.amount_cents}], due_through: e.due_date}
+    # `occurred_on` is the charge's due date — the accrual/FIFO key.
+    %State{
+      s
+      | charges: s.charges ++ [{e.occurred_on, e.amount_cents}],
+        due_through: e.occurred_on
+    }
   end
 
   def evolve(%State{} = s, %{type: :rent_payment_recorded} = e) do
@@ -91,10 +96,14 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   @doc """
   Lazy catch-up (§6): the `rent_fell_due` events owed for `(due_through, as_of]`.
   Weekly cycle only for now. Idempotent by the `due_through` pointer.
-  """
-  def catch_up_events(%State{status: :pending}, _as_of), do: []
 
-  def catch_up_events(%State{} = s, %Date{} = as_of) do
+  Each tick's `occurred_on` is its historical due date; every tick shares the
+  passed `recorded_on` (the booking date), so a swept-in tick has
+  `recorded_on >= occurred_on` (lazy accrual, not backdating).
+  """
+  def catch_up_events(%State{status: :pending}, _as_of, _recorded_on), do: []
+
+  def catch_up_events(%State{} = s, %Date{} = as_of, recorded_on) do
     first =
       case s.due_through do
         nil -> s.first_due_date
@@ -105,7 +114,12 @@ defmodule Latchkey.PropertyManagement.Tenancy do
     |> Stream.iterate(&Date.add(&1, 7))
     |> Enum.take_while(&(Date.compare(&1, as_of) != :gt))
     |> Enum.map(fn due_date ->
-      %{type: :rent_fell_due, due_date: due_date, amount_cents: s.rent_amount_cents}
+      %{
+        type: :rent_fell_due,
+        occurred_on: due_date,
+        recorded_on: recorded_on,
+        amount_cents: s.rent_amount_cents
+      }
     end)
   end
 
@@ -117,6 +131,9 @@ defmodule Latchkey.PropertyManagement.Tenancy do
        %{
          type: :tenancy_commenced,
          tenancy_id: cmd.tenancy_id,
+         # occurrence = commencement date (the first due date in this weekly slice).
+         occurred_on: cmd.first_due_date,
+         recorded_on: cmd.recorded_on,
          rent_amount_cents: cmd.rent_amount_cents,
          cycle: cmd.cycle,
          first_due_date: cmd.first_due_date
@@ -137,12 +154,14 @@ defmodule Latchkey.PropertyManagement.Tenancy do
     if MapSet.member?(s.applied_payment_ids, cmd.source_payment_id) do
       {:ok, []}
     else
-      catch_up = catch_up_events(s, cmd.received_on)
+      catch_up = catch_up_events(s, cmd.received_on, cmd.recorded_on)
 
       payment = %{
         type: :rent_payment_recorded,
+        # occurrence = received date.
+        occurred_on: cmd.received_on,
+        recorded_on: cmd.recorded_on,
         amount_cents: cmd.amount_cents,
-        received_on: cmd.received_on,
         source_payment_id: cmd.source_payment_id
       }
 
@@ -152,14 +171,16 @@ defmodule Latchkey.PropertyManagement.Tenancy do
 
   # §6 lazy sweep as a first-class no-decision op (keeps the read model warm).
   def decide_catch_up(%State{status: :pending}, _cmd), do: {:ok, []}
-  def decide_catch_up(%State{} = s, %{as_of: as_of}), do: {:ok, catch_up_events(s, as_of)}
+
+  def decide_catch_up(%State{} = s, %{as_of: as_of} = cmd),
+    do: {:ok, catch_up_events(s, as_of, cmd.recorded_on)}
 
   # L1/L3 — a termination notice needs a live (active) tenancy.
   def decide_termination(%State{status: status}, _cmd) when status != :active,
     do: {:error, :not_active}
 
   def decide_termination(%State{} = s, cmd) do
-    catch_up = catch_up_events(s, cmd.as_of)
+    catch_up = catch_up_events(s, cmd.as_of, cmd.recorded_on)
     s_now = Enum.reduce(catch_up, s, &evolve(&2, &1))
     behind = days_behind(s_now, cmd.as_of)
 
@@ -169,9 +190,11 @@ defmodule Latchkey.PropertyManagement.Tenancy do
     else
       notice = %{
         type: :termination_notice_given,
+        # occurrence = served/given date; `termination_date` stays payload.
+        occurred_on: cmd.given_on,
+        recorded_on: cmd.recorded_on,
         grounds: :arrears,
-        termination_date: cmd.termination_date,
-        given_on: cmd.given_on
+        termination_date: cmd.termination_date
       }
 
       {:ok, catch_up ++ [notice]}
