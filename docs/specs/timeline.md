@@ -44,7 +44,7 @@ bitemporal dimension a flat money statement can't show. Per ADR 0006:
   into the **debit** column at its own `occurred_on`; the original credit row is
   untouched.
 - **Derived, rebuildable, faithful** — the timeline adds no integrity mechanism of
-  its own; tamper-evidence is the log's concern (#16).
+  its own; integrity (hash-chaining / verification) is the log's concern (#16).
 
 The reader gets one legible story: *rent accrues → payments land → [14 days pass] →
 termination notice served on arrears grounds (balance $1,400, 20 days behind) →
@@ -111,9 +111,10 @@ tenant pays → notice voided → keys returned → settled, final balance owing
 21. As a property manager, I want a payment reallocated from the wrong tenancy to
     show as a reversal on that tenancy's timeline and a fresh receipt on the correct
     one, so that each tenancy's timeline is honest on its own.
-22. As a developer, I want the timeline to display only the hash-protected dates
+22. As a developer, I want the timeline to display only the integrity-covered dates
     (`occurred_on`/`recorded_on`) and never lean on the physical `created_at` as
-    evidence, so that everything shown is backed by the tamper-evident log (#16).
+    evidence, so that everything shown is backed by the hash-chained,
+    integrity-verifiable log (#16).
 23. As a developer, I want the timeline to be a pure, deterministic fold that is
     byte-identically reproducible from the log, so that its evidentiary credibility
     reduces to the log's integrity.
@@ -165,12 +166,19 @@ tenant pays → notice voided → keys returned → settled, final balance owing
   `occurred_on` (primary) and `recorded_on` (muted when equal). Kick-in dates
   (`termination_date`, `effective_from`) are payload rendered in `description`, never
   the sort key.
-- **Balance folded in `occurred_on` order (ADR 0006 §5).** `balance_snapshot` =
+- **Balance folded in `occurred_on` order (ADR 0006 §4–5).** `balance_snapshot` =
   `Σ debits − Σ credits` over entries up to and including each row, ordered by
-  `occurred_on` (not recorded/log order). Final balance is order-invariant, so the
-  settlement figure is unambiguous. `days_behind` per row = `occurred_on −
-  oldest_unpaid_due_date` as-at that row (Sydney, ADR 0005 dec. 2/6). Both are
-  **computed in the read model, never on events** (ADR 0006 §6).
+  **`(occurred_on, stream_sequence)`** — `occurred_on`, then the event's per-stream
+  append position as the canonical tie-breaker for same-day events (not recorded/log
+  iteration order left to chance). Final balance is order-invariant, so the
+  settlement figure is unambiguous.
+- **`days_behind` contract.** Per row, `days_behind = occurred_on −
+  oldest_unpaid_due_date` as-at that row (Sydney, ADR 0005 dec. 2/6) **when there is
+  an unpaid due date**; when the tenancy is **paid-up** (`oldest_unpaid_due_date =
+  nil`, per `domain-model.md` §6), `days_behind = 0` — a stable non-null integer on
+  every row, so a paid-up row reads "0 days in arrears" (a credit balance still shows
+  in `balance_snapshot`). Both snapshots are **computed in the read model, never on
+  events** (ADR 0006 §6).
 - **Settlement figure = the snapshot on the `TenancySettled` row** (ADR 0006 §5) —
   not a separate field. Post-Terminal P4 payments are ordinary credit rows below it;
   the settlement row is immutable history and is never overwritten.
@@ -178,9 +186,11 @@ tenant pays → notice voided → keys returned → settled, final balance owing
   `RentPaymentRecorded` renders in the **debit** column, `kind: reversal`, at its own
   `occurred_on` (`reversed_on`); the original credit row is untouched. `reason` and
   `reverses` come from ACL-1 (see dependency) and render in `description`/`reverses`.
-- **Tamper-evidence is out (ADR 0006 §8).** The timeline implements no hashing; it is
-  a faithful, rebuildable fold whose credibility reduces to the log's. It displays
-  only `occurred_on`/`recorded_on`; `created_at` is never surfaced as evidence.
+- **Integrity is out (ADR 0006 §8).** The timeline implements no hashing; it is a
+  faithful, rebuildable fold whose credibility reduces to the log's (integrity is
+  #16's concern — hash-chained/integrity-verifiable, not yet "tamper-evident" until
+  #16's anchor tier). It displays only `occurred_on`/`recorded_on`; `created_at` is
+  never surfaced as evidence.
 - **Dashboard unchanged.** The cross-tenancy arrears dashboard keeps reading the
   materialised `Arrears` projection; the timeline is the drill-down.
 - **Pure core, framework-free.** The fold is a pure function over events (like the
@@ -243,7 +253,7 @@ tenant pays → notice voided → keys returned → settled, final balance owing
 - **As-of-`T` replay** (fold `recorded_on ≤ T` to show the timeline as known on day
   T) and the **recorded-order forensic balance** — both derivable, built only when a
   forensic/audit need names them (ADR 0006 Deferred).
-- **Tamper-evidence / hash-chaining** — #16's concern over the log; the timeline adds
+- **Integrity / hash-chaining** — #16's concern over the log; the timeline adds
   no integrity mechanism (ADR 0006 §8).
 - **The bitemporal envelope retrofit, ACL-1 `reason`/`reverses`, and the exit/notice
   events** — dependencies produced by other slices; consumed here, not built here.

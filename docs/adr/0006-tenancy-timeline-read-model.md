@@ -2,15 +2,19 @@
 
 Status: **accepted** — resolves issue #5, the project's deliverable
 (`domain-model.md` §1: the timeline *is* the event log's payoff). **Supersedes
-[ADR 0005](0005-simulation-and-time-model.md) decisions 3–4** (the envelope date
-semantics — `recorded_on` naming and "notices forward-date = effective"); the
-rest of ADR 0005 stands. ADRs are immutable, so 0005's body is untouched — only
-its Status line points here.
+[ADR 0005](0005-simulation-and-time-model.md) decision 4** (envelope direction —
+the "notices forward-date, `effective_date` = kick-in" framing): `effective_date`
+is renamed `occurred_on` (occurrence, uniform) and kick-in dates are payload.
+**`recorded_on` and `created_at` (decision 3) are retained unchanged** — no
+`recorded_on` rename is implied. The rest of ADR 0005 stands. ADRs are immutable,
+so 0005's body is untouched — only its Status line points here.
 
 ## Context
 
 `domain-model.md` §1 makes the **tenancy timeline** the deliverable: a complete,
-tamper-evident history of a tenancy legible as **NCAT arrears evidence**. The
+**append-only, auditable** history of a tenancy legible as **NCAT arrears
+evidence** (the stronger "tamper-evident" claim awaits #16's deferred anchor
+tier — see decision 8). The
 model settled the *facts* (events, the bitemporal envelope, exit settlement) and
 the *arrears reads* (§7), but not what the timeline **shows**, how it renders the
 bitemporal pair legibly, or how it is **served**. #5's blockers (#3 ES foundation,
@@ -50,7 +54,7 @@ So the timeline is a **superset** of the ledger's money view plus the narrative 
 land → *[14 days pass]* → notice served on arrears grounds → tenant pays → notice
 voided → keys returned → settled.
 
-### 3. The `occurred_on` / `recorded_on` / `created_at` split (supersedes 0005 §3–4)
+### 3. The `occurred_on` / `recorded_on` / `created_at` split (supersedes 0005 dec. 4)
 
 `effective_date` conflated two things that split at the notice case:
 
@@ -67,18 +71,28 @@ by the envelope's own rule — *effective = when the fact is true* — a
 `effective_date` is **renamed `occurred_on`** and means occurrence uniformly;
 the kick-in date stays payload. `recorded_on` (when the fact was **booked**;
 lags `occurred_on` for lazy accrual, seeder-assigned for history) and the store's
-physical `created_at` (provenance/tamper only, excluded from #16's hash preimage)
+physical `created_at` (provenance only, excluded from #16's hash preimage)
 are unchanged. See `CONTEXT.md` "The three time axes."
 
 ### 4. Sort by `occurred_on`; two date columns
 
-The timeline sorts by a single key, **`occurred_on`** — the real-world
-chronology. It shows **two date columns**: `occurred_on` (primary; lay header
-"Date") and `recorded_on`, the latter muted/blank when equal (the common
-live-event case, so no noise). The earlier per-event-kind "anchor" wrinkle
-**dissolves**: a forward-dated notice (served 1 Mar, takes effect 15 Mar) now
-sorts to its **served date (1 Mar)** — where a tribunal expects "we served
-notice" — with 15 Mar as in-row description. One rule, no per-kind logic.
+The timeline sorts by **`occurred_on`** — the real-world chronology — with a
+**canonical tie-breaker** for events that share an `occurred_on`. Because row
+order drives the running `balance_snapshot`, `days_behind`, and the byte-identical
+reproducibility claim (§8), a single date key is *not* a total order and must not
+be left to rely on incidental EventStore iteration order. The tie-breaker is the
+event's **per-stream sequence number** (its append position within the tenancy's
+stream) — a stable total order the store already assigns — with the event id as a
+final fallback. So the fold sorts explicitly on **`(occurred_on, stream_sequence)`**.
+Same-day money events therefore fold in booking order, which keeps the running
+balance deterministic and identical on every rebuild.
+
+It shows **two date columns**: `occurred_on` (primary; lay header "Date") and
+`recorded_on`, the latter muted/blank when equal (the common live-event case, so
+no noise). The earlier per-event-kind "anchor" wrinkle **dissolves**: a
+forward-dated notice (served 1 Mar, takes effect 15 Mar) now sorts to its **served
+date (1 Mar)** — where a tribunal expects "we served notice" — with 15 Mar as
+in-row description. One rule, no per-kind logic.
 
 ### 5. `balance_snapshot` + `days_behind` on every row, folded in `occurred_on` order
 
@@ -114,7 +128,7 @@ the correct balance of rows after it — a number frozen at append time would be
 provably wrong. The snapshot is inherently non-local (a function of the whole
 occurred-sorted set), so it belongs to the fold, not the fact.
 
-Tamper-evidence does **not** need it: hash-chain the *facts* (charges, payments)
+Integrity verification does **not** need it: hash-chaining the *facts* (charges, payments)
 and the balance is reproducible from them (recompute → must match). Storing a
 derived balance in the hash preimage would be redundant and couple the chain to
 fold logic. If folding ever becomes a *performance* pain, the lever is
@@ -140,18 +154,26 @@ debit entry, not a negative credit"):
 **propagate through ACL-1 into `RentPaymentRecorded`**, so a row can read
 "Payment reversed — dishonoured" and explicitly tie to the payment it undoes.
 
-### 8. Tamper-evidence is the log's concern (#16), not the timeline's
+### 8. Integrity is the log's concern (#16), not the timeline's
 
-The *"tamper-evident"* adjective is earned by the **log**, not the read model.
-**#16 (hash-chaining)** makes the log tamper-evident; the timeline is a
-**deterministic, rebuildable** fold whose credibility **reduces to the log's** —
-anyone can re-derive it byte-identically and #16 proves the log wasn't altered.
-So the timeline implements **no hashing of its own**. The evidence-quality AC
-splits: **#16 provides integrity; #5 provides legibility + faithfulness**
-(a faithful, rebuildable fold; corrections shown never hidden; it displays only
-the hash-protected dates `occurred_on`/`recorded_on` and never leans on
-`created_at` as evidence). **#5 ⊥ #16 — neither blocks the other.** A "verify
-this exhibit against the log" affordance is a later capability, not #5.
+Integrity is a property of the **log**, not the read model. **#16 (hash-chaining)**
+makes the log **append-only and integrity-verifiable** — re-verification detects
+after-the-fact alteration, deletion, or reordering. Per #16's honesty guardrail,
+that tier is **not** full *tamper-evidence*: an operator with DB write access can
+recompute the whole chain after editing a row, so the "tamper-evident" claim
+awaits #16's **deferred external-anchor tier**. Until then this ADR (and the
+timeline spec) say **"hash-chained / integrity-verifiable"** or **"append-only,
+auditable,"** never "tamper-evident."
+
+The timeline is a **deterministic, rebuildable** fold whose credibility **reduces
+to the log's** — anyone can re-derive it byte-identically and #16's verification
+detects a broken chain. So the timeline implements **no hashing of its own**. The
+evidence-quality AC splits: **#16 provides integrity verification; #5 provides
+legibility + faithfulness** (a faithful, rebuildable fold; corrections shown never
+hidden; it displays only the integrity-covered dates `occurred_on`/`recorded_on`
+and never leans on `created_at` as evidence). **#5 ⊥ #16 — neither blocks the
+other.** A "verify this exhibit against the log" affordance is a later capability,
+not #5.
 
 ### 9. Compute-on-read, not materialised
 
@@ -182,9 +204,9 @@ compute-on-read the detail viewed one entity at a time.** (See `CONTEXT.md`
 
 ## Entry shape (the query's return shape)
 
-One entry per event, sorted by `occurred_on`:
+One entry per event, sorted by `(occurred_on, stream_sequence)`:
 
-```
+```text
 tenancy_id · occurred_on · recorded_on · kind
   (commenced | rent_fell_due | payment | reversal | notice_given |
    notice_voided | keys_returned | settled) ·
@@ -200,8 +222,9 @@ This is the shape the compute-on-read **query returns**, not a stored table.
 
 ## Consequences
 
-- **[ADR 0005](0005-simulation-and-time-model.md) Status line** updated: decisions
-  3–4 (envelope date semantics) superseded here; body untouched.
+- **[ADR 0005](0005-simulation-and-time-model.md) Status line** updated: decision 4
+  (envelope direction / `effective_date` semantics) superseded here; `recorded_on`
+  (decision 3) retained; body untouched.
 - **`CONTEXT.md`** gains: *Rental ledger*, *Timeline*, *Read model · Projection ·
   Compute-on-read*, and *The three time axes*.
 - **Envelope field rename** — `effective_date` → **`occurred_on`** across events,
@@ -211,7 +234,9 @@ This is the shape the compute-on-read **query returns**, not a stored table.
 - **Event-shape requirements on the ACL-1 slice**: `RentPaymentRecorded` gains
   `reason` and `reverses`, propagated by ACL-1 from `PaymentReversed`.
 - **`days_behind` per row** is computed as-at each row's `occurred_on` (Sydney,
-  ADR 0005 decision 2/6) — consistent with the on-read `days_behind` rule.
+  ADR 0005 decision 2/6) — consistent with the on-read `days_behind` rule — and is
+  **`0` when the tenancy is paid-up** (`oldest_unpaid_due_date = nil`, §6), so every
+  row carries a stable non-null integer.
 - Feeds **`/to-spec`** next (this ADR is the design; the spec + tickets follow the
   grill → to-spec → to-tickets flow).
 

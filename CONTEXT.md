@@ -47,7 +47,7 @@ projection in that sense — it's a compute-on-read query.
 
 An event carries two domain dates in its envelope; the store adds a third,
 physical one. Kept distinct because they diverge and the timeline renders the
-divergence (supersedes the `effective_date` framing of ADR 0005 §3–4 — see
+divergence (supersedes the `effective_date` framing of ADR 0005 decision 4 — see
 ADR 0006):
 
 - **`occurred_on`** — *when the event took place* in the tenancy's real world:
@@ -57,8 +57,8 @@ ADR 0006):
 - **`recorded_on`** — *when the fact was booked* into the record. Coincides with
   `occurred_on` for live events; **lags** it for lazy accrual (rent due 5 Mar,
   swept in 20 Mar). Seeder-assigned for backhistory (ADR 0005 §3).
-- **`created_at`** — the store's *physical insert* wall-clock. Provenance/tamper
-  only; excluded from the #16 hash preimage.
+- **`created_at`** — the store's *physical insert* wall-clock. Provenance only;
+  excluded from the #16 hash preimage.
 
 **Not** a time axis: a **kick-in date** — the forward date a *notice announces*
 (a rent increase's `effective_from`, a termination's `termination_date`). It is
