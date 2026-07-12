@@ -31,7 +31,11 @@ defmodule Latchkey.Application do
   # sandboxed suite doesn't boot Commanded; integration tests start it explicitly.
   defp commanded_children do
     if Application.get_env(:latchkey, :start_commanded, true) do
-      [Latchkey.CommandedApp, Latchkey.PropertyManagement.ArrearsProjector]
+      [
+        Latchkey.CommandedApp,
+        Latchkey.PropertyManagement.ArrearsProjector,
+        Latchkey.PropertyManagement.PaymentAcl
+      ]
     else
       []
     end
