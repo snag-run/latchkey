@@ -95,7 +95,7 @@ defmodule Latchkey.Simulation.Seeder do
   @spec seed(keyword()) :: [%{scenario: Scenario.t(), tenancy_id: String.t(), status: atom()}]
   def seed(opts \\ []) do
     today = Keyword.get(opts, :today, Clock.today())
-    scenarios = Keyword.get(opts, :scenarios, catalogue(today))
+    scenarios = Keyword.get_lazy(opts, :scenarios, fn -> catalogue(today) end)
     prefix = Keyword.get(opts, :id_prefix, "")
     accounts_stream = Keyword.get(opts, :accounts_stream, "accounts")
     await_ms = Keyword.get(opts, :await_ms, @default_await_ms)

@@ -152,9 +152,8 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   defp under_notice(today) do
     for idx <- 0..(@under_notice_count - 1) do
       paid = 1 + rem(idx, 3)
-      arrears_at_notice = 21 + rem(idx, 2) * @week
       notice_age = @week + rem(idx, 3) * @week
-      first_unpaid_age = notice_age + arrears_at_notice
+      first_unpaid_age = first_unpaid_age(idx, notice_age)
 
       %Scenario{
         label: "under-notice-#{pad(idx + 1)}",
@@ -177,9 +176,8 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   defp exited(today) do
     for idx <- 0..(@exited_count - 1) do
       paid = 1 + rem(idx, 3)
-      arrears_at_notice = 21 + rem(idx, 2) * @week
       notice_age = 42 + rem(idx, 3) * @week
-      first_unpaid_age = notice_age + arrears_at_notice
+      first_unpaid_age = first_unpaid_age(idx, notice_age)
       end_age = notice_age - (14 + rem(idx, 2) * @week)
       overstay = rem(idx, 3) * 3
 
@@ -201,6 +199,11 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   end
 
   # ── helpers ───────────────────────────────────────────────────────────────────
+
+  # How long ago the first unpaid period fell due for a noticed tenancy: the notice
+  # landed `notice_age` days ago, by which point the tenant was 21..28 days in arrears
+  # (>= the L7 gate, so the planted notice is valid by construction).
+  defp first_unpaid_age(idx, notice_age), do: notice_age + 21 + rem(idx, 2) * @week
 
   # A little deterministic rent variation (45k..70k) so the board isn't monotone.
   defp rent(idx), do: 45_000 + rem(idx, 6) * 5_000
