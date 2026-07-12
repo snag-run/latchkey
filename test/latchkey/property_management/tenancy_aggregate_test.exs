@@ -282,6 +282,13 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
                reverse(paid_agg(), %{reverses: "p-never", source_payment_id: "r-x"})
     end
 
+    test "rejects a non-negative reversal (a compensating entry must be negative)" do
+      # A malformed/direct command with a positive amount must never emit a positive
+      # RentPaymentRecorded that would inflate the balance.
+      assert {:error, :non_negative_reversal} = reverse(paid_agg(), %{amount_cents: 50_000})
+      assert {:error, :non_negative_reversal} = reverse(paid_agg(), %{amount_cents: 0})
+    end
+
     test "is idempotent on the reversal's own source_payment_id" do
       once = paid_agg()
       applied = apply_all(once, reverse(once, %{}))
@@ -293,13 +300,17 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     test "reversal envelope round-trips through JSON rehydration (reason/reverses survive)" do
       before = paid_agg()
 
-      folded =
-        before
-        |> reverse(%{})
-        |> Enum.map(&rehydrate/1)
-        |> then(&apply_all(before, &1))
+      rehydrated = before |> reverse(%{}) |> Enum.map(&rehydrate/1)
 
-      # The negative amount still folded (balance rose back to the owed week).
+      # Assert the serialized-then-decoded event directly: reason/reverses must survive
+      # the JSON round-trip (the fold discards them, so a balance-only check can't tell).
+      assert [%RentPaymentRecorded{} = ev] = rehydrated
+      assert ev.reason == "dishonoured"
+      assert ev.reverses == "p-1"
+      assert ev.amount_cents == -50_000
+
+      # And the negative amount still folds (balance rose back to the owed week).
+      folded = apply_all(before, rehydrated)
       assert Tenancy.balance_cents(folded.core) == 50_000
     end
   end

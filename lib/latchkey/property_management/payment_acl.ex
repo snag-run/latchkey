@@ -127,6 +127,17 @@ defmodule Latchkey.PropertyManagement.PaymentAcl do
         )
 
         :ok
+
+      # A transient source-stream read failure (NOT a missing stream) may recover: return
+      # the error so Commanded does NOT advance the checkpoint and retries — a legit
+      # reversal must never be dropped on a recoverable read failure.
+      {:error, reason} = error ->
+        Logger.error(
+          "ACL-1 retrying reversal #{inspect(event.payment_id)}: source read failed " <>
+            "(#{inspect(reason)})"
+        )
+
+        error
     end
   end
 
@@ -172,6 +183,16 @@ defmodule Latchkey.PropertyManagement.PaymentAcl do
 
         :ok
 
+      # KNOWN, non-retryable structural rejection: a non-negative "reversal" is malformed
+      # and never becomes valid on retry (it would inflate the balance). Log and skip.
+      {:error, :non_negative_reversal} ->
+        Logger.warning(
+          "ACL-1 rejected reversal #{inspect(id)} for #{inspect(tid)}: " <>
+            "amount is not negative (compensating)"
+        )
+
+        :ok
+
       # Anything else (dispatch/consistency timeout, infrastructure failure) may be
       # transient: return the error so Commanded does NOT advance the checkpoint and
       # the handler retries — a dropped reversal must never happen on a recoverable one.
@@ -190,10 +211,16 @@ defmodule Latchkey.PropertyManagement.PaymentAcl do
   # durable log (not an in-memory index) keeps routing replay-safe across restarts.
   defp source_holder(reverses, %{stream_id: stream_id}) when is_binary(stream_id) do
     case EventStore.stream_forward(stream_id) do
-      # A source stream that cannot be read (e.g. never existed) means PM cannot route
-      # the reversal — treat as "original not found" rather than crash the subscription.
-      {:error, _reason} ->
+      # A *missing* source stream is permanent: PM cannot route this reversal, so skip
+      # it as "original not found" (advance the checkpoint) rather than retry forever.
+      {:error, :stream_not_found} ->
         :not_found
+
+      # Any OTHER read error may be transient (adapter/connection failure) — surface it
+      # so the caller returns it and Commanded retries WITHOUT advancing the checkpoint.
+      # Swallowing it here would drop a legit reversal.
+      {:error, _reason} = error ->
+        error
 
       stream ->
         Enum.find_value(stream, :not_found, fn

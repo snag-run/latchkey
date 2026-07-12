@@ -262,8 +262,13 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   the credit it undoes. The fold absorbs the negative amount (payments go down); the
   reversal's own `source_payment_id` enters `applied_payment_ids` for idempotency.
 
-  Two guards, checked in this order so replay is safe:
+  Three guards, checked in this order so replay is safe:
 
+  - **Sign invariant** — a reversal is a *compensating* (negative) entry; a non-negative
+    amount is a structurally-invalid command that must never emit a positive
+    `rent_payment_recorded` (which would inflate the balance). Refuse it outright with
+    `{:error, :non_negative_reversal}`. (Accounts' builder already enforces the sign at
+    its edge; this keeps the domain honest against a direct/malformed command too.)
   - **Idempotent** on the reversal's `source_payment_id` — a re-seen reversal (live
     re-delivery or a replay of an already-emitted one) is a `{:ok, []}` no-op.
   - **Defensive P2** (§5 P2) — a reversal whose `reverses` PM never recorded is a seam
@@ -274,6 +279,9 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   """
   def decide_reversal(%State{} = s, cmd) do
     cond do
+      cmd.amount_cents >= 0 ->
+        {:error, :non_negative_reversal}
+
       MapSet.member?(s.applied_payment_ids, cmd.source_payment_id) ->
         {:ok, []}
 
