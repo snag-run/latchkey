@@ -1,10 +1,16 @@
 defmodule Latchkey.Simulation.SeederIntegrationTest do
   @moduledoc """
-  The seed scenario catalogue end to end (issue #44) through the real Commanded app +
-  Postgres EventStore + ACL-1 + projector. Proves the acceptance criteria that a unit
-  test can't: seeding replays the live engine + sweep through the Accounts → ACL-1 → PM
-  seam, and post-seed the `Arrears` read model shows each tenancy at its **intended
-  state as of today**.
+  The seed scenario catalogue end to end (issue #44 / ADR 0007) through the real
+  Commanded app + Postgres EventStore + ACL-1 + projector. Proves the acceptance
+  criteria that a unit test can't: seeding replays the live engine + sweep + agent
+  commands through the Accounts → ACL-1 → PM seam, and post-seed the `Arrears` read
+  model shows each tenancy at the **intended state as of today** derived by the pure
+  projection — the guard that the projection can't drift from the live seam.
+
+  It seeds a **representative subset** (not the whole ~100-tenancy board) covering
+  every lifecycle status — active, arrears, under-notice, and exited/terminal — since
+  the seam logic is identical across scenarios; the full catalogue is exercised purely
+  and fast in `Latchkey.Simulation.SeederTest`.
 
   The event store is not sandboxed (Commanded runs its own DB connection), so the seed
   is run with a unique id prefix + accounts stream per test run; the `Arrears` read
@@ -19,6 +25,14 @@ defmodule Latchkey.Simulation.SeederIntegrationTest do
 
   @today ~D[2026-06-15]
 
+  # One scenario of each shape — the featured three (active / arrears / ending) plus a
+  # generated healthy, arrears, under-notice and exited/terminal — so the seam is proven
+  # against every lifecycle status without seeding all ~100.
+  @sample_labels ~w(
+    paid-up 20-days-behind-no-notice notice-issued-then-tenant-paid
+    healthy-01 arrears-01 under-notice-01 exited-01
+  )
+
   setup do
     start_supervised!(Latchkey.CommandedApp)
     start_supervised!(Latchkey.PropertyManagement.ArrearsProjector)
@@ -27,18 +41,27 @@ defmodule Latchkey.Simulation.SeederIntegrationTest do
     prefix = "seed-it-#{System.unique_integer([:positive])}-"
     accounts_stream = "accounts-seed-it-#{System.unique_integer([:positive])}"
 
-    seed_opts = [today: @today, id_prefix: prefix, accounts_stream: accounts_stream]
+    sample = @today |> Seeder.catalogue() |> Enum.filter(&(&1.label in @sample_labels))
+
+    seed_opts = [
+      today: @today,
+      id_prefix: prefix,
+      accounts_stream: accounts_stream,
+      scenarios: sample
+    ]
+
     results = Seeder.seed(seed_opts)
 
-    {:ok, results: results, seed_opts: seed_opts}
+    {:ok, results: results, seed_opts: seed_opts, sample: sample}
   end
 
   test "every seeded tenancy lands at its intended arrears/exit state as of today", %{
     results: results,
-    seed_opts: seed_opts
+    seed_opts: seed_opts,
+    sample: sample
   } do
-    # All three scenarios seeded (none skipped — fresh streams per run).
-    assert length(results) == 3
+    # Every sampled scenario seeded (none skipped — fresh streams per run).
+    assert length(results) == length(sample)
     assert Enum.all?(results, &(&1.status == :seeded))
 
     for %{scenario: scenario, tenancy_id: tenancy_id} <- results do
@@ -98,6 +121,16 @@ defmodule Latchkey.Simulation.SeederIntegrationTest do
     assert record.oldest_unpaid_due_date == nil
     assert record.balance_cents == 0
     assert Arrears.days_behind(record, @today) == 0
+  end
+
+  test "the exited tenant settles to a terminal state with a frozen final balance", %{
+    results: results
+  } do
+    record = results |> tenancy_id_for("exited-01") |> arrears()
+
+    # Keys were returned through the live ReturnKeys command, settling the tenancy.
+    assert record.status == :terminal
+    assert record.final_balance_cents != nil
   end
 
   defp arrears(tenancy_id) do

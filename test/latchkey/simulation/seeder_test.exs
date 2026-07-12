@@ -103,6 +103,53 @@ defmodule Latchkey.Simulation.SeederTest do
     end
   end
 
+  describe "catalogue at demo scale (ADR 0007)" do
+    test "fills a ~100-tenancy board" do
+      assert length(Seeder.catalogue(@today)) == 100
+    end
+
+    test "spreads across active, ending and terminal states" do
+      by_status = @today |> Seeder.catalogue() |> Enum.group_by(& &1.expected.status)
+
+      # A realistic board: mostly live tenancies, a slice under notice, a few exited.
+      assert map_size(Map.take(by_status, [:active, :ending, :terminal])) == 3
+      assert length(by_status[:active]) > length(by_status[:ending])
+      assert length(by_status[:ending]) > length(by_status[:terminal])
+      assert by_status[:terminal] != []
+    end
+
+    test "every scenario id and label is unique" do
+      catalogue = Seeder.catalogue(@today)
+      ids = Enum.map(catalogue, & &1.tenancy_id)
+      labels = Enum.map(catalogue, & &1.label)
+
+      assert length(Enum.uniq(ids)) == length(ids)
+      assert length(Enum.uniq(labels)) == length(labels)
+    end
+
+    test "exited scenarios plant a keys-return and settle to terminal" do
+      exited =
+        @today |> Seeder.catalogue() |> Enum.filter(&(&1.expected.status == :terminal))
+
+      assert exited != []
+
+      for %Scenario{notice: notice, exit: exit} <- exited do
+        # A settled tenancy was noticed first (needs an effective end date), then had
+        # keys returned on or after that end date.
+        assert %{termination_date: e} = notice
+        assert %{keys_on: v} = exit
+        assert Date.compare(v, e) != :lt
+      end
+    end
+
+    test "generated notices all clear the L7 arrears gate (no domain-invalid scenario)" do
+      # `catalogue/1` derives every `:expected` through the real domain, which raises on
+      # an invalid planted step — so a clean build *is* the validity assertion. Assert it
+      # explicitly so a future generator regression fails here, loudly.
+      assert Seeder.catalogue(@today) |> Enum.all?(&match?(%{status: _}, &1.expected))
+    end
+  end
+
   defp fetch(today, label) do
     today |> Seeder.catalogue() |> Enum.find(&(&1.label == label))
   end
