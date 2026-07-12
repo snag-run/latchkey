@@ -676,6 +676,157 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     end
   end
 
+  describe "exit settlement — overstay `[E, V)` reckoned at vacant possession (issue #32)" do
+    # `midweek_ending_state/2` (above) builds an `:ending` state directly. E = 02-16 is a
+    # **period boundary** (01-05 + 7×6), so catch-up to E books six whole weeks with no
+    # boundary pro-ration — keeping the overstay maths isolated from #31.
+    test "keys returned after E append a single overstay RentFellDue for the [E, V) span" do
+      {:ok, events} =
+        Tenancy.decide_return_keys(
+          midweek_ending_state(~D[2026-02-16]),
+          %{keys_on: ~D[2026-02-19], recorded_on: ~D[2026-02-19]}
+        )
+
+      charges = Enum.filter(events, &(&1.type == :rent_fell_due))
+      overstay = List.last(charges)
+
+      # Six whole weeks to E, then exactly one overstay charge spanning [E, V).
+      assert Enum.count(charges) == 7
+      assert overstay.occurred_on == ~D[2026-02-16]
+      assert overstay.period_from == ~D[2026-02-16]
+      assert overstay.period_to == ~D[2026-02-19]
+      # 3 days at $500/week → round_half_up(50_000 × 3 ÷ 7) = 21_429.
+      assert overstay.amount_cents == 21_429
+    end
+
+    test "the overstay is a forward append — it never rewrites the whole periods booked to E" do
+      {:ok, events} =
+        Tenancy.decide_return_keys(
+          midweek_ending_state(~D[2026-02-16]),
+          %{keys_on: ~D[2026-02-23], recorded_on: ~D[2026-02-23]}
+        )
+
+      charges = Enum.filter(events, &(&1.type == :rent_fell_due))
+      {whole, [overstay]} = Enum.split(charges, 6)
+
+      # The six periods booked to E are untouched full-week charges …
+      assert Enum.all?(whole, &(&1.amount_cents == 50_000))
+      assert Enum.all?(whole, &(Date.diff(&1.period_to, &1.period_from) == 7))
+      # … and the overstay is appended on top: [02-16, 02-23) = a full held-over week.
+      assert overstay.period_from == ~D[2026-02-16]
+      assert overstay.period_to == ~D[2026-02-23]
+      assert overstay.amount_cents == 50_000
+    end
+
+    test "the keys-return day V is not charged (period_to = V, exclusive)" do
+      {:ok, events} =
+        Tenancy.decide_return_keys(
+          midweek_ending_state(~D[2026-02-16]),
+          %{keys_on: ~D[2026-02-19], recorded_on: ~D[2026-02-19]}
+        )
+
+      overstay = events |> Enum.filter(&(&1.type == :rent_fell_due)) |> List.last()
+      assert Date.compare(overstay.period_to, ~D[2026-02-19]) == :eq
+    end
+
+    test "same-day return (V = E) appends no overstay charge — the [E, V) span is empty" do
+      {:ok, events} =
+        Tenancy.decide_return_keys(
+          midweek_ending_state(~D[2026-02-16]),
+          %{keys_on: ~D[2026-02-16], recorded_on: ~D[2026-02-16]}
+        )
+
+      charges = Enum.filter(events, &(&1.type == :rent_fell_due))
+      # Only the six whole periods to E; no charge starts on or after E.
+      assert Enum.count(charges) == 6
+
+      for %{period_from: from} <- charges,
+          do: assert(Date.compare(from, ~D[2026-02-16]) == :lt)
+    end
+
+    test "final_balance_cents includes the overstay charge" do
+      {:ok, events} =
+        Tenancy.decide_return_keys(
+          midweek_ending_state(~D[2026-02-16]),
+          %{keys_on: ~D[2026-02-23], recorded_on: ~D[2026-02-23]}
+        )
+
+      settled = List.last(events)
+      # 6 × $500 booked to E + one $500 overstay week − 0 paid = $3,500.
+      assert settled.type == :tenancy_settled
+      assert settled.final_balance_cents == 350_000
+    end
+
+    test "a tenant holding credit has it consumed first against the overstay" do
+      # Prepaid $3,200 → a $200 credit against the $3,000 booked to E. Overstaying one
+      # full week ($500) consumes that credit first, leaving a $300 residual debt.
+      state = midweek_ending_state(~D[2026-02-16], payments_total_cents: 320_000)
+
+      {:ok, events} =
+        Tenancy.decide_return_keys(state, %{keys_on: ~D[2026-02-23], recorded_on: ~D[2026-02-23]})
+
+      settled = List.last(events)
+      # (6 × 50_000 + 50_000 overstay) − 320_000 = 30_000 residual (credit absorbed).
+      assert settled.final_balance_cents == 30_000
+    end
+
+    test "final_balance_cents equals the post-charge fold with the overstay applied" do
+      state = midweek_ending_state(~D[2026-02-16])
+      agg = %Agg{core: state}
+
+      events =
+        Agg.execute(agg, %C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-02-19],
+          recorded_on: ~D[2026-02-19]
+        })
+
+      settled = List.last(events)
+      folded = apply_all(agg, events)
+      assert settled.final_balance_cents == Tenancy.balance_cents(folded.core)
+    end
+
+    test "a mid-week E pro-rates the boundary AND appends the overstay (both charges coexist)" do
+      # E = 02-12 mid-week: boundary [02-09, 02-12) pro-rates (#31); overstay [02-12, V)
+      # appends on top (#32). The two are distinct dated ledger lines.
+      {:ok, events} =
+        Tenancy.decide_return_keys(
+          midweek_ending_state(~D[2026-02-12]),
+          %{keys_on: ~D[2026-02-19], recorded_on: ~D[2026-02-19]}
+        )
+
+      charges = Enum.filter(events, &(&1.type == :rent_fell_due))
+      boundary = Enum.at(charges, -2)
+      overstay = List.last(charges)
+
+      assert boundary.period_from == ~D[2026-02-09]
+      assert boundary.period_to == ~D[2026-02-12]
+      assert boundary.amount_cents == 21_429
+      assert overstay.period_from == ~D[2026-02-12]
+      assert overstay.period_to == ~D[2026-02-19]
+      # [02-12, 02-19) = 7 days = a whole week's rent at the daily rate.
+      assert overstay.amount_cents == 50_000
+    end
+
+    test "the overstay exit round-trips through JSON rehydration to a Terminal fold" do
+      agg = %Agg{core: midweek_ending_state(~D[2026-02-16])}
+
+      folded =
+        agg
+        |> Agg.execute(%C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-02-23],
+          recorded_on: ~D[2026-02-23]
+        })
+        |> Enum.map(&rehydrate/1)
+        |> then(&apply_all(agg, &1))
+
+      assert folded.core.status == :terminal
+      # 6 whole weeks + one overstay week = $3,500.
+      assert folded.core.final_balance_cents == 350_000
+    end
+  end
+
   # Simulate EventStore JSON rehydration: encode → decode → rebuild the struct
   # with string-valued dates, exactly as the serializer hands them to `apply/2`.
   defp rehydrate(%mod{} = event) do
