@@ -10,6 +10,10 @@ import Config
 config :latchkey, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,
+  # Daily sweep (ADR 0005 decision 5): the visibility backstop for non-payers.
+  plugins: [
+    {Oban.Plugins.Cron, crontab: [{"@daily", Latchkey.PropertyManagement.Sweep.CronWorker}]}
+  ],
   queues: [default: 10],
   repo: Latchkey.Repo
 
