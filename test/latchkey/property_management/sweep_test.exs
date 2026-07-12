@@ -8,7 +8,6 @@ defmodule Latchkey.PropertyManagement.SweepTest do
   use Latchkey.DataCase, async: false
   use Oban.Testing, repo: Latchkey.Repo
 
-  alias Latchkey.Clock
   alias Latchkey.PropertyManagement.Arrears
   alias Latchkey.PropertyManagement.Sweep
   alias Latchkey.PropertyManagement.Sweep.CronWorker
@@ -46,17 +45,24 @@ defmodule Latchkey.PropertyManagement.SweepTest do
   end
 
   describe "CronWorker fan-out" do
-    test "enqueues one TenancyWorker child per live tenancy, swept through today" do
+    test "enqueues one TenancyWorker child per live tenancy, swept through a single as_of" do
       seed_arrears("t-a")
       seed_arrears("t-b")
 
-      as_of = Date.to_iso8601(Clock.today())
-
       assert :ok = perform_job(CronWorker, %{})
 
+      jobs = all_enqueued(worker: TenancyWorker)
+
+      # Derive the expected as_of from the jobs the worker actually enqueued rather
+      # than reading Clock.today/0 a second time here — a midnight-cross between the
+      # two reads would flake the assertion. A single cron run is one consistent
+      # snapshot, so every child must share exactly one as_of.
+      assert [as_of] = jobs |> Enum.map(& &1.args["as_of"]) |> Enum.uniq()
+
+      # Both live tenancies each got exactly one job, swept through that as_of.
       assert_enqueued(worker: TenancyWorker, args: %{tenancy_id: "t-a", as_of: as_of})
       assert_enqueued(worker: TenancyWorker, args: %{tenancy_id: "t-b", as_of: as_of})
-      assert length(all_enqueued(worker: TenancyWorker)) == 2
+      assert length(jobs) == 2
     end
 
     test "enqueues nothing when there are no live tenancies" do
