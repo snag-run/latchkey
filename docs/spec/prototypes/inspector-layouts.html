@@ -1,0 +1,777 @@
+<title>Inspector — layout spike</title>
+<!--
+  THROWAWAY PROTOTYPE — /inspector layout exploration (run plan #79–#86).
+  Three radically different layouts for the read-only ES/DDD inspector,
+  flip with the floating bar (or ← / →). Fake in-memory data shaped like the
+  real domain; the scrubber runs a real prefix-fold in JS. Delete once a
+  direction wins; fold the winner into the LiveView slices.
+-->
+<style>
+  :root {
+    --bg:#f5f6fa; --panel:#ffffff; --panel-2:#eef0f6; --panel-3:#e5e8f1;
+    --ink:#1a1d29; --ink-soft:#4a4f63; --ink-faint:#868ca3; --line:#dde1ec;
+    --accent:#5b4bd6; --accent-soft:#ece9fb; --accent-ink:#4033b0;
+    --ok:#0f8a5f; --ok-soft:#e2f5ec;
+    --warn:#b7791f; --warn-soft:#fbf1dd;
+    --crit:#c4372f; --crit-soft:#fbe6e4;
+    --info:#2563a8; --info-soft:#e3eefb;
+    --debit:#c4372f; --credit:#0f8a5f;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,"Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Inter,Helvetica,Arial,sans-serif;
+    --shadow:0 1px 2px rgba(20,25,45,.06),0 8px 24px rgba(20,25,45,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0f1117; --panel:#171a23; --panel-2:#1e222d; --panel-3:#262b38;
+      --ink:#e8eaf2; --ink-soft:#a8adc0; --ink-faint:#6b7189; --line:#2a2f3d;
+      --accent:#8b7cf6; --accent-soft:#211f3a; --accent-ink:#b6acfb;
+      --ok:#34d399; --ok-soft:#12251f;
+      --warn:#f0b34e; --warn-soft:#2a2113;
+      --crit:#f2645a; --crit-soft:#2c1614;
+      --info:#5aa2e6; --info-soft:#12212f;
+      --debit:#f2645a; --credit:#34d399;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#0f1117; --panel:#171a23; --panel-2:#1e222d; --panel-3:#262b38;
+    --ink:#e8eaf2; --ink-soft:#a8adc0; --ink-faint:#6b7189; --line:#2a2f3d;
+    --accent:#8b7cf6; --accent-soft:#211f3a; --accent-ink:#b6acfb;
+    --ok:#34d399; --ok-soft:#12251f; --warn:#f0b34e; --warn-soft:#2a2113;
+    --crit:#f2645a; --crit-soft:#2c1614; --info:#5aa2e6; --info-soft:#12212f;
+    --debit:#f2645a; --credit:#34d399;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.35);
+  }
+  :root[data-theme="light"] {
+    --bg:#f5f6fa; --panel:#ffffff; --panel-2:#eef0f6; --panel-3:#e5e8f1;
+    --ink:#1a1d29; --ink-soft:#4a4f63; --ink-faint:#868ca3; --line:#dde1ec;
+    --accent:#5b4bd6; --accent-soft:#ece9fb; --accent-ink:#4033b0;
+    --ok:#0f8a5f; --ok-soft:#e2f5ec; --warn:#b7791f; --warn-soft:#fbf1dd;
+    --crit:#c4372f; --crit-soft:#fbe6e4; --info:#2563a8; --info-soft:#e3eefb;
+    --debit:#c4372f; --credit:#0f8a5f;
+    --shadow:0 1px 2px rgba(20,25,45,.06),0 8px 24px rgba(20,25,45,.06);
+  }
+
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+    font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased; }
+  #stage { min-height:100vh; padding-bottom:96px; }
+  h1,h2,h3,h4 { text-wrap:balance; margin:0; font-weight:650; letter-spacing:-.01em; }
+  a { color:var(--accent); text-decoration:none; }
+  code,.mono { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  .num { font-variant-numeric:tabular-nums; }
+  button { font-family:inherit; cursor:pointer; }
+  .eyebrow { font-size:11px; text-transform:uppercase; letter-spacing:.12em; color:var(--ink-faint); font-weight:650; }
+
+  /* pills / chips */
+  .pill { display:inline-flex; align-items:center; gap:5px; padding:2px 9px; border-radius:999px;
+    font-size:11px; font-weight:650; letter-spacing:.02em; white-space:nowrap; }
+  .pill.ok{background:var(--ok-soft);color:var(--ok);} .pill.warn{background:var(--warn-soft);color:var(--warn);}
+  .pill.crit{background:var(--crit-soft);color:var(--crit);} .pill.info{background:var(--info-soft);color:var(--info);}
+  .pill.acc{background:var(--accent-soft);color:var(--accent-ink);} .pill.neutral{background:var(--panel-3);color:var(--ink-soft);}
+  .dot{width:7px;height:7px;border-radius:50%;display:inline-block;}
+  .dot.ok{background:var(--ok);}.dot.warn{background:var(--warn);}.dot.crit{background:var(--crit);}
+  .dot.info{background:var(--info);}.dot.acc{background:var(--accent);}.dot.neutral{background:var(--ink-faint);}
+
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; }
+  .panel-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px;
+    padding:11px 14px; border-bottom:1px solid var(--line); }
+  .panel-title { font-size:12px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-soft); }
+  .caption { font-size:12px; color:var(--ink-faint); line-height:1.45; }
+  .caption b { color:var(--ink-soft); font-weight:650; }
+  .link-more { font-size:11px; color:var(--accent); font-weight:600; }
+
+  /* event rows */
+  .evrow { display:grid; grid-template-columns:auto 1fr auto; gap:10px; padding:9px 12px;
+    border-bottom:1px solid var(--line); align-items:start; }
+  .evrow:last-child{border-bottom:none;}
+  .evrow.pending{opacity:.4;}
+  .evrow.current{background:var(--accent-soft); box-shadow:inset 3px 0 0 var(--accent);}
+  .ev-type{font-size:11px;font-weight:700;font-family:var(--mono);letter-spacing:0;color:var(--ink);}
+  .ev-meta{font-size:11.5px;color:var(--ink-faint);}
+  .ev-payload{font-family:var(--mono);font-size:11.5px;color:var(--ink-soft);margin-top:2px;word-break:break-word;}
+  .ev-date{font-size:11px;color:var(--ink-faint);text-align:right;white-space:nowrap;}
+  .badge-div{display:inline-block;margin-left:6px;padding:0 5px;border-radius:4px;font-size:10px;
+    background:var(--warn-soft);color:var(--warn);font-weight:600;}
+  .badge-acl{display:inline-block;margin-top:3px;padding:1px 6px;border-radius:4px;font-size:10px;
+    background:var(--accent-soft);color:var(--accent-ink);font-weight:600;}
+
+  /* kv */
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;padding:12px 14px;font-size:13px;}
+  .kv dt{color:var(--ink-faint);}
+  .kv dd{margin:0;text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink);}
+
+  /* ledger table */
+  table.ledger{width:100%;border-collapse:collapse;font-size:12.5px;}
+  table.ledger th{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-faint);
+    text-align:right;padding:7px 12px;border-bottom:1px solid var(--line);font-weight:650;}
+  table.ledger th:first-child,table.ledger th:nth-child(2){text-align:left;}
+  table.ledger td{padding:7px 12px;border-bottom:1px solid var(--line);text-align:right;
+    font-variant-numeric:tabular-nums;font-family:var(--mono);}
+  table.ledger td.desc{text-align:left;font-family:var(--sans);color:var(--ink-soft);}
+  table.ledger td.dt{text-align:left;color:var(--ink-faint);}
+  table.ledger tr:last-child td{border-bottom:none;}
+  table.ledger tr.reversal td{color:var(--ink-faint);}
+  td.debit{color:var(--debit);} td.credit{color:var(--credit);}
+  .bal-neg{color:var(--credit);} .bal-pos{color:var(--debit);}
+
+  /* scrubber */
+  .scrub{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .scrub input[type=range]{flex:1;min-width:160px;accent-color:var(--accent);height:4px;}
+  .scrub-btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);
+    width:32px;height:32px;border-radius:8px;font-size:14px;display:inline-flex;align-items:center;justify-content:center;}
+  .scrub-btn:hover{border-color:var(--accent);color:var(--accent);}
+  .scrub-btn.play{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .scrub-label{font-family:var(--mono);font-size:12px;color:var(--ink-soft);white-space:nowrap;}
+
+  /* nav tree */
+  .nav-ctx{margin-bottom:6px;}
+  .nav-ctx-h{display:flex;align-items:center;gap:7px;padding:6px 8px;font-size:12px;font-weight:650;}
+  .nav-stream{display:flex;align-items:center;gap:8px;padding:6px 8px 6px 24px;border-radius:7px;
+    font-size:12.5px;color:var(--ink-soft);cursor:pointer;}
+  .nav-stream:hover{background:var(--panel-2);}
+  .nav-stream.active{background:var(--accent-soft);color:var(--accent-ink);font-weight:600;}
+  .nav-stream .sid{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);}
+  .nav-named{padding:4px 8px 4px 24px;font-size:11.5px;color:var(--ink-faint);}
+
+  /* firehose */
+  .fh-item{display:flex;gap:8px;align-items:flex-start;padding:8px 12px;border-bottom:1px solid var(--line);
+    font-size:11.5px;animation:fhin .4s ease;cursor:pointer;}
+  .fh-item:hover{background:var(--accent-soft);}
+  .ev-prop{font-size:10.5px;color:var(--ink-faint);margin-bottom:2px;font-family:var(--sans);
+    display:flex;align-items:center;gap:5px;}
+  .ev-prop .sid{font-family:var(--mono);}
+  @keyframes fhin{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
+  .fh-type{font-family:var(--mono);font-weight:650;color:var(--ink);}
+  .fh-stream{font-family:var(--mono);color:var(--ink-faint);font-size:10.5px;}
+  .live-dot{width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block;
+    box-shadow:0 0 0 0 var(--ok);animation:pulse 2s infinite;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(52,211,153,.5);}70%{box-shadow:0 0 0 6px rgba(52,211,153,0);}100%{box-shadow:0 0 0 0 rgba(52,211,153,0);}}
+
+  /* context map (landing) */
+  .ctxbox{border:1.5px solid var(--line);border-radius:12px;padding:14px;background:var(--panel);}
+  .ctxbox.deep{border-color:var(--accent);}
+  .ctxbox.edge{border-style:dashed;border-color:var(--info);}
+  .ctxbox.named{border-style:dashed;opacity:.62;background:var(--panel-2);}
+  .ctxbox h4{font-size:14px;margin-bottom:3px;}
+  .acl-edge{font-size:11px;font-family:var(--mono);color:var(--accent-ink);background:var(--accent-soft);
+    padding:4px 10px;border-radius:999px;display:inline-flex;gap:6px;align-items:center;}
+
+  .btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:7px 13px;
+    border-radius:8px;font-size:12.5px;font-weight:600;}
+  .btn:hover{border-color:var(--accent);color:var(--accent);}
+  .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .chip{border:1px solid var(--line);background:var(--panel);color:var(--ink-soft);padding:5px 11px;
+    border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;}
+  .chip.active{background:var(--accent-soft);color:var(--accent-ink);border-color:var(--accent);}
+  .crumb{font-size:12px;color:var(--ink-faint);}
+  .crumb a{cursor:pointer;}
+
+  /* switcher */
+  #switcher{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:99;
+    display:flex;align-items:center;gap:2px;background:var(--ink);color:var(--bg);
+    border-radius:999px;padding:5px;box-shadow:0 8px 30px rgba(0,0,0,.35);}
+  #switcher button{background:transparent;border:none;color:var(--bg);width:34px;height:34px;
+    border-radius:999px;font-size:16px;display:flex;align-items:center;justify-content:center;}
+  #switcher button:hover{background:rgba(255,255,255,.15);}
+  #switcher .vlabel{padding:0 12px;font-size:12.5px;font-weight:650;white-space:nowrap;min-width:150px;text-align:center;}
+  #switcher .vkey{opacity:.6;margin-right:5px;}
+
+  .reduced-hint{position:fixed;top:10px;right:12px;font-size:11px;color:var(--ink-faint);z-index:50;}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;}}
+</style>
+
+<div id="stage"></div>
+
+<div id="switcher" role="group" aria-label="Prototype variant switcher">
+  <button id="prevV" aria-label="Previous layout">&#8592;</button>
+  <div class="vlabel"><span class="vkey" id="vkey">A</span><span id="vname">Workbench</span></div>
+  <button id="nextV" aria-label="Next layout">&#8594;</button>
+</div>
+
+<script>
+/* ---------- time + money helpers ---------- */
+const TODAY = new Date('2026-07-13T00:00:00');
+function addDays(off){ const d=new Date(TODAY); d.setDate(d.getDate()+off); return d; }
+function dstr(off){ return addDays(off).toLocaleDateString('en-AU',{day:'2-digit',month:'short',year:'numeric'}); }
+function dshort(off){ return addDays(off).toLocaleDateString('en-AU',{day:'2-digit',month:'short'}); }
+function reld(off){ if(off===0)return'today'; return off<0? (-off)+'d ago' : '+'+off+'d'; }
+function money(c){ if(c==null)return'—'; const neg=c<0; const v=Math.abs(c)/100;
+  const s='$'+v.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}); return neg?'−'+s:s; }
+
+/* ---------- fake domain data (shaped like the real thing) ---------- */
+const TENANTS = {
+  'paid-up':          {name:'Amara Okafor',   addr:'12/45 Marrickville Rd, Marrickville NSW 2204', tag:'Paid up',              tone:'ok'},
+  'arrears-no-notice':{name:'Daniel Whitmore', addr:'3/210 Enmore Rd, Enmore NSW 2042',            tag:'20 days behind',       tone:'crit'},
+  'notice-then-paid': {name:'Priya Nair',      addr:'8/17 Addison Rd, Petersham NSW 2049',         tag:'Notice, then paid up', tone:'info'},
+};
+const RENT = 50000;
+
+const STREAMS = {
+  'paid-up': { context:'tenancy', events:[
+    {t:'TenancyCommenced', o:-31,r:-31, rent:RENT, first_due:-30},
+    {t:'RentFellDue', o:-30,r:-30, amt:RENT, pf:-30,pt:-23},
+    {t:'RentPaymentRecorded', o:-29,r:-29, amt:RENT, src:'pay-001'},
+    {t:'RentFellDue', o:-23,r:-23, amt:RENT, pf:-23,pt:-16},
+    {t:'RentPaymentRecorded', o:-22,r:-22, amt:RENT, src:'pay-002'},
+    {t:'RentFellDue', o:-16,r:-16, amt:RENT, pf:-16,pt:-9},
+    {t:'RentPaymentRecorded', o:-15,r:-15, amt:RENT, src:'pay-003'},
+    {t:'RentFellDue', o:-9,r:-9, amt:RENT, pf:-9,pt:-2},
+    {t:'RentPaymentRecorded', o:-8,r:-8, amt:RENT, src:'pay-004'},
+    {t:'RentFellDue', o:-2,r:-2, amt:RENT, pf:-2,pt:5},
+    {t:'RentPaymentRecorded', o:-1,r:-1, amt:RENT, src:'pay-005'},
+  ]},
+  'arrears-no-notice': { context:'tenancy', events:[
+    {t:'TenancyCommenced', o:-35,r:-35, rent:RENT, first_due:-34},
+    {t:'RentFellDue', o:-34,r:-34, amt:RENT, pf:-34,pt:-27},
+    {t:'RentPaymentRecorded', o:-33,r:-33, amt:RENT, src:'pay-101'},
+    {t:'RentFellDue', o:-27,r:-27, amt:RENT, pf:-27,pt:-20},
+    {t:'RentPaymentRecorded', o:-26,r:-26, amt:RENT, src:'pay-102'},
+    {t:'RentFellDue', o:-20,r:-6, amt:RENT, pf:-20,pt:-13},
+    {t:'RentFellDue', o:-13,r:-6, amt:RENT, pf:-13,pt:-6},
+    {t:'RentFellDue', o:-6,r:-6, amt:RENT, pf:-6,pt:1},
+  ]},
+  'notice-then-paid': { context:'tenancy', events:[
+    {t:'TenancyCommenced', o:-43,r:-43, rent:RENT, first_due:-42},
+    {t:'RentFellDue', o:-42,r:-42, amt:RENT, pf:-42,pt:-35},
+    {t:'RentPaymentRecorded', o:-38,r:-38, amt:RENT, src:'pay-201'},
+    {t:'RentFellDue', o:-35,r:-35, amt:RENT, pf:-35,pt:-28},
+    {t:'RentPaymentRecorded', o:-33,r:-33, amt:-RENT, src:'pay-201', reason:'dishonoured (bounced)', reverses:'pay-201'},
+    {t:'RentFellDue', o:-28,r:-28, amt:RENT, pf:-28,pt:-21},
+    {t:'RentFellDue', o:-21,r:-21, amt:RENT, pf:-21,pt:-14},
+    {t:'TerminationNoticeGiven', o:-21,r:-21, grounds:'arrears', termination:7},
+    {t:'RentFellDue', o:-14,r:-9, amt:RENT, pf:-14,pt:-7},
+    {t:'RentPaymentRecorded', o:-14,r:-14, amt:350000, src:'pay-202'},
+    {t:'RentFellDue', o:-7,r:-3, amt:RENT, pf:-7,pt:0},
+    {t:'RentFellDue', o:0,r:0, amt:RENT, pf:0,pt:7},
+  ]},
+  'accounts': { context:'accounts', events:[
+    {t:'PaymentReceived', o:-33,r:-33, pid:'pay-101', amt:RENT, holder:'tenancy-arrears-no-notice'},
+    {t:'PaymentReceived', o:-29,r:-29, pid:'pay-001', amt:RENT, holder:'tenancy-paid-up'},
+    {t:'PaymentReceived', o:-38,r:-38, pid:'pay-201', amt:RENT, holder:'tenancy-notice-then-paid'},
+    {t:'PaymentReversed', o:-33,r:-33, pid:'pay-201', reverses:'pay-201', amt:-RENT, reason:'dishonoured (bounced)'},
+    {t:'PaymentReceived', o:-26,r:-26, pid:'pay-102', amt:RENT, holder:'tenancy-arrears-no-notice'},
+    {t:'PaymentReceived', o:-18,r:-18, pid:'pay-777', amt:60000, holder:'UNKNOWN'},
+    {t:'PaymentReceived', o:-14,r:-14, pid:'pay-202', amt:350000, holder:'tenancy-notice-then-paid'},
+  ]},
+};
+
+const CONTEXTS = [
+  {id:'tenancy', name:'Tenancy & Arrears', kind:'deep',  agg:'Tenancy',
+   blurb:'Deep context — a Tenancy aggregate with per-tenancy streams. Full write model + read model + ledger.',
+   streams:['paid-up','arrears-no-notice','notice-then-paid']},
+  {id:'accounts', name:'Accounts', kind:'edge', agg:null,
+   blurb:'Edge context — append-only payment facts. Emits facts, folds no state: no aggregate, no read model.',
+   streams:['accounts']},
+];
+const NAMED = ['Maintenance','Inspections','Compliance','Leasing','Business Development'];
+
+/* ---------- the shared fold (this is the D1 keystone, in miniature) ---------- */
+function fold(events, count){
+  const applied = events.slice(0, count);
+  const s = {status:'pending', rent:null, first_due:null, charges:[], payments_total:0,
+             end_date:null, keys_returned:null, final_balance:null};
+  const ledger=[]; let running=0;
+  for(const e of applied){
+    if(e.t==='TenancyCommenced'){ s.status='active'; s.rent=e.rent; s.first_due=e.first_due;
+      ledger.push({desc:'Tenancy commenced', kind:'commenced', o:e.o,r:e.r}); }
+    else if(e.t==='RentFellDue'){ s.charges.push({due:e.o, amt:e.amt}); running+=e.amt;
+      ledger.push({desc:'Rent due', kind:'rent', o:e.o,r:e.r, debit:e.amt, bal:running, pf:e.pf, pt:e.pt}); }
+    else if(e.t==='RentPaymentRecorded'){ s.payments_total+=e.amt;
+      if(e.amt>=0){ running-=e.amt; ledger.push({desc:'Payment received', kind:'payment', o:e.o,r:e.r, credit:e.amt, bal:running, src:e.src}); }
+      else { const m=-e.amt; running+=m; ledger.push({desc:'Payment reversed — '+(e.reason||''), kind:'reversal', o:e.o,r:e.r, debit:m, bal:running, reverses:e.reverses}); } }
+    else if(e.t==='TerminationNoticeGiven'){ s.status='ending'; s.end_date=e.termination;
+      ledger.push({desc:'Termination notice served ('+e.grounds+') — effect '+dshort(e.termination), kind:'notice', o:e.o,r:e.r, bal:running}); }
+    else if(e.t==='KeysReturned'){ s.keys_returned=e.o; ledger.push({desc:'Keys returned', kind:'keys', o:e.o,r:e.r, bal:running}); }
+    else if(e.t==='TenancySettled'){ s.status='terminal'; s.final_balance=e.final_balance;
+      ledger.push({desc:'Settlement', kind:'settled', o:e.o,r:e.r, bal:running}); }
+  }
+  const charges_total = s.charges.reduce((a,c)=>a+c.amt,0);
+  const balance = charges_total - s.payments_total;
+  // FIFO oldest-unpaid
+  let pay=s.payments_total, oldest=null;
+  for(const c of [...s.charges].sort((a,b)=>a.due-b.due)){
+    if(pay>=c.amt){ pay-=c.amt; } else { oldest=c.due; break; }
+  }
+  const asOf = applied.length? applied[applied.length-1].o : 0;
+  const days_behind = oldest==null?0:Math.max(0, asOf-oldest);
+  // days_behind per ledger row (as-at that row)
+  let pt=0; const chg=[];
+  for(const row of ledger){
+    if(row.kind==='rent') chg.push({due:row.o,amt:row.debit});
+    if(row.kind==='payment') pt+=row.credit;
+    if(row.kind==='reversal') pt-=row.debit;
+    let p=pt, old=null;
+    for(const c of [...chg].sort((a,b)=>a.due-b.due)){ if(p>=c.amt){p-=c.amt;} else {old=c.due;break;} }
+    row.days_behind = old==null?0:Math.max(0,row.o-old);
+  }
+  return {state:s, balance, oldest, days_behind, charges_total, ledger, asOf};
+}
+
+/* ---------- app state ---------- */
+const APP = { variant:'A', view:'landing', stream:'notice-then-paid', k:null, following:true, firehose:[] };
+const VARIANTS = [['A','Workbench'],['B','Living document'],['C','Bento dashboard']];
+let playTimer=null, fhTimer=null;
+
+function streamCount(id){ return STREAMS[id].events.length; }
+function toneFor(state, res){
+  if(state.status==='terminal') return 'info';
+  if(state.status==='ending') return 'info';
+  if(res.days_behind>=14) return 'crit';
+  if(res.balance>0) return 'warn';
+  return 'ok';
+}
+
+/* ---------- shared pane builders (arranged differently per variant) ---------- */
+function shortAddr(a){ return a? a.split(',')[0] : ''; }
+function propInfo(ref){ // ref = stream slug or a payment holder
+  const slug=(ref||'').replace(/^tenancy-/,''); const t=TENANTS[slug];
+  if(t) return {tenant:t.name, property:shortAddr(t.addr), sid:'tenancy-'+slug, tone:t.tone};
+  return {tenant:'UNKNOWN', property:'no matching tenancy', sid:'', tone:'warn'};
+}
+function eventProp(id,e){ // which property + tenant this event belongs to
+  if(STREAMS[id].context==='tenancy') return propInfo(id);
+  if(e.holder && e.holder!=='UNKNOWN') return propInfo(e.holder);
+  if(e.holder==='UNKNOWN') return {tenant:'UNKNOWN', property:'no matching tenancy', sid:'', tone:'warn'};
+  return {tenant:'—', property:'Accounts (edge)', sid:'', tone:'info'};
+}
+function paneEventsHTML(id, count, opts={}){
+  const evs=STREAMS[id].events;
+  return evs.map((e,i)=>{
+    const applied=i<count, current=(i===count-1);
+    const cls=['evrow']; if(!applied)cls.push('pending'); if(current&&opts.scrub)cls.push('current');
+    const div=e.o!==e.r;
+    let payload='';
+    if(e.t==='TenancyCommenced') payload='rent '+money(e.rent)+'/wk · first_due '+dshort(e.first_due);
+    else if(e.t==='RentFellDue') payload='amount '+money(e.amt)+' · period ['+dshort(e.pf)+' → '+dshort(e.pt)+')';
+    else if(e.t==='RentPaymentRecorded'){ payload=(e.amt<0?'reversal ':'amount ')+money(e.amt); }
+    else if(e.t==='TerminationNoticeGiven') payload='grounds: '+e.grounds+' · termination_date '+dshort(e.termination);
+    else if(e.t==='PaymentReceived') payload='amount '+money(e.amt);
+    else if(e.t==='PaymentReversed') payload='amount '+money(e.amt)+' · reverses '+e.reverses;
+    const prop=eventProp(id,e);
+    let acl='';
+    if(e.t==='RentPaymentRecorded' && e.src) acl='<div class="badge-acl">ACL-1 · source_payment_id: '+e.src+(e.reverses?' · reverses '+e.reverses:'')+'</div>';
+    if(e.t==='PaymentReceived'&&e.holder==='UNKNOWN') acl='<div class="badge-acl" style="background:var(--warn-soft);color:var(--warn)">UNKNOWN holder — never crosses into PM</div>';
+    return `<div class="${cls.join(' ')}">
+      <span class="dot ${e.amt<0||e.t==='PaymentReversed'?'crit':(e.t.includes('Payment')||e.t==='RentPaymentRecorded'?'ok':(e.t==='RentFellDue'?'warn':'acc'))}" style="margin-top:5px"></span>
+      <div style="min-width:0">
+        <div class="ev-prop"><span class="dot ${prop.tone}"></span><b style="color:var(--ink-soft);font-weight:600">${prop.property}</b><span style="color:var(--ink-faint)">· ${prop.tenant}</span>${prop.sid?` <span class="sid">${prop.sid}</span>`:''}</div>
+        <div class="ev-type">${e.t}</div><div class="ev-payload">${payload}</div>${acl}</div>
+      <div class="ev-date">${dshort(e.o)}<div class="ev-meta">${reld(e.o)}${div?`<span class="badge-div">rec +${e.r-e.o}d</span>`:''}</div></div>
+    </div>`;
+  }).join('');
+}
+function paneAggHTML(res){
+  const s=res.state;
+  const st={pending:'neutral',active:'ok',ending:'info',terminal:'info'}[s.status];
+  return `<dl class="kv">
+    <dt>status</dt><dd><span class="pill ${st}"><span class="dot ${st}"></span>${s.status}</span></dd>
+    <dt>rent_amount_cents</dt><dd>${s.rent==null?'—':money(s.rent)+'/wk'}</dd>
+    <dt>first_due_date</dt><dd>${s.first_due==null?'—':dshort(s.first_due)}</dd>
+    <dt>charges</dt><dd>${s.charges.length} · ${money(res.charges_total)}</dd>
+    <dt>payments_total_cents</dt><dd>${money(s.payments_total)}</dd>
+    <dt>effective_end_date</dt><dd>${s.end_date==null?'—':dshort(s.end_date)}</dd>
+    <dt>keys_returned_on</dt><dd>${s.keys_returned==null?'—':dshort(s.keys_returned)}</dd>
+  </dl>`;
+}
+function paneRMHTML(res, count, id){
+  const s=res.state; const full=count===streamCount(id);
+  const behindTone=res.days_behind>=14?'crit':(res.days_behind>0?'warn':'ok');
+  const balCls=res.balance<0?'bal-neg':(res.balance>0?'bal-pos':'');
+  return `<dl class="kv">
+    <dt>status</dt><dd>${s.status}</dd>
+    <dt>balance_cents</dt><dd class="${balCls}">${money(res.balance)}</dd>
+    <dt>oldest_unpaid_due_date</dt><dd>${res.oldest==null?'—':dshort(res.oldest)}</dd>
+    <dt>days_behind <span style="color:var(--ink-faint);font-family:var(--sans)">(on read)</span></dt>
+      <dd><span class="pill ${behindTone}">${res.days_behind} days</span></dd>
+  </dl>
+  <div style="padding:0 14px 12px"><div class="caption">${full
+    ? '<b>✓ matches the live <code>pm_tenancy_arrears</code> row.</b> At the full prefix, this in-memory fold equals what the operational projector wrote — the read model is just a fold of the log.'
+    : 'Recomputing in-memory over the selected prefix — <b>never</b> writing to <code>pm_tenancy_arrears</code>.'}</div></div>`;
+}
+function paneLedgerHTML(res){
+  const rows=res.ledger.map(r=>{
+    const balCls=r.bal<0?'bal-neg':(r.bal>0?'bal-pos':'');
+    return `<tr class="${r.kind==='reversal'?'reversal':''}">
+      <td class="dt">${dshort(r.o)}</td>
+      <td class="desc">${r.desc}${r.src?` <span class="mono" style="color:var(--ink-faint);font-size:11px">${r.src}</span>`:''}</td>
+      <td class="dt period">${r.pf!=null?dshort(r.pf):''}</td>
+      <td class="dt period">${r.pt!=null?dshort(r.pt):''}</td>
+      <td class="debit">${r.debit?money(r.debit):''}</td>
+      <td class="credit">${r.credit?money(r.credit):''}</td>
+      <td class="${balCls}">${money(r.bal)}</td>
+      <td style="color:var(--ink-faint)">${r.days_behind||0}</td>
+    </tr>`;
+  }).join('');
+  return `<div style="overflow-x:auto"><table class="ledger">
+    <thead><tr><th>Date</th><th>Entry</th><th class="period">Paid from</th><th class="period">Paid to</th><th>Debit</th><th>Credit</th><th>Balance</th><th>Behind</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="8" class="desc" style="color:var(--ink-faint)">no entries yet</td></tr>'}</tbody>
+  </table></div>`;
+}
+function scrubberHTML(id, count){
+  const N=streamCount(id);
+  const e=STREAMS[id].events[count-1];
+  const atHead=count===N;
+  return `<div class="scrub">
+    <button class="scrub-btn" onclick="stepBack()" aria-label="Step back">⏮</button>
+    <button class="scrub-btn ${playTimer?'play':''}" onclick="playPause()" aria-label="Play/pause">${playTimer?'⏸':'▶'}</button>
+    <button class="scrub-btn" onclick="stepFwd()" aria-label="Step forward">⏭</button>
+    <input type="range" id="scrub-slider" min="1" max="${N}" value="${count}" oninput="scrubTo(+this.value)" aria-label="Replay position">
+    <span class="scrub-label" id="scrub-label">event ${count}/${N} · ${e?e.t:''} @ ${e?dshort(e.o):''}${atHead?' · <span style=\"color:var(--ok)\">head</span>':''}</span>
+  </div>`;
+}
+function firehoseHTML(){
+  if(!APP.firehose.length) return '<div class="fh-item" style="color:var(--ink-faint);cursor:default">waiting for the simulation to emit…</div>';
+  return APP.firehose.slice(0,14).map(f=>{ const p=propInfo(f.stream); const acc=f.stream==='accounts';
+    return `<div class="fh-item" onclick="openFirehose('${f.stream}',${f.idx})" title="Open this event in its stream">
+    <div style="flex:1;min-width:0">
+      <div class="fh-type">${f.t}</div>
+      <div style="font-size:11px;color:var(--ink-soft)"><span class="dot ${acc?'info':TENANTS[f.stream].tone}"></span> ${acc?'Accounts (edge)':'<b style="font-weight:600">'+p.property+'</b> · '+p.tenant}</div>
+      <div class="fh-stream">${acc?'accounts':p.sid}</div>
+    </div>
+    <span style="color:var(--ink-faint);font-size:10.5px;white-space:nowrap">${f.ago}</span>
+  </div>`;}).join('');
+}
+function crumbHTML(){
+  if(APP.view==='landing') return '<span class="crumb">Orientation map</span>';
+  const id=APP.stream, ctx=STREAMS[id].context;
+  const cn=CONTEXTS.find(c=>c.id===ctx);
+  return `<span class="crumb"><a onclick="goLanding()">Contexts</a> / ${cn.name}${cn.agg?' / '+cn.agg:''} / <b style="color:var(--ink)">tenancy-${id}${ctx==='accounts'?'':''}</b></span>`;
+}
+function streamLabel(id){
+  if(id==='accounts') return {name:'accounts', sub:'edge stream — all payment facts', sid:'accounts'};
+  const t=TENANTS[id]; return {name:t.name, sub:t.addr, sid:'tenancy-'+id, tag:t.tag, tone:t.tone};
+}
+
+/* nav tree (shared) */
+function navTreeHTML(){
+  return CONTEXTS.map(c=>{
+    const streams=c.streams.map(s=>{
+      const L=streamLabel(s);
+      return `<div class="nav-stream ${APP.view==='stream'&&APP.stream===s?'active':''}" onclick="selectStream('${s}')">
+        <span class="dot ${s==='accounts'?'info':TENANTS[s].tone}"></span>
+        <div><div>${L.name}</div><div class="sid">${L.sid}</div></div></div>`;
+    }).join('');
+    return `<div class="nav-ctx">
+      <div class="nav-ctx-h"><span class="dot ${c.kind==='deep'?'acc':'info'}"></span>${c.name}
+        <span class="pill ${c.kind==='deep'?'acc':'info'}" style="margin-left:auto">${c.kind}</span></div>
+      ${c.agg?`<div class="nav-named" style="padding-left:24px;color:var(--ink-soft)">aggregate: <b>${c.agg}</b></div>`:''}
+      ${streams}</div>`;
+  }).join('') + `<div class="nav-ctx"><div class="nav-ctx-h" style="color:var(--ink-faint)">named only — not modelled</div>`
+    + NAMED.map(n=>`<div class="nav-named">· ${n}</div>`).join('') + `</div>`;
+}
+
+/* ================= VARIANT A — WORKBENCH ================= */
+function layoutA(){
+  const nav=`<aside style="width:250px;border-right:1px solid var(--line);background:var(--panel);
+    padding:12px;overflow:auto">
+    <div class="eyebrow" style="margin-bottom:8px">Context → Aggregate → Stream</div>${navTreeHTML()}</aside>`;
+  const fh=`<aside style="width:290px;border-left:1px solid var(--line);background:var(--panel);
+    display:flex;flex-direction:column;overflow:hidden">
+    <div class="panel-head"><span class="panel-title"><span class="live-dot"></span> Firehose</span>
+      <span class="caption">dev:events</span></div>
+    <div id="firehose" style="overflow:auto;flex:1">${firehoseHTML()}</div></aside>`;
+  let main;
+  if(APP.view==='landing') main=`<div style="flex:1;overflow:auto;padding:26px">${landingHTML('A')}</div>`;
+  else main=`<div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+      ${streamHeaderHTML('A')}
+      ${streamBodyA()}
+    </div>`;
+  return `<div style="display:flex;height:100vh;overflow:hidden;font-size:13px">
+    ${nav}<div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0">
+      <div style="height:46px;border-bottom:1px solid var(--line);display:flex;align-items:center;
+        padding:0 16px;gap:12px;background:var(--panel-2)">
+        <b style="letter-spacing:-.02em">/inspector</b><span style="color:var(--ink-faint)">workbench</span>
+        <span style="margin-left:auto">${crumbHTML()}</span></div>
+      <div style="flex:1;display:flex;overflow:hidden">
+        <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0">${APP.view==='landing'?main:main}</div>
+        ${fh}
+      </div>
+    </div></div>`;
+}
+function streamBodyA(){
+  const id=APP.stream;
+  if(STREAMS[id].context==='accounts') return accountsBodyA();
+  const N=streamCount(id), count=APP.k;
+  const res=fold(STREAMS[id].events, count);
+  return `<div style="flex:1;overflow:auto;padding:14px;display:grid;
+      grid-template-columns:minmax(300px,1.1fr) 1fr;grid-template-rows:auto auto;gap:14px;align-content:start">
+    <div class="panel" style="grid-row:span 2;display:flex;flex-direction:column;min-height:0">
+      <div class="panel-head"><span class="panel-title">Events</span><span class="caption">raw, append-only</span></div>
+      <div style="overflow:auto" id="pane-events">${paneEventsHTML(id,count,{scrub:true})}</div>
+      <div style="padding:9px 12px;border-top:1px solid var(--line)"><div class="caption"><b>The log.</b> Immutable, hash-chained. Nothing here can be edited or deleted — corrections are new events.</div></div>
+    </div>
+    <div class="panel"><div class="panel-head"><span class="panel-title">Aggregate state</span>
+      <span class="caption">%Tenancy.State{}</span></div><div id="pane-agg">${paneAggHTML(res)}</div>
+      <div style="padding:0 14px 11px"><div class="caption"><b>Folds</b> from the events on the left via <code>Aggregate.apply</code>.</div></div></div>
+    <div class="panel"><div class="panel-head"><span class="panel-title">Read model</span>
+      <span class="caption">pm_tenancy_arrears</span></div><div id="pane-rm">${paneRMHTML(res,count,id)}</div></div>
+    <div class="panel" style="grid-column:2"><div class="panel-head"><span class="panel-title">Ledger — double-entry timeline</span>
+      <a class="link-more">domain-model.md §7 ↗</a></div><div id="pane-ledger">${paneLedgerHTML(res)}</div></div>
+    <div class="panel" style="grid-column:1 / -1;position:sticky;bottom:0"><div style="padding:12px 14px">
+      ${scrubberHTML(id,count)}</div></div>
+  </div>`;
+}
+function accountsBodyA(){
+  const id='accounts', count=streamCount(id);
+  return `<div style="flex:1;overflow:auto;padding:14px">
+    <div class="panel" style="max-width:640px"><div class="panel-head"><span class="panel-title">Events — accounts</span>
+      <span class="caption">edge · no aggregate</span></div>
+      <div id="pane-events">${paneEventsHTML(id,count,{})}</div>
+      <div style="padding:11px 14px;border-top:1px solid var(--line)"><div class="caption">
+        <b>Edge context.</b> Accounts emits payment facts and folds no state — so there is deliberately
+        <b>no aggregate and no read-model pane here.</b> ACL-1 translates each <code>PaymentReceived</code> into a
+        <code>RentPaymentRecorded</code> on the matching tenancy stream (<i>payment → arrears reduction</i>).</div></div>
+    </div></div>`;
+}
+
+/* ================= VARIANT B — LIVING DOCUMENT ================= */
+function layoutB(){
+  const ticker=`<div style="position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:12px;padding:8px 20px;overflow:hidden">
+    <span class="pill ok"><span class="live-dot"></span> live</span>
+    <div style="display:flex;gap:18px;overflow:hidden;white-space:nowrap" id="firehose">${firehoseTickerHTML()}</div>
+    <a style="margin-left:auto" class="crumb">${APP.view==='stream'?'<a onclick=\"goLanding()\">↑ back to map</a>':''}</a></div>`;
+  const inner = APP.view==='landing' ? landingHTML('B') : storyB();
+  return `<div style="max-width:900px;margin:0 auto">
+    ${ticker}
+    <div style="padding:28px 24px 40px">${inner}</div></div>`;
+}
+function firehoseTickerHTML(){
+  if(!APP.firehose.length) return '<span class="caption">waiting for the simulation to emit…</span>';
+  return APP.firehose.slice(0,5).map(f=>{ const p=propInfo(f.stream); const acc=f.stream==='accounts';
+    return `<span style="font-size:12px;cursor:pointer" onclick="openFirehose('${f.stream}',${f.idx})" title="Open this event">
+      <span class="fh-type">${f.t}</span> <span class="fh-stream">${acc?'Accounts':p.property}</span></span>`;
+  }).join('<span style="color:var(--line)">|</span>');
+}
+function storyB(){
+  const id=APP.stream;
+  const L=streamLabel(id);
+  if(STREAMS[id].context==='accounts') return accountsStoryB();
+  const N=streamCount(id), count=APP.k;
+  const res=fold(STREAMS[id].events, count);
+  const tone=toneFor(res.state,res);
+  return `<div class="crumb" style="margin-bottom:10px"><a onclick="goLanding()">Contexts</a> / Tenancy &amp; Arrears / Tenancy</div>
+    <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:6px">
+      <div><h1 style="font-size:26px">${L.name}</h1>
+        <div style="color:var(--ink-faint);font-size:13px">${L.sub}</div>
+        <div class="mono" style="color:var(--ink-faint);font-size:12px;margin-top:3px">stream: ${L.sid}</div></div>
+      <span class="pill ${tone}" style="margin-left:auto;font-size:12px;padding:5px 12px">${L.tag}</span></div>
+
+    <div class="panel" style="margin:16px 0;padding:14px 16px;background:var(--panel-2)">
+      <div class="eyebrow" style="margin-bottom:8px">Replay — drag to fold the stream event by event</div>
+      ${scrubberHTML(id,count)}
+      <div class="caption" style="margin-top:8px">Everything below is recomputed <b>server-side</b> over events 1…${count}. This is the same fold production runs — no second implementation.</div>
+    </div>
+
+    <section style="margin-top:26px">
+      <h3 style="font-size:16px">1 · The events <span style="font-weight:400;color:var(--ink-faint);font-size:13px">— what actually happened, immutably</span></h3>
+      <div class="panel" style="margin-top:10px" id="pane-events-wrap"><div id="pane-events">${paneEventsHTML(id,count,{scrub:true})}</div></div>
+      <div class="caption" style="margin-top:8px">Append-only &amp; hash-chained. Each row shows both <code>occurred_on</code> (when it happened in the world) and, when they diverge, how much later it was <code>recorded_on</code> — lazy accrual and forward-dated notices become visible.</div>
+    </section>
+
+    <div style="text-align:center;color:var(--accent);font-size:22px;margin:18px 0 6px">↓</div>
+    <div style="text-align:center" class="caption">these events <b>fold into</b> a single aggregate</div>
+
+    <section style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div><h3 style="font-size:15px">2 · Aggregate state</h3>
+        <div class="panel" style="margin-top:8px" id="pane-agg">${paneAggHTML(res)}</div>
+        <div class="caption" style="margin-top:6px">The write model — <code>%Tenancy.State{}</code>, the thing commands validate against.</div></div>
+      <div><h3 style="font-size:15px">3 · Read model <span style="font-weight:400;color:var(--ink-faint);font-size:12px">derives from it</span></h3>
+        <div class="panel" style="margin-top:8px" id="pane-rm">${paneRMHTML(res,count,id)}</div></div>
+    </section>
+
+    <div style="text-align:center;color:var(--accent);font-size:22px;margin:20px 0 6px">↓</div>
+    <div style="text-align:center" class="caption">and the same events read as a <b>double-entry ledger</b></div>
+
+    <section style="margin-top:14px">
+      <h3 style="font-size:15px">4 · Ledger</h3>
+      <div class="panel" style="margin-top:8px" id="pane-ledger">${paneLedgerHTML(res)}</div>
+      <div class="caption" style="margin-top:8px">Rent falls due → <span style="color:var(--debit)">debit</span>; payment → <span style="color:var(--credit)">credit</span>; a reversal re-expands as a <span style="color:var(--debit)">debit</span> (shown, never hidden). <a class="link-more">domain-model.md §7 ↗</a></div>
+    </section>`;
+}
+function accountsStoryB(){
+  const id='accounts', count=streamCount(id);
+  return `<div class="crumb" style="margin-bottom:10px"><a onclick="goLanding()">Contexts</a> / Accounts</div>
+    <h1 style="font-size:24px">Accounts <span style="font-weight:400;color:var(--ink-faint);font-size:15px">— edge context</span></h1>
+    <div class="caption" style="max-width:60ch;margin:10px 0 18px">Accounts is an <b>edge</b>: it records payment facts and folds no state. That's why this page has
+      <b>only an events pane</b> — no aggregate, no read model. The absence is the lesson.</div>
+    <div class="panel" id="pane-events">${paneEventsHTML(id,count,{})}</div>`;
+}
+
+/* ================= VARIANT C — BENTO DASHBOARD ================= */
+function layoutC(){
+  const bar=`<div style="position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);padding:12px 22px">
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <b style="letter-spacing:-.02em;font-size:15px">/inspector</b>
+      ${CONTEXTS.flatMap(c=>c.streams).map(s=>{const L=streamLabel(s);
+        return `<span class="chip ${APP.view==='stream'&&APP.stream===s?'active':''}" onclick="selectStream('${s}')">
+          <span class="dot ${s==='accounts'?'info':TENANTS[s].tone}"></span> ${L.name}</span>`;}).join('')}
+      <span class="chip" onclick="goLanding()">▦ map</span>
+      <span style="margin-left:auto" class="pill ok"><span class="live-dot"></span> live</span>
+    </div>
+    ${APP.view==='stream'&&STREAMS[APP.stream].context==='tenancy'?`<div style="margin-top:12px">${scrubberHTML(APP.stream,APP.k)}</div>`:''}
+  </div>`;
+  const body = APP.view==='landing' ? `<div style="padding:24px">${landingHTML('C')}</div>` : bentoBody();
+  return `<div>${bar}${body}</div>`;
+}
+function bentoBody(){
+  const id=APP.stream;
+  if(STREAMS[id].context==='accounts') return accountsBentoC();
+  const count=APP.k; const res=fold(STREAMS[id].events, count);
+  const L=streamLabel(id); const tone=toneFor(res.state,res);
+  const card=(title,sub,inner,extra='')=>`<div class="panel" style="${extra}">
+    <div class="panel-head"><span class="panel-title">${title}</span><span class="caption">${sub}</span></div>${inner}</div>`;
+  return `<div style="padding:18px 22px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+      <div style="width:8px;height:38px;border-radius:4px;background:var(--${tone})"></div>
+      <div><h2 style="font-size:18px">${L.name} <span style="font-weight:400;color:var(--ink-faint);font-size:13px">· ${L.sub}</span></h2>
+        <div class="mono" style="font-size:11.5px;color:var(--ink-faint)">${L.sid}</div></div>
+      <span class="pill ${tone}" style="margin-left:auto;font-size:12px;padding:5px 12px">${L.tag}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:2fr 1fr 1fr;grid-auto-rows:min-content;gap:14px">
+      ${card('Events','raw · append-only',`<div id="pane-events" style="max-height:420px;overflow:auto">${paneEventsHTML(id,count,{scrub:true})}</div>`,'grid-row:span 2')}
+      ${card('Aggregate state','%Tenancy.State{}',`<div id="pane-agg">${paneAggHTML(res)}</div>`)}
+      ${card('Read model','pm_tenancy_arrears',`<div id="pane-rm">${paneRMHTML(res,count,id)}</div>`)}
+      ${card('Ledger — double-entry','domain-model.md §7',`<div id="pane-ledger">${paneLedgerHTML(res)}</div>`,'grid-column:2 / -1')}
+    </div>
+    <div class="panel" style="margin-top:14px;display:flex;overflow:hidden">
+      <div class="panel-head" style="border:none;border-right:1px solid var(--line);flex-direction:column;align-items:flex-start;justify-content:center;width:150px">
+        <span class="panel-title"><span class="live-dot"></span> Firehose</span><span class="caption">dev:events</span></div>
+      <div id="firehose" style="flex:1;display:flex;gap:20px;overflow:auto;align-items:center;padding:0 14px;white-space:nowrap">${firehoseTickerHTML()}</div>
+    </div>
+  </div>`;
+}
+function accountsBentoC(){
+  const id='accounts', count=streamCount(id);
+  return `<div style="padding:18px 22px">
+    <h2 style="font-size:18px;margin-bottom:4px">accounts <span style="font-weight:400;color:var(--ink-faint);font-size:13px">· edge context</span></h2>
+    <div class="caption" style="margin-bottom:14px;max-width:60ch">Edge context: emits payment facts, folds no state — so no aggregate or read-model cards here, by design.</div>
+    <div class="panel" style="max-width:680px"><div class="panel-head"><span class="panel-title">Events</span><span class="caption">accounts</span></div>
+      <div id="pane-events">${paneEventsHTML(id,count,{})}</div></div></div>`;
+}
+
+/* ================= LANDING (orientation map) per variant ================= */
+function landingHTML(variant){
+  const streamsFor=id=>CONTEXTS.find(c=>c.id===id).streams;
+  const streamChip=s=>{const L=streamLabel(s);
+    return `<div class="nav-stream" onclick="selectStream('${s}')" style="padding-left:10px">
+      <span class="dot ${s==='accounts'?'info':TENANTS[s].tone}"></span>
+      <div><div>${L.name}</div><div class="sid">${L.sid}</div></div></div>`;};
+
+  const deep=CONTEXTS[0], edge=CONTEXTS[1];
+  const map=`<div style="display:grid;grid-template-columns:1fr auto 1fr;gap:18px;align-items:center;margin:8px 0 26px">
+      <div class="ctxbox edge">
+        <div style="display:flex;justify-content:space-between;align-items:start"><h4>${edge.name}</h4><span class="pill info">edge</span></div>
+        <div class="caption" style="margin:6px 0 10px">${edge.blurb}</div>
+        ${edge.streams.map(streamChip).join('')}
+      </div>
+      <div style="text-align:center"><div class="acl-edge">payment → arrears reduction</div>
+        <div class="caption" style="margin-top:6px;font-size:10.5px">ACL-1</div>
+        <div style="color:var(--accent);font-size:20px;margin-top:2px">→</div></div>
+      <div class="ctxbox deep">
+        <div style="display:flex;justify-content:space-between;align-items:start"><h4>${deep.name}</h4><span class="pill acc">deep</span></div>
+        <div class="caption" style="margin:6px 0 6px">${deep.blurb}</div>
+        <div class="caption" style="margin-bottom:6px">aggregate: <b>${deep.agg}</b></div>
+        ${deep.streams.map(streamChip).join('')}
+      </div>
+    </div>
+    <div class="eyebrow" style="margin-bottom:8px">Named only — not modelled</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px">
+      ${NAMED.map(n=>`<div class="ctxbox named"><h4 style="font-size:13px">${n}</h4><div class="caption">no events yet</div></div>`).join('')}
+    </div>`;
+
+  const intro=`<div style="margin-bottom:18px">
+    <div class="eyebrow">Read-only · living documentation</div>
+    <h1 style="font-size:${variant==='B'?'30px':'24px'};margin-top:6px">The event log, navigable by the model's own map.</h1>
+    <div class="caption" style="max-width:66ch;margin-top:8px;font-size:13px">Every box is a <b>bounded context</b>. Click a stream to watch its events fold into aggregate state, a read model, and a double-entry ledger — then scrub through its history event by event. Nothing here can be edited or deleted; immutability is the point.</div>
+  </div>`;
+  return intro+map;
+}
+
+function streamHeaderHTML(variant){
+  const id=APP.stream; const L=streamLabel(id);
+  const tone=id==='accounts'?'info':TENANTS[id].tone;
+  return `<div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px">
+    <div style="width:7px;height:30px;border-radius:4px;background:var(--${tone})"></div>
+    <div><div style="font-weight:650">${L.name}</div><div class="caption">${L.sub}</div></div>
+    <span class="mono" style="color:var(--ink-faint);font-size:11.5px;margin-left:8px">${L.sid}</span>
+    ${id!=='accounts'?`<span class="pill ${tone}" style="margin-left:auto">${L.tag}</span>`:''}
+  </div>`;
+}
+
+/* ---------- render + interactions ---------- */
+function render(){
+  const stage=document.getElementById('stage');
+  if(APP.view==='stream'&&APP.k==null) APP.k=streamCount(APP.stream);
+  stage.innerHTML = APP.variant==='A'?layoutA():APP.variant==='B'?layoutB():layoutC();
+  document.getElementById('vkey').textContent=APP.variant;
+  document.getElementById('vname').textContent=VARIANTS.find(v=>v[0]===APP.variant)[1];
+}
+function updatePanes(){
+  const id=APP.stream; if(APP.view!=='stream'||STREAMS[id].context!=='tenancy') return;
+  const count=APP.k; const res=fold(STREAMS[id].events,count); const N=streamCount(id);
+  const set=(sel,html)=>{const el=document.getElementById(sel); if(el)el.innerHTML=html;};
+  set('pane-events',paneEventsHTML(id,count,{scrub:true}));
+  set('pane-agg',paneAggHTML(res));
+  set('pane-rm',paneRMHTML(res,count,id));
+  set('pane-ledger',paneLedgerHTML(res));
+  const lbl=document.getElementById('scrub-label'); const e=STREAMS[id].events[count-1];
+  if(lbl)lbl.innerHTML=`event ${count}/${N} · ${e?e.t:''} @ ${e?dshort(e.o):''}${count===N?' · <span style="color:var(--ok)">head</span>':''}`;
+  const sl=document.getElementById('scrub-slider'); if(sl&&+sl.value!==count)sl.value=count;
+}
+function scrubTo(v){ APP.k=v; APP.following=(v===streamCount(APP.stream)); updatePanes(); }
+function stepBack(){ if(APP.k>1){APP.k--; APP.following=false; render();} }
+function stepFwd(){ if(APP.k<streamCount(APP.stream)){APP.k++; APP.following=(APP.k===streamCount(APP.stream)); render();} }
+function playPause(){
+  if(playTimer){ clearInterval(playTimer); playTimer=null; render(); return; }
+  if(APP.k>=streamCount(APP.stream)) APP.k=1;
+  render();
+  playTimer=setInterval(()=>{ if(APP.k>=streamCount(APP.stream)){clearInterval(playTimer);playTimer=null;render();return;} APP.k++; updatePanes(); },900);
+}
+function selectStream(id){ stopPlay(); APP.view='stream'; APP.stream=id; APP.k=streamCount(id); APP.following=true; render(); }
+function goLanding(){ stopPlay(); APP.view='landing'; render(); }
+function stopPlay(){ if(playTimer){clearInterval(playTimer);playTimer=null;} }
+
+/* firehose simulation — emits REAL events so a click jumps to that exact event */
+const FH_POOL=[
+  {stream:'arrears-no-notice', idx:5},  // RentFellDue (lazy-accrual: recorded 14d late)
+  {stream:'accounts', idx:6},           // PaymentReceived pay-202 (the lump)
+  {stream:'paid-up', idx:10},           // RentPaymentRecorded
+  {stream:'notice-then-paid', idx:7},   // TerminationNoticeGiven
+  {stream:'arrears-no-notice', idx:7},  // RentFellDue
+];
+let fhi=0;
+function tickFirehose(){
+  const base=FH_POOL[fhi%FH_POOL.length]; fhi++;
+  const ev=STREAMS[base.stream].events[base.idx];
+  APP.firehose.unshift({stream:base.stream, idx:base.idx, t:ev.t, ago:'just now'});
+  APP.firehose.forEach((f,i)=>{ if(i>0)f.ago=(i*4)+'s ago'; });
+  if(APP.firehose.length>16)APP.firehose.pop();
+  const el=document.getElementById('firehose');
+  if(el){ el.innerHTML = (APP.variant==='A')?firehoseHTML():firehoseTickerHTML(); }
+}
+function openFirehose(stream, idx){
+  stopPlay(); APP.view='stream'; APP.stream=stream;
+  if(STREAMS[stream].context==='tenancy'){ APP.k=(idx!=null?idx+1:streamCount(stream)); APP.following=(APP.k===streamCount(stream)); }
+  render();
+}
+
+/* variant switcher */
+function setVariant(v){ stopPlay(); APP.variant=v; render(); }
+function cycle(dir){
+  const i=VARIANTS.findIndex(x=>x[0]===APP.variant);
+  const n=(i+dir+VARIANTS.length)%VARIANTS.length; setVariant(VARIANTS[n][0]);
+}
+document.getElementById('prevV').onclick=()=>cycle(-1);
+document.getElementById('nextV').onclick=()=>cycle(1);
+document.addEventListener('keydown',e=>{
+  const tag=(document.activeElement&&document.activeElement.tagName)||'';
+  if(['INPUT','TEXTAREA'].includes(tag)||document.activeElement?.isContentEditable)return;
+  if(e.key==='ArrowLeft'){cycle(-1);} if(e.key==='ArrowRight'){cycle(1);}
+});
+
+render();
+fhTimer=setInterval(tickFirehose, 3200);
+tickFirehose();
+</script>

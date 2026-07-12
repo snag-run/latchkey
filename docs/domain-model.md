@@ -105,7 +105,7 @@ access-control list.
 
 | Event | Payload | Notes |
 |---|---|---|
-| `TenancyCommenced` | `tenancy_id, property_ref, rent_amount, cycle, first_due_date, commenced_on` | Establishes the tenancy + initial rent terms |
+| `TenancyCommenced` | `tenancy_id, property_ref, tenants, rent_amount, cycle, first_due_date` | Establishes the tenancy: which **property** (`property_ref`, stable across re-lets), the **joint tenants** (list of names, frozen — evidence-grade), and initial rent terms. Commencement date is the envelope `occurred_on`. See ADR 0008 |
 | `RentScheduleChanged` | `tenancy_id, effective_from, new_amount, new_cycle?` | Mid-lease increase; **may be backdated** (see §6) |
 | `RentFellDue` | `tenancy_id, due_date, amount, period_from, period_to` | Step tick, via lazy catch-up; **carries the amount** |
 | `RentPaymentRecorded` | `tenancy_id, amount, received_on, source_payment_id` | **Output of ACL-1**; signed (reversal ⇒ negative) |
@@ -176,6 +176,15 @@ legitimate on *liability*, not on *physical possession* — and that constraint 
 in the real world (and in Leasing's hand-over), **not** in a cross-tenancy aggregate
 invariant. The independence finding stands; this only flags what the money model
 doesn't see.
+
+**Amendment — property/owner identity (ADR 0008).** A thin **`Property`** identity
+now exists (address + owner), named by `property_ref`; it holds **no money
+invariant**, so the independence-on-tenant-money finding above is untouched. The
+property-keyed money that *does* aggregate across tenancies — rent collected for
+the owner, net of fees/bills/disbursement — is a **separate, downstream
+`Property Balance` aggregate** (an owner-side running balance, distinct from the
+tenant balance), **parked** until billing/fees (§10). It sits downstream of the
+tenancy and constrains no tenancy's accrual, so the money model above still stands.
 
 ### Lifecycle state machine
 
@@ -488,6 +497,15 @@ values. It's where small domain rules live, keeping the aggregate clean.
   toward it without foreclosing**. Additive over the existing log: Accounts already
   produces the facts; double-entry is new read models + disbursement events. May
   not be reached; direction is set.
+- **Property Balance (owner-side ledger) — its own aggregate, parked (ADR 0008).**
+  The **second running balance**: rent collected for the owner **less** management
+  fees, invoices/bills, and disbursements — keyed **by property** (spans successive
+  tenancies), **downstream** of the tenant balance. This is the concrete,
+  aggregate-worthy form of §1's out-of-scope *owner statements / disbursement /
+  trust-account internals* and the *Accounts → double-entry* goal above. A thin
+  **`Property`** identity (address + owner, no money invariant) lands now with
+  `property_ref` + a `tenants` list on `TenancyCommenced`; the stateful
+  `Property Balance` aggregate is built when billing/fees are tackled.
 - **PII & erasure posture — deliberately unsolved.** Names/addresses recorded in
   events land in the **immutable log** by definition — the classic ES ↔ "right to be
   forgotten" conflict. Not solving it here (synthetic data, learning sim), but the
