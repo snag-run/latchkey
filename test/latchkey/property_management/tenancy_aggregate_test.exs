@@ -24,6 +24,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     events =
       Agg.execute(agg, %C.CommenceTenancy{
         tenancy_id: "t1",
+        property_ref: "prop-t1",
         rent_amount_cents: 50_000,
         cycle: :weekly,
         first_due_date: ~D[2026-01-05],
@@ -131,10 +132,29 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
              })
   end
 
+  test "refuses a weekly commence with a missing or empty property_ref (ADR 0008)" do
+    base = %C.CommenceTenancy{
+      tenancy_id: "t1",
+      rent_amount_cents: 50_000,
+      cycle: :weekly,
+      first_due_date: ~D[2026-01-05]
+    }
+
+    # Both a missing (nil) and an empty-string property_ref are rejected at the domain
+    # boundary, and NO commencement event is emitted (the decision short-circuits to an
+    # error tuple, never a list of events).
+    for command <- [base, %{base | property_ref: ""}] do
+      result = Agg.execute(%Agg{}, command)
+      assert result == {:error, :missing_property_ref}
+      refute is_list(result)
+    end
+  end
+
   test "refuses an unsupported (non-weekly) cycle" do
     assert {:error, :unsupported_cycle} =
              Agg.execute(%Agg{}, %C.CommenceTenancy{
                tenancy_id: "t1",
+               property_ref: "prop-t1",
                rent_amount_cents: 250_000,
                cycle: :monthly,
                first_due_date: ~D[2026-01-05]
@@ -145,6 +165,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     assert {:error, :already_commenced} =
              Agg.execute(commenced_agg(), %C.CommenceTenancy{
                tenancy_id: "t1",
+               property_ref: "prop-t1",
                rent_amount_cents: 60_000,
                cycle: :weekly,
                first_due_date: ~D[2026-02-01]
@@ -204,6 +225,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       [event] =
         Agg.execute(%Agg{}, %C.CommenceTenancy{
           tenancy_id: "t1",
+          property_ref: "prop-t1",
           rent_amount_cents: 50_000,
           cycle: :weekly,
           first_due_date: ~D[2026-01-05],
@@ -212,6 +234,8 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
 
       assert %TenancyCommenced{occurred_on: ~D[2026-01-05], recorded_on: ~D[2026-01-06]} = event
       assert event.first_due_date == ~D[2026-01-05]
+      # The non-PII property id is carried onto the event (ADR 0008 allowlist).
+      assert event.property_ref == "prop-t1"
     end
 
     test "payment stamps occurred_on = received date" do
@@ -276,6 +300,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       [event] =
         Agg.execute(%Agg{}, %C.CommenceTenancy{
           tenancy_id: "t1",
+          property_ref: "prop-t1",
           rent_amount_cents: 50_000,
           cycle: :weekly,
           first_due_date: ~D[2026-01-05]

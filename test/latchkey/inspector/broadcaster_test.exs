@@ -36,10 +36,13 @@ defmodule Latchkey.Inspector.BroadcasterTest do
     relay_topic(:per_stream, Broadcaster.stream_topic(stream_id))
     await_subscribed([:global, :per_stream])
 
+    pref = "prop-" <> tid
+
     assert :ok =
              CommandedApp.dispatch(
                %C.CommenceTenancy{
                  tenancy_id: tid,
+                 property_ref: pref,
                  rent_amount_cents: 50_000,
                  cycle: :weekly,
                  first_due_date: ~D[2026-01-05]
@@ -47,11 +50,15 @@ defmodule Latchkey.Inspector.BroadcasterTest do
                consistency: :strong
              )
 
+    # Pin `property_ref` on both topics so the test fails if the non-PII ref (ADR 0008)
+    # were dropped anywhere in persistence or fan-out.
     assert_receive {:relayed, :global,
-                    {:dev_event, %TenancyCommenced{tenancy_id: ^tid}, %{stream_id: ^stream_id}}}
+                    {:dev_event, %TenancyCommenced{tenancy_id: ^tid, property_ref: ^pref},
+                     %{stream_id: ^stream_id}}}
 
     assert_receive {:relayed, :per_stream,
-                    {:dev_event, %TenancyCommenced{tenancy_id: ^tid}, %{stream_id: ^stream_id}}}
+                    {:dev_event, %TenancyCommenced{tenancy_id: ^tid, property_ref: ^pref},
+                     %{stream_id: ^stream_id}}}
   end
 
   test "never dispatches a command or otherwise touches the write path" do

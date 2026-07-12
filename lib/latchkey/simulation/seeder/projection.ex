@@ -106,6 +106,7 @@ defmodule Latchkey.Simulation.Seeder.Projection do
   defp apply_commence(core, %Scenario{} = scenario) do
     cmd = %{
       tenancy_id: scenario.tenancy_id,
+      property_ref: scenario.property_ref,
       rent_amount_cents: scenario.rent_amount_cents,
       cycle: :weekly,
       first_due_date: scenario.first_due_date,

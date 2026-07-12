@@ -19,6 +19,8 @@ defmodule Latchkey.Simulation.SeederIntegrationTest do
   use Latchkey.DataCase, async: false
 
   alias Latchkey.PropertyManagement.Arrears
+  alias Latchkey.Simulation.Directory
+  alias Latchkey.Simulation.Identity
   alias Latchkey.Simulation.Seeder
 
   require Ash.Query
@@ -133,8 +135,36 @@ defmodule Latchkey.Simulation.SeederIntegrationTest do
     assert record.final_balance_cents != nil
   end
 
+  test "the seeder upserts a Directory identity row per tenancy (off the event log)", %{
+    results: results,
+    seed_opts: seed_opts
+  } do
+    for %{scenario: scenario, tenancy_id: tenancy_id} <- results do
+      row = directory(tenancy_id)
+
+      # The Directory carries the deterministic display identity — name off tenancy_id,
+      # address off property_ref — resolved by the same pure function the seeder uses.
+      expected = Identity.resolve(tenancy_id, scenario.property_ref)
+      assert row.tenant_name == expected.tenant_name
+      assert row.property_address == expected.property_address
+    end
+
+    # A re-seed (every tenancy already commenced → :skipped) still upserts identity, so
+    # the Directory is populated regardless of seed status.
+    reseed = Seeder.seed(seed_opts)
+    assert Enum.all?(reseed, &(&1.status == :skipped))
+
+    for %{tenancy_id: tenancy_id} <- reseed do
+      assert directory(tenancy_id) != nil
+    end
+  end
+
   defp arrears(tenancy_id) do
     Arrears |> Ash.Query.filter(tenancy_id == ^tenancy_id) |> Ash.read_one!()
+  end
+
+  defp directory(tenancy_id) do
+    Directory |> Ash.Query.filter(tenancy_id == ^tenancy_id) |> Ash.read_one!()
   end
 
   # A comparable snapshot of every seeded tenancy's persisted read-model fields — used

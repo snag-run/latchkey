@@ -25,6 +25,10 @@ defmodule Latchkey.Simulation.Seeder.Scenario do
 
     * `:label` — the catalogue name (stable, human-legible).
     * `:tenancy_id` — the base id slug; `Seeder` may prefix it (test isolation).
+    * `:property_ref` — the non-PII, stable, opaque property id carried on
+      `TenancyCommenced` (ADR 0008). Unique per tenancy for the 1:1 majority; a
+      **shared** ref across a re-let pair (a new tenancy on the same premises), which
+      is how the address recurs while the tenants differ.
     * `:rent_amount_cents` — the weekly rent.
     * `:first_due_date` — the backdated commencement / first due date (drives accrual).
     * `:profile` — the tenant behaviour archetype (+ any scripted overrides) the
@@ -49,6 +53,7 @@ defmodule Latchkey.Simulation.Seeder.Scenario do
   ]
   defstruct label: nil,
             tenancy_id: nil,
+            property_ref: nil,
             rent_amount_cents: nil,
             first_due_date: nil,
             profile: nil,
@@ -71,6 +76,9 @@ defmodule Latchkey.Simulation.Seeder.Scenario do
   @type t :: %__MODULE__{
           label: String.t(),
           tenancy_id: String.t(),
+          # `nil` only in the transient pre-backfill state; `Catalogue.fill_property_ref/1`
+          # assigns a stable ref to every scenario the catalogue emits.
+          property_ref: String.t() | nil,
           rent_amount_cents: pos_integer(),
           first_due_date: Date.t(),
           profile: Profile.t(),

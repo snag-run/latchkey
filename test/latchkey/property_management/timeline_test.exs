@@ -22,6 +22,7 @@ defmodule Latchkey.PropertyManagement.TimelineTest do
   defp commenced(occurred, recorded \\ nil) do
     %TenancyCommenced{
       tenancy_id: @tid,
+      property_ref: "prop-" <> @tid,
       occurred_on: occurred,
       recorded_on: recorded || occurred,
       rent_amount_cents: 50_000,

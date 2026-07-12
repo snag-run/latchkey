@@ -18,7 +18,7 @@ config :latchkey, Oban,
   repo: Latchkey.Repo
 
 # Event-sourcing foundation (ADR 0003): raw Commanded + its Postgres EventStore.
-config :latchkey, ash_domains: [Latchkey.PropertyManagement]
+config :latchkey, ash_domains: [Latchkey.PropertyManagement, Latchkey.Simulation]
 config :latchkey, event_stores: [Latchkey.EventStore]
 
 # Serializer is env-independent, so it lives here; per-env files add only the

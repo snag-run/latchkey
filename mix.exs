@@ -94,6 +94,9 @@ defmodule Latchkey.MixProject do
       {:jason, "~> 1.2"},
       # Time-zone database for DST-aware Australia/Sydney date resolution (Clock, ADR 0005).
       {:tz, "~> 0.28"},
+      # Seed-time only: deterministic human-legible identity for the disposable
+      # Simulation.Directory (ADR 0008). Never on the event log.
+      {:faker, "~> 0.18"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"}
     ]

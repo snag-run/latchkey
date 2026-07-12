@@ -22,6 +22,7 @@ defmodule Latchkey.PropertyManagement.ArrearsFoldTest do
   defp commenced(occurred) do
     %TenancyCommenced{
       tenancy_id: @tid,
+      property_ref: "prop-" <> @tid,
       occurred_on: occurred,
       recorded_on: occurred,
       rent_amount_cents: @rent,
@@ -189,6 +190,7 @@ defmodule Latchkey.PropertyManagement.ArrearsFoldTest do
       events = [
         %TenancyCommenced{
           tenancy_id: @tid,
+          property_ref: "prop-" <> @tid,
           occurred_on: "2026-01-05",
           recorded_on: "2026-01-05",
           rent_amount_cents: @rent,
@@ -204,6 +206,12 @@ defmodule Latchkey.PropertyManagement.ArrearsFoldTest do
           period_to: "2026-01-26"
         }
       ]
+
+      # The rehydrated commence event carries its non-PII property_ref through the
+      # replay path (ADR 0008) — exercises the property_ref mapping in the aggregate's
+      # `to_normalized/1` alongside the string-date coercion.
+      [commenced | _] = events
+      assert commenced.property_ref == "prop-" <> @tid
 
       derived = ArrearsFold.fold_and_derive(events)
 

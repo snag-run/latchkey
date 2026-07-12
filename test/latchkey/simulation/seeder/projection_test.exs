@@ -19,6 +19,7 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
       scenario = %Scenario{
         label: "square",
         tenancy_id: "square",
+        property_ref: "prop-square",
         rent_amount_cents: 50_000,
         first_due_date: Date.add(@today, -27),
         profile: Profile.reliable(),
@@ -38,6 +39,7 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
       scenario = %Scenario{
         label: "behind",
         tenancy_id: "behind",
+        property_ref: "prop-behind",
         rent_amount_cents: 50_000,
         first_due_date: Date.add(@today, -28),
         profile: Profile.reliable(),
@@ -57,6 +59,7 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
       scenario = %Scenario{
         label: "bad-notice",
         tenancy_id: "bad-notice",
+        property_ref: "prop-bad-notice",
         rent_amount_cents: 50_000,
         first_due_date: Date.add(@today, -28),
         profile: Profile.reliable(),
@@ -79,6 +82,7 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
       scenario = %Scenario{
         label: "ordered",
         tenancy_id: "ordered",
+        property_ref: "prop-ordered",
         rent_amount_cents: 50_000,
         first_due_date: Date.add(@today, -70),
         profile: Profile.reliable(),
