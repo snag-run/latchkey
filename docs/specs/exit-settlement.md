@@ -136,7 +136,10 @@ Complete the lifecycle to `Terminal` and record the exit reckoning, per ADR 0004
 - **Overstay charge (reckoned at `V`):** the keys-return date **is** the vacant-possession
   date `V`. If `V` is after `E`, emit a **single** `RentFellDue` spanning `E → V` at the
   daily rate (`period_from = E` **inclusive**, `period_to = V` **exclusive**), computed at
-  keys-return. Linear ramp ⇒ one derived figure, not per-day events. This is a **forward
+  keys-return. The daily rate uses the denominator of **the period `E` falls in** (the
+  last scheduled period), applied flat across the whole `[E, V)` span — so a monthly
+  overstay crossing into a shorter/longer month does not re-pro-rate per-month (ADR 0009
+  decision 3; piecewise cross-boundary splitting is deferred). Linear ramp ⇒ one derived figure, not per-day events. This is a **forward
   append** of the `[E, V)` delta on top of whatever live accrual already booked to `E` —
   reckoning at `V` never rewrites or re-pro-rates an already-booked period. `V = E` is the
   degenerate same-day case (empty `[E, V)` ⇒ no overstay charge). The mirror case `V < E`

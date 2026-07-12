@@ -32,8 +32,20 @@ daily rate for a partial period" both stop being fixed arithmetic.
 Support `:weekly` (7-day period), `:fortnightly` (14-day period), and `:monthly`
 (calendar month). The generated catalogue draws them **60 % weekly / 30 % fortnightly /
 10 % monthly**; the three hand-authored *featured* headline scenarios stay weekly (they
-are the legible teaching cases). Assignment is deterministic by scenario index, so the
-board stays a pure function of `today` (ADR 0005 decision 8 reproducibility).
+are the legible teaching cases).
+
+**Assignment rule (deterministic, so the board stays a pure function of `today` —
+ADR 0005 decision 8 reproducibility):**
+
+- The three featured scenarios are **excluded** from the split — always weekly, and
+  they are not part of the denominator.
+- The split applies to each **generated category independently** (`healthy`, `arrears`,
+  `under_notice`, `exited`, `relet`), keyed on that category's local `idx` via
+  `rem(idx, 10)`: `0–5 → :weekly`, `6–8 → :fortnightly`, `9 → :monthly`.
+- A category whose size is not a multiple of 10 therefore fills **weekly-first,
+  fortnightly-next** in its trailing partial block — the remainder rule is just the
+  modulo, with no rounding or tie-breaking. Small categories skew weekly as a
+  consequence (`exited`, size 3, lands all-weekly), which is acceptable.
 
 `rent_amount_cents` is the **whole-period rent for that cadence** — a monthly tenancy
 carries a monthly amount, a weekly one a weekly amount. We never convert between them
@@ -74,6 +86,17 @@ monthly tenancy pro-rates a partial month by dividing the fixed monthly rent by 
 ÷ 28), so a day in February genuinely costs more than a day in March for the same
 monthly rent. The half-up-once rounding rule (Money §9) is unchanged — only the
 denominator generalises.
+
+**Overstay across a period/month boundary.** The overstay charge (#32) is a *single*
+`RentFellDue` over `[E, V)` (exit-settlement spec), so with a monthly cadence a span
+that crosses a month boundary (E in a 28-day February, V in a 31-day March) needs one
+unambiguous daily rate. We fix the denominator to **the period E falls in** — the last
+scheduled period — and apply that flat daily rate across the whole `[E, V)` span. The
+overstay is a hold-over penalty reckoned at keys-return off the last period's rate, not
+a continuation of the schedule into fresh periods, so it stays one derived figure and
+never re-pro-rates per-month. Piecewise splitting of a cross-boundary overstay by each
+month's actual days is **explicitly deferred** — no evidence the demo needs it, and the
+`[E, V)`-on-one-event model does not foreclose it.
 
 ## Consequences
 
