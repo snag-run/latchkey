@@ -334,7 +334,15 @@ defmodule Latchkey.PropertyManagement.Tenancy do
     do: {:error, :not_active}
 
   def decide_termination(%State{} = s, cmd) do
-    catch_up = catch_up_events(s, cmd.as_of, cmd.recorded_on)
+    # Sweep as if the proposed end date E were already in effect, so the notice-time
+    # catch-up is E-aware and clamps at `min(as_of, termination_date)` — it never books
+    # whole periods past a backdated E (`as_of > E`), which the `[E, V)` overstay booked
+    # at keys-return (issue #32) would then double-charge (issue #71). Backdating stays a
+    # soft invariant (a genuinely-served notice entered late is legitimate), so this is a
+    # clamp, not a gate. A future E (the usual arrears notice) is a no-op: the `as_of`
+    # guard halts the sweep before it ever reaches E.
+    s_at_e = %State{s | effective_end_date: cmd.termination_date}
+    catch_up = catch_up_events(s_at_e, cmd.as_of, cmd.recorded_on)
     s_now = Enum.reduce(catch_up, s, &evolve(&2, &1))
     behind = days_behind(s_now, cmd.as_of)
 
