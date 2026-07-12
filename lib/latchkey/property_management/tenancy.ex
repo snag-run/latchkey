@@ -14,9 +14,10 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   Slice scope so far: weekly cycle; lifecycle `:pending → :active → :ending →
   :terminal`; invariants L2 (commence once), L1/L3 (notice needs a live tenancy),
   L7 (arrears gate), L9 (keys-return needs an effective end date, reaches Terminal,
-  fires at most once). Exit is boundary-aligned here — catch-up clamps at the
-  effective end date E (whole periods only); mid-week pro-ration/overstay is a later
-  slice (ADR 0004). See `docs/adr/0003-es-foundation-bakeoff.md`.
+  fires at most once). Exit catch-up books whole periods until a full period no longer
+  fits before the effective end date E, then pro-rates the boundary period daily to E
+  (issue #31); overstay past E is a later slice (#32, ADR 0004). See
+  `docs/adr/0003-es-foundation-bakeoff.md`.
   """
   alias Latchkey.PropertyManagement.Tenancy.State
 
@@ -110,12 +111,24 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   end
 
   @doc """
-  Lazy catch-up (§6): the `rent_fell_due` events owed for `(due_through, as_of]`.
-  Weekly cycle only for now. Idempotent by the `due_through` pointer.
+  Lazy, **end-date-aware** catch-up (§6): the `rent_fell_due` events owed for
+  `(due_through, as_of]`. Weekly cycle only for now. Idempotent by the `due_through`
+  pointer.
 
-  Each tick's `occurred_on` is its historical due date; every tick shares the
-  passed `recorded_on` (the booking date), so a swept-in tick has
-  `recorded_on >= occurred_on` (lazy accrual, not backdating).
+  Each tick's `occurred_on` is its historical due date; every tick shares the passed
+  `recorded_on` (the booking date), so a swept-in tick has `recorded_on >= occurred_on`
+  (lazy accrual, not backdating).
+
+  Once the tenancy has an effective end date `E` (folded from the termination notice),
+  the sweep books whole periods only until a full period no longer fits before `E`, then
+  a single **pro-rated** boundary charge covering the boundary period's start → `E`
+  (issue #31). The boundary period is the one that *contains* `E`
+  (`period_from < E < period_to`); it is charged for the days actually within the
+  tenancy — `[period_from, E)` — never the whole week. When `E` is itself a period
+  boundary (`E == period_from`) nothing is pro-rated: whole periods run right up to `E`
+  and the period starting *on* `E` is post-exit (the #30 boundary-aligned case). No
+  charge fires on or after `E`; the post-`E` span is the overstay reckoning (issue #32),
+  out of this slice. With no `E` (an active tenancy) every due period is charged whole.
   """
   def catch_up_events(%State{status: :pending}, _as_of, _recorded_on), do: []
 
@@ -128,15 +141,72 @@ defmodule Latchkey.PropertyManagement.Tenancy do
 
     first
     |> Stream.iterate(&Date.add(&1, 7))
-    |> Enum.take_while(&(Date.compare(&1, as_of) != :gt))
-    |> Enum.map(fn due_date ->
-      %{
-        type: :rent_fell_due,
-        occurred_on: due_date,
-        recorded_on: recorded_on,
-        amount_cents: s.rent_amount_cents
-      }
+    |> Enum.reduce_while([], fn period_from, acc ->
+      period_to = Date.add(period_from, 7)
+
+      cond do
+        # Not yet due — lazy accrual books nothing past `as_of`.
+        Date.compare(period_from, as_of) == :gt ->
+          {:halt, acc}
+
+        # No E yet, or a full period still fits before E — charge it whole and continue.
+        whole_period_fits?(s.effective_end_date, period_to) ->
+          {:cont, [whole_period_charge(s, period_from, recorded_on) | acc]}
+
+        # E falls inside this period — pro-rate `[period_from, E)` and stop (issue #31).
+        Date.compare(period_from, s.effective_end_date) == :lt ->
+          {:halt, [boundary_charge(s, period_from, s.effective_end_date, recorded_on) | acc]}
+
+        # period_from is on/after E — post-exit span (overstay, #32): emit nothing, stop.
+        true ->
+          {:halt, acc}
+      end
     end)
+    |> Enum.reverse()
+  end
+
+  # A full period fits before E when its exclusive end `period_to` is on/before E. With
+  # no E (active tenancy), every period is charged whole.
+  defp whole_period_fits?(nil, _period_to), do: true
+  defp whole_period_fits?(%Date{} = e, period_to), do: Date.compare(period_to, e) != :gt
+
+  # A whole rent period `[due, due + 7)` at the full periodic rent. `occurred_on` (the
+  # accrual/FIFO key) is the period start, which equals `period_from`.
+  defp whole_period_charge(%State{} = s, due_date, recorded_on) do
+    %{
+      type: :rent_fell_due,
+      occurred_on: due_date,
+      recorded_on: recorded_on,
+      amount_cents: s.rent_amount_cents,
+      period_from: due_date,
+      period_to: Date.add(due_date, 7)
+    }
+  end
+
+  # The pro-rated boundary charge: `period_rent × days_in_period_to_E ÷ period_length`,
+  # rounded half-up **once** on the final amount (Money §9). `days_in_period_to_E =
+  # Date.diff(E, period_from)` (E exclusive); `period_length = Date.diff(period_to,
+  # period_from)` — actual/actual. `period_to` is E, so E is not charged here.
+  defp boundary_charge(%State{} = s, period_from, e, recorded_on) do
+    period_to = Date.add(period_from, 7)
+    days_in_period_to_e = Date.diff(e, period_from)
+    period_length = Date.diff(period_to, period_from)
+
+    %{
+      type: :rent_fell_due,
+      occurred_on: period_from,
+      recorded_on: recorded_on,
+      amount_cents: round_half_up(s.rent_amount_cents * days_in_period_to_e, period_length),
+      period_from: period_from,
+      period_to: e
+    }
+  end
+
+  # Round `numerator / denominator` half-up on the single final amount (denominator > 0,
+  # numerator >= 0 for accrual). `floor((num + denom/2) / denom) = div(2·num + denom,
+  # 2·denom)` — integer-only, so no float rounding drift.
+  defp round_half_up(numerator, denominator) when denominator > 0 do
+    div(2 * numerator + denominator, 2 * denominator)
   end
 
   # ── Decisions (execute) — {:ok, [event]} | {:error, reason} ──────────────────
@@ -239,11 +309,14 @@ defmodule Latchkey.PropertyManagement.Tenancy do
       # (the after-E overstay reckoning is a later slice, #32).
       {:error, :keys_returned_before_end_date}
     else
-      # Catch rent up to — but not past — E: whole periods only. E is a period boundary
-      # in this slice, so the period *starting on* E belongs to the post-exit span and
-      # must not fire (half-open `[from, to)`, ADR 0004 / spec). Clamp the sweep at the
-      # day before E so no step `RentFellDue` lands on or after E.
-      catch_up = catch_up_events(s, Date.add(e, -1), cmd.recorded_on)
+      # Catch rent up to — but not past — E: the end-date-aware sweep books whole periods
+      # until a full period no longer fits before E, then a single pro-rated boundary
+      # charge covering `[period_from, E)` (issue #31). E belongs to the post-exit span
+      # (half-open `[from, to)`, ADR 0004 / spec), so no step `RentFellDue` lands on or
+      # after E. When E is a period boundary this reduces to whole periods only (the #30
+      # boundary-aligned case). A prior sweep/payment may already have booked the boundary
+      # pro-rated; `due_through` makes this idempotent.
+      catch_up = catch_up_events(s, e, cmd.recorded_on)
       s_now = Enum.reduce(catch_up, s, &evolve(&2, &1))
 
       # `final_balance_cents` is the fold snapshot after the boundary charges land

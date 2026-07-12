@@ -413,6 +413,176 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     end
   end
 
+  describe "exit settlement — boundary period pro-ration to E (issue #31)" do
+    # A tenancy `:ending` with a **mid-week** effective end date E. Weekly $500 from
+    # 01-05; nothing swept yet (due_through nil). E = 02-12 falls inside the period
+    # [02-09, 02-16), 3 days in. Built directly so the maths is isolated from the L7
+    # notice path.
+    defp midweek_ending_state(e, opts \\ []) do
+      %State{
+        status: :ending,
+        tenancy_id: "t1",
+        rent_amount_cents: Keyword.get(opts, :rent_amount_cents, 50_000),
+        cycle: :weekly,
+        first_due_date: ~D[2026-01-05],
+        due_through: Keyword.get(opts, :due_through),
+        payments_total_cents: Keyword.get(opts, :payments_total_cents, 0),
+        effective_end_date: e
+      }
+    end
+
+    test "books full periods, then a single pro-rated boundary charge covering [start, E)" do
+      {:ok, events} =
+        Tenancy.decide_return_keys(
+          midweek_ending_state(~D[2026-02-12]),
+          %{keys_on: ~D[2026-02-12], recorded_on: ~D[2026-02-12]}
+        )
+
+      charges = Enum.filter(events, &(&1.type == :rent_fell_due))
+
+      # Five whole weeks 01-05..02-02 (each [due, due+7)), then the boundary week.
+      assert Enum.map(charges, & &1.occurred_on) ==
+               [
+                 ~D[2026-01-05],
+                 ~D[2026-01-12],
+                 ~D[2026-01-19],
+                 ~D[2026-01-26],
+                 ~D[2026-02-02],
+                 ~D[2026-02-09]
+               ]
+
+      whole = Enum.take(charges, 5)
+      boundary = List.last(charges)
+
+      # Whole periods carry [due, due+7) and the full rent.
+      assert Enum.all?(whole, &(&1.amount_cents == 50_000))
+      assert Enum.all?(whole, &(Date.diff(&1.period_to, &1.period_from) == 7))
+
+      # Boundary period: [02-09, E=02-12) = 3 days at $500/week → round_half_up(500×3/7).
+      assert boundary.period_from == ~D[2026-02-09]
+      assert boundary.period_to == ~D[2026-02-12]
+      assert boundary.amount_cents == 21_429
+    end
+
+    test "a tenant leaving mid-week is charged only the days within the tenancy, never the whole week" do
+      {:ok, events} =
+        Tenancy.decide_return_keys(
+          midweek_ending_state(~D[2026-02-12]),
+          %{keys_on: ~D[2026-02-12], recorded_on: ~D[2026-02-12]}
+        )
+
+      boundary = events |> Enum.filter(&(&1.type == :rent_fell_due)) |> List.last()
+
+      # 3 of 7 days → strictly less than a whole week's rent; E itself is not charged.
+      assert boundary.amount_cents < 50_000
+      assert Date.compare(boundary.period_to, ~D[2026-02-12]) == :eq
+    end
+
+    test "no RentFellDue fires on or after E (E belongs to the post-exit span)" do
+      {:ok, events} =
+        Tenancy.decide_return_keys(
+          midweek_ending_state(~D[2026-02-12]),
+          %{keys_on: ~D[2026-02-12], recorded_on: ~D[2026-02-12]}
+        )
+
+      for e when e.type == :rent_fell_due <- events do
+        # The charge's due date (period_from) is before E; its span ends at E exclusive.
+        assert Date.compare(e.period_from, ~D[2026-02-12]) == :lt
+        assert Date.compare(e.period_to, ~D[2026-02-12]) != :gt
+      end
+    end
+
+    test "final_balance_cents reflects the pro-rated boundary (5 whole weeks + partial)" do
+      {:ok, events} =
+        Tenancy.decide_return_keys(
+          midweek_ending_state(~D[2026-02-12]),
+          %{keys_on: ~D[2026-02-12], recorded_on: ~D[2026-02-12]}
+        )
+
+      settled = List.last(events)
+      # 5 × 50_000 + 21_429 boundary − 0 paid.
+      assert settled.type == :tenancy_settled
+      assert settled.final_balance_cents == 271_429
+    end
+
+    test "a tenant who prepaid the whole final week ends with the correct refund owed" do
+      # Prepay six whole weeks ($3,000) but only 5 whole + a 3-day boundary are charged.
+      state = midweek_ending_state(~D[2026-02-12], payments_total_cents: 300_000)
+
+      {:ok, events} =
+        Tenancy.decide_return_keys(state, %{keys_on: ~D[2026-02-12], recorded_on: ~D[2026-02-12]})
+
+      settled = List.last(events)
+      # 271_429 charged − 300_000 paid = −28_571 → refund owed (signed negative).
+      assert settled.final_balance_cents == -28_571
+    end
+
+    test "when E is a period boundary nothing is pro-rated (the #30 boundary-aligned case)" do
+      # E = 02-16 = 01-05 + 7×6, an exact boundary. Whole periods run to E; the period
+      # starting *on* E is post-exit and does not fire — no partial charge.
+      {:ok, events} =
+        Tenancy.decide_return_keys(
+          midweek_ending_state(~D[2026-02-16]),
+          %{keys_on: ~D[2026-02-16], recorded_on: ~D[2026-02-16]}
+        )
+
+      charges = Enum.filter(events, &(&1.type == :rent_fell_due))
+      assert Enum.all?(charges, &(&1.amount_cents == 50_000))
+      assert Enum.all?(charges, &(Date.diff(&1.period_to, &1.period_from) == 7))
+      assert List.last(charges).occurred_on == ~D[2026-02-09]
+    end
+
+    test "pro-ration rounds half-up once on the final amount (per-day cents never rounded)" do
+      # Weekly $100 (10_000c); boundary 1 day → 10_000 × 1 ÷ 7 = 1428.57 → 1429 (half-up),
+      # not 7 × round(1428.57/…). E = 01-06, one day into the first period [01-05, 01-12).
+      {:ok, events} =
+        Tenancy.decide_return_keys(
+          midweek_ending_state(~D[2026-01-06], rent_amount_cents: 10_000),
+          %{keys_on: ~D[2026-01-06], recorded_on: ~D[2026-01-06]}
+        )
+
+      [boundary] = Enum.filter(events, &(&1.type == :rent_fell_due))
+      assert boundary.period_from == ~D[2026-01-05]
+      assert boundary.period_to == ~D[2026-01-06]
+      assert boundary.amount_cents == 1_429
+    end
+
+    test "a month-boundary boundary period pro-rates on actual days spanned" do
+      # first_due 01-05 → the period [01-26, 02-02) straddles month-end. E = 01-29 → the
+      # boundary spans [01-26, 01-29) = 3 actual days (27th, 28th... i.e. Date.diff = 3).
+      {:ok, events} =
+        Tenancy.decide_return_keys(
+          midweek_ending_state(~D[2026-01-29]),
+          %{keys_on: ~D[2026-01-29], recorded_on: ~D[2026-01-29]}
+        )
+
+      boundary = events |> Enum.filter(&(&1.type == :rent_fell_due)) |> List.last()
+      assert boundary.period_from == ~D[2026-01-26]
+      assert boundary.period_to == ~D[2026-01-29]
+      assert Date.diff(boundary.period_to, boundary.period_from) == 3
+      assert boundary.amount_cents == 21_429
+    end
+
+    test "the pro-rated exit envelope round-trips through JSON rehydration" do
+      agg = %Agg{core: midweek_ending_state(~D[2026-02-12])}
+
+      # The shell adapts the pro-rated boundary charge to a `RentFellDue` struct carrying
+      # `period_from`/`period_to`; rehydration coerces the JSON string dates back.
+      folded =
+        agg
+        |> Agg.execute(%C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-02-12],
+          recorded_on: ~D[2026-02-12]
+        })
+        |> Enum.map(&rehydrate/1)
+        |> then(&apply_all(agg, &1))
+
+      assert folded.core.status == :terminal
+      assert folded.core.final_balance_cents == 271_429
+    end
+  end
+
   # Simulate EventStore JSON rehydration: encode → decode → rebuild the struct
   # with string-valued dates, exactly as the serializer hands them to `apply/2`.
   defp rehydrate(%mod{} = event) do
