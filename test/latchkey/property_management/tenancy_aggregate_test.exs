@@ -222,6 +222,88 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     end
   end
 
+  describe "reversal path — ReversePayment → negative RentPaymentRecorded (ADR 0006 §7)" do
+    # A tenancy that has recorded payment "p-1" ($500, received 01-05).
+    defp paid_agg do
+      agg = commenced_agg()
+
+      events =
+        Agg.execute(agg, %C.RecordPayment{
+          tenancy_id: "t1",
+          amount_cents: 50_000,
+          received_on: ~D[2026-01-05],
+          source_payment_id: "p-1",
+          recorded_on: ~D[2026-01-06]
+        })
+
+      apply_all(agg, events)
+    end
+
+    defp reverse(agg, attrs) do
+      Agg.execute(
+        agg,
+        struct(
+          %C.ReversePayment{
+            tenancy_id: "t1",
+            amount_cents: -50_000,
+            reversed_on: ~D[2026-01-10],
+            recorded_on: ~D[2026-01-11],
+            source_payment_id: "r-1",
+            reverses: "p-1",
+            reason: "dishonoured"
+          },
+          attrs
+        )
+      )
+    end
+
+    test "reverses a recorded payment as a negative RentPaymentRecorded carrying reason/reverses" do
+      assert [%RentPaymentRecorded{} = ev] = reverse(paid_agg(), %{})
+
+      assert ev.amount_cents == -50_000
+      assert ev.occurred_on == ~D[2026-01-10]
+      assert ev.recorded_on == ~D[2026-01-11]
+      assert ev.source_payment_id == "r-1"
+      assert ev.reason == "dishonoured"
+      assert ev.reverses == "p-1"
+    end
+
+    test "the negative amount folds back (payments drop, balance rises)" do
+      before = paid_agg()
+      reversed = apply_all(before, reverse(before, %{}))
+
+      # p-1 credited $500 against the 01-05 week; the reversal removes it.
+      assert Tenancy.balance_cents(before.core) == 0
+      assert Tenancy.balance_cents(reversed.core) == 50_000
+    end
+
+    test "defensively rejects a reversal referencing a payment PM never recorded (§5 P2)" do
+      assert {:error, :unknown_payment} =
+               reverse(paid_agg(), %{reverses: "p-never", source_payment_id: "r-x"})
+    end
+
+    test "is idempotent on the reversal's own source_payment_id" do
+      once = paid_agg()
+      applied = apply_all(once, reverse(once, %{}))
+
+      # Re-seeing the same reversal (same source_payment_id) is a no-op.
+      assert [] = reverse(applied, %{})
+    end
+
+    test "reversal envelope round-trips through JSON rehydration (reason/reverses survive)" do
+      before = paid_agg()
+
+      folded =
+        before
+        |> reverse(%{})
+        |> Enum.map(&rehydrate/1)
+        |> then(&apply_all(before, &1))
+
+      # The negative amount still folded (balance rose back to the owed week).
+      assert Tenancy.balance_cents(folded.core) == 50_000
+    end
+  end
+
   describe "exit settlement — KeysReturned → TenancySettled → Terminal (L9)" do
     test "returning keys on E closes the tenancy, booking whole periods up to E" do
       events =

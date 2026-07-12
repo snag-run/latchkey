@@ -9,12 +9,14 @@ defmodule Latchkey.Router do
     CommenceTenancy,
     GiveTerminationNotice,
     RecordPayment,
-    ReturnKeys
+    ReturnKeys,
+    ReversePayment
   }
 
   identify(Aggregate, by: :tenancy_id, prefix: "tenancy-")
 
-  dispatch([CommenceTenancy, RecordPayment, CatchUp, GiveTerminationNotice, ReturnKeys],
+  dispatch(
+    [CommenceTenancy, RecordPayment, ReversePayment, CatchUp, GiveTerminationNotice, ReturnKeys],
     to: Aggregate
   )
 end

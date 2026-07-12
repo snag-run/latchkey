@@ -255,6 +255,48 @@ defmodule Latchkey.PropertyManagement.Tenancy do
     end
   end
 
+  @doc """
+  Reverse a previously-recorded payment (ACL-1's reversal path, ADR 0006 §7). Emits a
+  **negative** `rent_payment_recorded` carrying `reason` and `reverses` (the original
+  payment id) so the timeline can render "Payment reversed — <reason>" and tie it to
+  the credit it undoes. The fold absorbs the negative amount (payments go down); the
+  reversal's own `source_payment_id` enters `applied_payment_ids` for idempotency.
+
+  Two guards, checked in this order so replay is safe:
+
+  - **Idempotent** on the reversal's `source_payment_id` — a re-seen reversal (live
+    re-delivery or a replay of an already-emitted one) is a `{:ok, []}` no-op.
+  - **Defensive P2** (§5 P2) — a reversal whose `reverses` PM never recorded is a seam
+    bug under today's single ordered store; refuse it with `{:error, :unknown_payment}`
+    rather than book a phantom debit. Unlike the forward path this is **not** lifecycle
+    gated: a payment can be reversed whenever it was applied (incl. post-terminal, P4),
+    and the "known payment" check already implies the tenancy commenced.
+  """
+  def decide_reversal(%State{} = s, cmd) do
+    cond do
+      MapSet.member?(s.applied_payment_ids, cmd.source_payment_id) ->
+        {:ok, []}
+
+      not MapSet.member?(s.applied_payment_ids, cmd.reverses) ->
+        {:error, :unknown_payment}
+
+      true ->
+        {:ok,
+         [
+           %{
+             type: :rent_payment_recorded,
+             # occurrence = the reversal's reversed date.
+             occurred_on: cmd.reversed_on,
+             recorded_on: cmd.recorded_on,
+             amount_cents: cmd.amount_cents,
+             source_payment_id: cmd.source_payment_id,
+             reason: cmd.reason,
+             reverses: cmd.reverses
+           }
+         ]}
+    end
+  end
+
   # §6 lazy sweep as a first-class no-decision op (keeps the read model warm).
   def decide_catch_up(%State{status: :pending}, _cmd), do: {:ok, []}
 
