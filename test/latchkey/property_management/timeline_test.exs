@@ -474,4 +474,30 @@ defmodule Latchkey.PropertyManagement.TimelineTest do
     assert Enum.find_index(entries, &(&1.kind == :settled)) <
              Enum.find_index(entries, &(&1 == p4))
   end
+
+  test "the settlement row renders the FOLDED balance, ignoring the event's final_balance_cents" do
+    # Guards the "no separate final-balance field to drift" contract (ADR 0006 §5):
+    # `normalize/1` drops `TenancySettled.final_balance_cents`, and the punchline is
+    # derived purely from the running fold. Here the stored field is deliberately bogus
+    # ($9,999.99) while the fold reckons a $500 debt — the render must follow the fold.
+    #   commenced 01-05          -> 0
+    #   rent      01-05  +50000  -> 50000  (the true folded reckoning)
+    #   keys      01-10          -> 50000
+    #   settled   01-10          -> 50000  (final_balance_cents lies: 999_999)
+    events = [
+      {0, commenced(~D[2026-01-05])},
+      {1, rent(~D[2026-01-05])},
+      {2, keys_returned(~D[2026-01-10])},
+      {3, settled(~D[2026-01-10], 999_999)}
+    ]
+
+    settled = List.last(Timeline.fold(events))
+
+    assert settled.kind == :settled
+    # follows the fold, NOT the event's stored (divergent) final_balance_cents
+    assert settled.balance_snapshot_cents == 50_000
+    assert settled.description =~ "$500.00"
+    assert settled.description =~ "owing"
+    refute settled.description =~ "9,999.99"
+  end
 end

@@ -171,7 +171,7 @@ defmodule Latchkey.PropertyManagement.Timeline do
   defp period(%{kind: :rent_fell_due, period_from: %Date{} = from, period_to: %Date{} = to}),
     do: {from, to}
 
-  defp period(%{kind: :rent_fell_due, occurred_on: due}), do: {due, Date.add(due, 6)}
+  defp period(%{kind: :rent_fell_due, occurred_on: due}), do: {due, Date.add(due, 7)}
   defp period(_other), do: {nil, nil}
 
   defp kick_in(%{kind: :notice_given, termination_date: date}), do: date
