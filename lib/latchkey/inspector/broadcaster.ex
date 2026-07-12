@@ -23,6 +23,8 @@ defmodule Latchkey.Inspector.Broadcaster do
     consistency: :strong,
     start_from: :current
 
+  require Logger
+
   @global_topic "dev:events"
 
   @doc "The global firehose topic every persisted event is broadcast to."
@@ -37,9 +39,25 @@ defmodule Latchkey.Inspector.Broadcaster do
   def handle(event, %{stream_id: stream_id} = metadata) do
     message = {:dev_event, event, metadata}
 
-    :ok = Phoenix.PubSub.broadcast(Latchkey.PubSub, @global_topic, message)
-    :ok = Phoenix.PubSub.broadcast(Latchkey.PubSub, stream_topic(stream_id), message)
+    # Fan out to both topics, but never crash on a broadcast failure. This is an
+    # at-least-once handler: a crash leaves the event un-acked, so Commanded
+    # redelivers it and the already-successful publish is re-emitted as a
+    # duplicate. A transient PubSub error is logged and swallowed; the event is
+    # still considered processed (`:ok`), so it is acked exactly once.
+    broadcast(@global_topic, message)
+    broadcast(stream_topic(stream_id), message)
 
     :ok
+  end
+
+  defp broadcast(topic, message) do
+    case Phoenix.PubSub.broadcast(Latchkey.PubSub, topic, message) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("dev firehose broadcast to #{inspect(topic)} failed: #{inspect(reason)}")
+        :ok
+    end
   end
 end

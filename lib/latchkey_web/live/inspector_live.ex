@@ -79,7 +79,7 @@ defmodule LatchkeyWeb.InspectorLive do
     # Connected mount only (spec D5) — the static render on initial HTTP GET
     # doesn't need a live subscription, only the socket that survives.
     if connected?(socket) do
-      Phoenix.PubSub.subscribe(Latchkey.PubSub, Broadcaster.global_topic())
+      :ok = Phoenix.PubSub.subscribe(Latchkey.PubSub, Broadcaster.global_topic())
     end
 
     socket =

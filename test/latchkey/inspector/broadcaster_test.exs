@@ -26,8 +26,15 @@ defmodule Latchkey.Inspector.BroadcasterTest do
     tid = "firehose-#{System.unique_integer([:positive])}"
     stream_id = "tenancy-" <> tid
 
-    :ok = Phoenix.PubSub.subscribe(Latchkey.PubSub, Broadcaster.global_topic())
-    :ok = Phoenix.PubSub.subscribe(Latchkey.PubSub, Broadcaster.stream_topic(stream_id))
+    # One relay process per topic, each tagging what it receives with which topic
+    # delivered it. Same tuple on both topics would otherwise make two
+    # `assert_receive`s pass even if the handler broadcast twice to `dev:events`
+    # and never to `dev:stream:<id>`; the tags pin delivery to the *specific*
+    # topic. `await_subscribed/1` gates the dispatch on both subscriptions being
+    # live (sleep-free), so the strong-consistency broadcast can't race ahead.
+    relay_topic(:global, Broadcaster.global_topic())
+    relay_topic(:per_stream, Broadcaster.stream_topic(stream_id))
+    await_subscribed([:global, :per_stream])
 
     assert :ok =
              CommandedApp.dispatch(
@@ -40,12 +47,41 @@ defmodule Latchkey.Inspector.BroadcasterTest do
                consistency: :strong
              )
 
-    assert_receive {:dev_event, %TenancyCommenced{tenancy_id: ^tid}, %{stream_id: ^stream_id}}
-    assert_receive {:dev_event, %TenancyCommenced{tenancy_id: ^tid}, %{stream_id: ^stream_id}}
+    assert_receive {:relayed, :global,
+                    {:dev_event, %TenancyCommenced{tenancy_id: ^tid}, %{stream_id: ^stream_id}}}
+
+    assert_receive {:relayed, :per_stream,
+                    {:dev_event, %TenancyCommenced{tenancy_id: ^tid}, %{stream_id: ^stream_id}}}
   end
 
   test "never dispatches a command or otherwise touches the write path" do
     refute function_exported?(Broadcaster, :dispatch, 1)
     refute function_exported?(Broadcaster, :dispatch, 2)
+  end
+
+  # Spawn a subscriber bound to exactly `topic` that forwards every message back
+  # to the test process, tagged with `tag`, so each `assert_receive` proves
+  # delivery on its own topic. Sends `{:subscribed, tag}` once the subscription
+  # is live (see `await_subscribed/1`).
+  defp relay_topic(tag, topic) do
+    test_pid = self()
+
+    spawn_link(fn ->
+      :ok = Phoenix.PubSub.subscribe(Latchkey.PubSub, topic)
+      send(test_pid, {:subscribed, tag})
+      relay_loop(tag, test_pid)
+    end)
+  end
+
+  defp relay_loop(tag, test_pid) do
+    receive do
+      message -> send(test_pid, {:relayed, tag, message})
+    end
+
+    relay_loop(tag, test_pid)
+  end
+
+  defp await_subscribed(tags) do
+    for tag <- tags, do: assert_receive({:subscribed, ^tag})
   end
 end
