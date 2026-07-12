@@ -8,9 +8,11 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
   alias Latchkey.PropertyManagement.Tenancy
   alias Latchkey.PropertyManagement.Tenancy.Aggregate, as: Agg
   alias Latchkey.PropertyManagement.Tenancy.Commands, as: C
+  alias Latchkey.PropertyManagement.Tenancy.Events.KeysReturned
   alias Latchkey.PropertyManagement.Tenancy.Events.RentFellDue
   alias Latchkey.PropertyManagement.Tenancy.Events.RentPaymentRecorded
   alias Latchkey.PropertyManagement.Tenancy.Events.TenancyCommenced
+  alias Latchkey.PropertyManagement.Tenancy.Events.TenancySettled
   alias Latchkey.PropertyManagement.Tenancy.Events.TerminationNoticeGiven
 
   defp apply_all(agg, events), do: Enum.reduce(List.wrap(events), agg, &Agg.apply(&2, &1))
@@ -25,6 +27,25 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
         cycle: :weekly,
         first_due_date: ~D[2026-01-05],
         recorded_on: ~D[2026-01-05]
+      })
+
+    apply_all(agg, events)
+  end
+
+  # A tenancy in `:ending`: commenced (weekly $500 from 01-05), then a termination
+  # notice served 02-02 (28 days behind → past the L7 gate) with the effective end
+  # date E = 02-16 (a period boundary: 01-05 + 7×6). The notice's catch-up books the
+  # five weeks 01-05..02-02.
+  defp ending_agg do
+    agg = commenced_agg()
+
+    events =
+      Agg.execute(agg, %C.GiveTerminationNotice{
+        tenancy_id: "t1",
+        termination_date: ~D[2026-02-16],
+        given_on: ~D[2026-02-02],
+        as_of: ~D[2026-02-02],
+        recorded_on: ~D[2026-02-02]
       })
 
     apply_all(agg, events)
@@ -197,6 +218,154 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       # occurred_on survived as a Date and drove the FIFO due-date reads
       assert Tenancy.oldest_unpaid_due_date(folded.core) == ~D[2026-01-05]
       assert folded.core.due_through == ~D[2026-01-19]
+    end
+  end
+
+  describe "exit settlement — KeysReturned → TenancySettled → Terminal (L9)" do
+    test "returning keys on E closes the tenancy, booking whole periods up to E" do
+      events =
+        Agg.execute(ending_agg(), %C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-02-16],
+          recorded_on: ~D[2026-02-16]
+        })
+
+      # The notice swept 01-05..02-02; catch-up to E books only the 02-09 week.
+      # The 02-16 period (starting *on* E) is post-exit and must NOT fire.
+      charges = Enum.filter(events, &match?(%RentFellDue{}, &1))
+      assert Enum.map(charges, & &1.occurred_on) == [~D[2026-02-09]]
+
+      assert %KeysReturned{occurred_on: ~D[2026-02-16]} = Enum.at(events, -2)
+      assert %TenancySettled{occurred_on: ~D[2026-02-16]} = List.last(events)
+    end
+
+    test "no step RentFellDue fires on or past E" do
+      events =
+        Agg.execute(ending_agg(), %C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-02-16],
+          recorded_on: ~D[2026-02-16]
+        })
+
+      for %RentFellDue{occurred_on: due} <- events do
+        assert Date.compare(due, ~D[2026-02-16]) == :lt
+      end
+    end
+
+    test "settlement transitions the tenancy to Terminal" do
+      agg = ending_agg()
+
+      events =
+        Agg.execute(agg, %C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-02-16],
+          recorded_on: ~D[2026-02-16]
+        })
+
+      assert apply_all(agg, events).core.status == :terminal
+    end
+
+    test "a behind tenant settles with a positive final balance (debt) that persists" do
+      # Six weeks booked by exit (01-05..02-09), nothing paid → +300_000 owed.
+      [settled] =
+        Agg.execute(ending_agg(), %C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-02-16],
+          recorded_on: ~D[2026-02-16]
+        })
+        |> Enum.filter(&match?(%TenancySettled{}, &1))
+
+      assert settled.final_balance_cents == 300_000
+    end
+
+    test "a prepaid tenant settles with a negative final balance (refund owed)" do
+      agg = ending_agg()
+
+      # Prepay $3,500 before returning keys — more than the $3,000 that will be owed.
+      pay =
+        Agg.execute(agg, %C.RecordPayment{
+          tenancy_id: "t1",
+          amount_cents: 350_000,
+          received_on: ~D[2026-02-10],
+          source_payment_id: "p-prepaid",
+          recorded_on: ~D[2026-02-10]
+        })
+
+      agg = apply_all(agg, pay)
+
+      [settled] =
+        Agg.execute(agg, %C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-02-16],
+          recorded_on: ~D[2026-02-16]
+        })
+        |> Enum.filter(&match?(%TenancySettled{}, &1))
+
+      # 6 × $500 charged − $3,500 paid = −$500 → refund owed, signed negative.
+      assert settled.final_balance_cents == -50_000
+    end
+
+    test "final_balance_cents equals the post-charge fold (snapshot of Σ charges − Σ payments)" do
+      agg = ending_agg()
+
+      events =
+        Agg.execute(agg, %C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-02-16],
+          recorded_on: ~D[2026-02-16]
+        })
+
+      settled = List.last(events)
+      folded = apply_all(agg, events)
+      assert settled.final_balance_cents == Tenancy.balance_cents(folded.core)
+    end
+
+    test "L9 refuses keys-return on a live tenancy with no effective end date" do
+      assert {:error, :no_effective_end_date} =
+               Agg.execute(commenced_agg(), %C.ReturnKeys{
+                 tenancy_id: "t1",
+                 keys_on: ~D[2026-02-16],
+                 recorded_on: ~D[2026-02-16]
+               })
+    end
+
+    test "L9 refuses a second keys-return (Terminal stays final, L3)" do
+      agg = ending_agg()
+
+      first =
+        Agg.execute(agg, %C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-02-16],
+          recorded_on: ~D[2026-02-16]
+        })
+
+      agg = apply_all(agg, first)
+
+      assert {:error, :no_effective_end_date} =
+               Agg.execute(agg, %C.ReturnKeys{
+                 tenancy_id: "t1",
+                 keys_on: ~D[2026-02-23],
+                 recorded_on: ~D[2026-02-23]
+               })
+    end
+
+    test "the exit envelope round-trips through JSON rehydration" do
+      agg = ending_agg()
+
+      events =
+        Agg.execute(agg, %C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-02-16],
+          recorded_on: ~D[2026-02-16]
+        })
+
+      folded =
+        events
+        |> Enum.map(&rehydrate/1)
+        |> then(&apply_all(agg, &1))
+
+      assert folded.core.status == :terminal
+      assert folded.core.final_balance_cents == 300_000
     end
   end
 

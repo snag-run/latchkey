@@ -21,6 +21,8 @@ defmodule Latchkey.PropertyManagement.ArrearsProjector do
   def handle(%E.RentFellDue{tenancy_id: tid}, _meta), do: project(tid)
   def handle(%E.RentPaymentRecorded{tenancy_id: tid}, _meta), do: project(tid)
   def handle(%E.TerminationNoticeGiven{tenancy_id: tid}, _meta), do: project(tid)
+  def handle(%E.KeysReturned{tenancy_id: tid}, _meta), do: project(tid)
+  def handle(%E.TenancySettled{tenancy_id: tid}, _meta), do: project(tid)
 
   defp project(tenancy_id) do
     core = fold_stream(tenancy_id)
@@ -28,11 +30,17 @@ defmodule Latchkey.PropertyManagement.ArrearsProjector do
     # Persist only the event-driven pointer. `days_behind` is derived on read
     # (Arrears.days_behind/2, ADR 0005 decision 6) — no frozen `as_of` here, so an
     # idle arrears tenant's counter climbs from the clock with no new event.
+    # `balance_cents` is the **live** fold — it keeps moving on post-terminal
+    # payments. `final_balance_cents` is the **frozen** settlement snapshot captured
+    # in the `TenancySettled` fold; refolding never re-derives it, so a later payment
+    # updates the live balance without touching the snapshot.
     Arrears
     |> Ash.Changeset.for_create(:upsert, %{
       tenancy_id: tenancy_id,
+      status: core.status,
       balance_cents: Tenancy.balance_cents(core),
-      oldest_unpaid_due_date: Tenancy.oldest_unpaid_due_date(core)
+      oldest_unpaid_due_date: Tenancy.oldest_unpaid_due_date(core),
+      final_balance_cents: core.final_balance_cents
     })
     |> Ash.create!()
 

@@ -12,5 +12,12 @@ defmodule Latchkey.PropertyManagement.Tenancy.State do
             due_through: nil,
             charges: [],
             payments_total_cents: 0,
-            applied_payment_ids: MapSet.new()
+            applied_payment_ids: MapSet.new(),
+            # Effective end date E, folded from the termination notice (the clamp for
+            # end-date-aware catch-up). `keys_returned_on`/`final_balance_cents` are
+            # the exit reckoning captured at settlement (final_balance is a frozen
+            # snapshot, not the live balance).
+            effective_end_date: nil,
+            keys_returned_on: nil,
+            final_balance_cents: nil
 end

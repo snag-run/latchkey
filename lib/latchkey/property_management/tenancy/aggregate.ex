@@ -65,6 +65,16 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
     emit(Tenancy.decide_termination(core, cmd), c.tenancy_id)
   end
 
+  def execute(%__MODULE__{core: core}, %C.ReturnKeys{} = c) do
+    cmd = %{
+      tenancy_id: c.tenancy_id,
+      keys_on: c.keys_on,
+      recorded_on: booked_on(c)
+    }
+
+    emit(Tenancy.decide_return_keys(core, cmd), c.tenancy_id)
+  end
+
   # ── apply (fold) ────────────────────────────────────────────────────────────
 
   def apply(%__MODULE__{core: core} = agg, event) do
@@ -124,6 +134,23 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
     }
   end
 
+  defp to_struct(%{type: :keys_returned} = e, tid) do
+    %E.KeysReturned{
+      tenancy_id: tid,
+      occurred_on: e.occurred_on,
+      recorded_on: e.recorded_on
+    }
+  end
+
+  defp to_struct(%{type: :tenancy_settled} = e, tid) do
+    %E.TenancySettled{
+      tenancy_id: tid,
+      occurred_on: e.occurred_on,
+      recorded_on: e.recorded_on,
+      final_balance_cents: e.final_balance_cents
+    }
+  end
+
   # JSON rehydration returns strings for atoms/Dates on replay — coerce back.
   defp to_normalized(%E.TenancyCommenced{} = e) do
     %{
@@ -163,6 +190,23 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
       recorded_on: to_date(e.recorded_on),
       grounds: decode_grounds(e.grounds),
       termination_date: to_date(e.termination_date)
+    }
+  end
+
+  defp to_normalized(%E.KeysReturned{} = e) do
+    %{
+      type: :keys_returned,
+      occurred_on: to_date(e.occurred_on),
+      recorded_on: to_date(e.recorded_on)
+    }
+  end
+
+  defp to_normalized(%E.TenancySettled{} = e) do
+    %{
+      type: :tenancy_settled,
+      occurred_on: to_date(e.occurred_on),
+      recorded_on: to_date(e.recorded_on),
+      final_balance_cents: e.final_balance_cents
     }
   end
 
