@@ -187,21 +187,24 @@ defmodule Latchkey.PropertyManagement.Tenancy do
 
   # The pro-rated boundary charge: `period_rent × days_in_period_to_E ÷ period_length`,
   # rounded half-up **once** on the final amount (Money §9). `days_in_period_to_E =
-  # Date.diff(E, period_from)` (E exclusive); `period_length = Date.diff(period_to,
-  # period_from)` — actual/actual. `period_to` is E, so E is not charged here.
+  # Date.diff(E, period_from)` (E exclusive). `period_to` is E, so E is not charged here.
   defp boundary_charge(%State{} = s, period_from, e, recorded_on) do
-    period_to = Date.add(period_from, 7)
-    days_in_period_to_e = Date.diff(e, period_from)
-    period_length = Date.diff(period_to, period_from)
-
     %{
       type: :rent_fell_due,
       occurred_on: period_from,
       recorded_on: recorded_on,
-      amount_cents: round_half_up(s.rent_amount_cents * days_in_period_to_e, period_length),
+      amount_cents: daily_rate_amount(s, period_from, e),
       period_from: period_from,
       period_to: e
     }
+  end
+
+  # The daily-rate pro-ration shared by the boundary (#31) and overstay (#32) charges:
+  # `period_rent × days ÷ period_length` for `days = Date.diff(to, from)` (actual/actual,
+  # weekly `period_length = 7`), rounded half-up **once** on the final amount (Money §9).
+  # One home for the money-rounding rule so the two call sites can't drift apart.
+  defp daily_rate_amount(%State{} = s, %Date{} = from, %Date{} = to) do
+    round_half_up(s.rent_amount_cents * Date.diff(to, from), 7)
   end
 
   # Round `numerator / denominator` half-up on the single final amount (denominator > 0,
@@ -412,15 +415,12 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   # `occurred_on = E` is the accrual/FIFO key. `V = E` ⇒ empty span ⇒ no event.
   defp overstay_events(%State{} = s, %Date{} = e, %Date{} = v, recorded_on) do
     if Date.compare(v, e) == :gt do
-      days = Date.diff(v, e)
-      period_length = Date.diff(Date.add(e, 7), e)
-
       [
         %{
           type: :rent_fell_due,
           occurred_on: e,
           recorded_on: recorded_on,
-          amount_cents: round_half_up(s.rent_amount_cents * days, period_length),
+          amount_cents: daily_rate_amount(s, e, v),
           period_from: e,
           period_to: v
         }
