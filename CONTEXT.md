@@ -13,6 +13,45 @@ format** — not the subject of the timeline design. It is *not* full double-ent
 bookkeeping (balancing contra postings); that is Accounts' native model and a
 `domain-model.md` §10 directional goal. See `domain-model.md` §7.
 
+## Property · Property Balance
+
+A **Property** is the physical rental premises — a **thin identity** (address, and
+the **owner** it is managed for). It carries **no money invariant of its own**:
+tenancies are independent and re-letting can legitimately double-charge overlapping
+days (`domain-model.md` §4), so a Property imposes no cross-tenancy consistency. A
+tenancy names its property by a stable **`property_ref`** that **recurs across
+successive tenancies** of the same premises — a **non-PII** key carried on
+`TenancyCommenced` (ADR 0008).
+
+A **Property Balance** is the **owner-side running balance** for a property: rent
+**collected** on the owner's behalf, **less** management fees, invoices/bills paid
+for them, and disbursements out. It is a **second running balance, distinct from
+and downstream of the tenant balance** (the tenant pays rent → the property's owner
+ledger is credited, net of fees). Keyed **by property** — an owner statement
+outlives any single tenancy — it is genuinely stateful and earns **its own
+aggregate**. **Parked**: the concrete form of §1's out-of-scope *owner statements /
+disbursement / trust-account* and §10's *Accounts → double-entry* goal; built when
+billing/fees are tackled (ADR 0008).
+
+## Tenant · joint tenants
+
+The **party or parties** on the lease. A tenancy may have **several co-tenants**
+(NSW residential leases are routinely **joint & several**), so a tenancy's
+**tenants** are a **list of names**. Names are **PII kept out of the immutable log**
+(ADR 0008): they live in the **Directory** (below), keyed by `tenancy_id`, and are
+resolved for display — the log carries only the non-PII `property_ref`. Distinct from
+the **tenant balance**, which is the tenancy's rent-ledger position (the *Rental
+ledger* above).
+
+## Directory
+
+A **disposable, non-event-sourced read model** (`Latchkey.Simulation.Directory`, in
+the **Simulation** Ash domain) mapping `tenancy_id →` the tenant **names** and
+**property address** for display. It is the home for identity **PII**, deliberately
+**outside the append-only log** (ADR 0008): regenerable, erasable, never part of the
+evidence chain. The inspector renders identity by merging a Directory row with the
+tenancy's `Arrears` row in Elixir — no PII off the raw log, no cross-schema join.
+
 ## Timeline
 
 The **feature under design (issue #5)**: a chronological, event-oriented view of

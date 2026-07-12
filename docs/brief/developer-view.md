@@ -111,13 +111,26 @@ shape, end to end:
 
 **Where scope stops (and why there):**
 
-1. **Read-only. No issuing commands from the view.** Purpose is *showing* ES,
-   not operating it. The scrubber's replay delivers the "watch state evolve"
-   payoff without a command-input UI, so read-only loses nothing.
-2. **Only contexts that actually emit events** (Tenancy & Arrears; Accounts stub
-   once #40 lands). The "named-only" contexts (Maintenance, Inspections,
-   Compliance, Leasing, BD) belong on the **Mermaid strategic map in the docs**,
-   never rendered as empty boxes in the live inspector.
+1. **Read-only for v1 and for the public view.** Purpose is *showing* ES, not
+   operating it; the scrubber's replay delivers the "watch state evolve" payoff
+   without a command-input UI. *Amended during `grill-spec`
+   (docs/spec/developer-view.md, B4):* a later **admin-write follow-on slice**
+   may let an authenticated admin **issue existing commands to append events**
+   (drive the sim / author history) — read-only stays the default for
+   unauthenticated/non-admin users. **Update/delete of events is never in scope
+   for anyone** — immutability is universal (cut #3), so "managing" a bad event
+   means appending a compensating one, not editing the log.
+2. **Only contexts that actually emit events are inspectable** (Tenancy &
+   Arrears; Accounts stub once #40 lands). *Amended during `grill-spec`
+   (docs/spec/developer-view.md, B6):* once the view is framed as **living
+   documentation**, the strategic context map renders **in the view itself** as
+   an orientation landing — the emitting contexts **live and clickable**, the
+   "named-only" contexts (Maintenance, Inspections, Compliance, Leasing, BD) as
+   **static boxes clearly labelled "named only — not modelled."** The original
+   objection stands in spirit — named contexts must never *masquerade* as
+   inspectable — but honestly-labelled documentation boxes that orient the reader
+   are now in scope, and they replace the separate "Mermaid diagram in the docs"
+   this cut previously pointed to (the rendered in-view map is the map).
 3. **No mutation of the log — shown as a feature.** No editing/deleting events;
    immutability is a core ES lesson the view should make visible.
 4. **Operational projector replay is out.** The scrubber never rewinds or
