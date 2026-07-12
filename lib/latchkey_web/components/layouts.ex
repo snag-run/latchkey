@@ -73,6 +73,40 @@ defmodule LatchkeyWeb.Layouts do
   end
 
   @doc """
+  Full-bleed layout for the developer-view inspector (`LatchkeyWeb.InspectorLive`).
+
+  Unlike `app/1`'s centred, max-width column, the inspector is a full-height
+  workbench (nav rail · content · firehose), so this wrapper gives it the whole
+  viewport and its own slim top bar. Still routes flash through `flash_group/1`
+  (which must stay in this module).
+
+  ## Examples
+
+      <Layouts.inspector flash={@flash}>
+        ...
+      </Layouts.inspector>
+  """
+  attr :flash, :map, required: true, doc: "the map of flash messages"
+  slot :inner_block, required: true
+
+  def inspector(assigns) do
+    ~H"""
+    <div class="flex flex-col h-screen overflow-hidden bg-base-100 text-base-content">
+      <header class="flex items-center gap-3 h-12 shrink-0 px-4 border-b border-base-300 bg-base-200">
+        <a href={~p"/inspector"} class="font-semibold tracking-tight">/inspector</a>
+        <span class="text-base-content/50 text-sm">workbench</span>
+        <span class="ml-auto">
+          <.theme_toggle />
+        </span>
+      </header>
+      {render_slot(@inner_block)}
+    </div>
+
+    <.flash_group flash={@flash} />
+    """
+  end
+
+  @doc """
   Shows the flash group with standard titles and content.
 
   ## Examples
