@@ -227,6 +227,76 @@ defmodule Latchkey.PropertyManagement.TenancyExitIntegrationTest do
     assert proj.balance_cents == 30_000
   end
 
+  test "an ex-tenant pays down arrears after Terminal — live balance drops, snapshot frozen (P4)" do
+    tid = "exit-#{System.unique_integer([:positive])}"
+    ending_tenancy(tid)
+
+    # Settle with a $3,000 debt (six weeks booked to E, nothing paid).
+    assert :ok =
+             CommandedApp.dispatch(
+               %C.ReturnKeys{tenancy_id: tid, keys_on: ~D[2026-02-16]},
+               consistency: :strong
+             )
+
+    proj = projection(tid)
+    assert proj.status == :terminal
+    assert proj.final_balance_cents == 300_000
+    assert proj.balance_cents == 300_000
+
+    # Post-Terminal payment of $2,000 — accepted, reduces the live folded balance.
+    assert :ok =
+             CommandedApp.dispatch(
+               %C.RecordPayment{
+                 tenancy_id: tid,
+                 amount_cents: 200_000,
+                 received_on: ~D[2026-03-01],
+                 source_payment_id: "post-#{tid}"
+               },
+               consistency: :strong
+             )
+
+    proj = projection(tid)
+    # Still Terminal (no reopening, no new accrual); live balance drops to $1,000 while
+    # the frozen settlement snapshot stays at the $3,000 owed on the keys-return date.
+    assert proj.status == :terminal
+    assert proj.balance_cents == 100_000
+    assert proj.final_balance_cents == 300_000
+
+    # Re-delivering the same source_payment_id is an idempotent no-op (P1).
+    assert :ok =
+             CommandedApp.dispatch(
+               %C.RecordPayment{
+                 tenancy_id: tid,
+                 amount_cents: 200_000,
+                 received_on: ~D[2026-03-01],
+                 source_payment_id: "post-#{tid}"
+               },
+               consistency: :strong
+             )
+
+    proj = projection(tid)
+    assert proj.balance_cents == 100_000
+    assert proj.final_balance_cents == 300_000
+
+    # A further payment that overpays the residual drives the balance negative (credit),
+    # without error — the snapshot is still untouched.
+    assert :ok =
+             CommandedApp.dispatch(
+               %C.RecordPayment{
+                 tenancy_id: tid,
+                 amount_cents: 200_000,
+                 received_on: ~D[2026-03-08],
+                 source_payment_id: "post2-#{tid}"
+               },
+               consistency: :strong
+             )
+
+    proj = projection(tid)
+    assert proj.status == :terminal
+    assert proj.balance_cents == -100_000
+    assert proj.final_balance_cents == 300_000
+  end
+
   test "keys-return is refused on a live tenancy that has no effective end date" do
     tid = "exit-#{System.unique_integer([:positive])}"
 

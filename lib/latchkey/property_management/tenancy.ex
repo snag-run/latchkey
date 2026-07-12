@@ -238,14 +238,23 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   # L2 — a tenancy commences at most once.
   def decide_commence(%State{}, _cmd), do: {:error, :already_commenced}
 
-  def decide_payment(%State{status: status}, _cmd) when status not in [:active, :ending],
-    do: {:error, :not_active}
+  # Payment *application* is lifecycle-agnostic (spec §5 P4): once a tenancy has
+  # commenced, a `RentPaymentRecorded` is accepted through Ending and Terminal alike, so
+  # an ex-tenant can pay down a persisting debt after settlement (issue #33). Only a
+  # pre-commence (`:pending`) tenancy has no ledger to pay into.
+  def decide_payment(%State{status: :pending}, _cmd), do: {:error, :not_active}
 
   def decide_payment(%State{} = s, cmd) do
     if MapSet.member?(s.applied_payment_ids, cmd.source_payment_id) do
       {:ok, []}
     else
-      catch_up = catch_up_events(s, cmd.received_on, cmd.recorded_on)
+      # Accrual stays lifecycle-gated even though application isn't: a Terminal tenancy
+      # books no new `RentFellDue` (L3 keeps it final), so the payment reduces the live
+      # folded balance without reopening the tenancy or resuming the rent clock.
+      catch_up =
+        if s.status == :terminal,
+          do: [],
+          else: catch_up_events(s, cmd.received_on, cmd.recorded_on)
 
       payment = %{
         type: :rent_payment_recorded,

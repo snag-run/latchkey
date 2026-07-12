@@ -52,6 +52,22 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     apply_all(agg, events)
   end
 
+  # A **Terminal** tenancy: `ending_agg` then keys returned on E (02-16). Six whole
+  # weeks (01-05..02-09) booked to E, nothing paid → a persisting $3,000 debt and a
+  # frozen `final_balance_cents` snapshot of 300_000.
+  defp terminal_agg do
+    agg = ending_agg()
+
+    events =
+      Agg.execute(agg, %C.ReturnKeys{
+        tenancy_id: "t1",
+        keys_on: ~D[2026-02-16],
+        recorded_on: ~D[2026-02-16]
+      })
+
+    apply_all(agg, events)
+  end
+
   test "L7 gate refuses under 14 days behind" do
     assert {:error, {:not_in_arrears, 7}} =
              Agg.execute(commenced_agg(), %C.GiveTerminationNotice{
@@ -824,6 +840,80 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       assert folded.core.status == :terminal
       # 6 whole weeks + one overstay week = $3,500.
       assert folded.core.final_balance_cents == 350_000
+    end
+  end
+
+  describe "post-terminal payment — pay down arrears after Terminal (P4, issue #33)" do
+    test "accepts a payment on a Terminal tenancy and reduces the persisting balance" do
+      agg = terminal_agg()
+      assert agg.core.status == :terminal
+      assert Tenancy.balance_cents(agg.core) == 300_000
+
+      events =
+        Agg.execute(agg, %C.RecordPayment{
+          tenancy_id: "t1",
+          amount_cents: 100_000,
+          received_on: ~D[2026-03-01],
+          source_payment_id: "p-post",
+          recorded_on: ~D[2026-03-01]
+        })
+
+      # Just the payment — accrual does NOT resume on a Terminal tenancy (L3), so the
+      # payment books no new RentFellDue and cannot reopen the tenancy.
+      assert [%RentPaymentRecorded{amount_cents: 100_000}] = events
+      assert Enum.filter(events, &match?(%RentFellDue{}, &1)) == []
+
+      after_pay = apply_all(agg, events)
+      assert after_pay.core.status == :terminal
+      # The live folded balance drops; the frozen settlement snapshot is untouched.
+      assert Tenancy.balance_cents(after_pay.core) == 200_000
+      assert after_pay.core.final_balance_cents == 300_000
+    end
+
+    test "a re-delivered post-terminal payment is an idempotent no-op (P1)" do
+      agg = terminal_agg()
+
+      pay = fn ->
+        Agg.execute(agg, %C.RecordPayment{
+          tenancy_id: "t1",
+          amount_cents: 100_000,
+          received_on: ~D[2026-03-01],
+          source_payment_id: "p-post",
+          recorded_on: ~D[2026-03-01]
+        })
+      end
+
+      agg = apply_all(agg, pay.())
+      assert Tenancy.balance_cents(agg.core) == 200_000
+
+      # The same source_payment_id re-seen against the folded (already-applied) state.
+      assert [] =
+               Agg.execute(agg, %C.RecordPayment{
+                 tenancy_id: "t1",
+                 amount_cents: 100_000,
+                 received_on: ~D[2026-03-01],
+                 source_payment_id: "p-post",
+                 recorded_on: ~D[2026-03-01]
+               })
+    end
+
+    test "a post-terminal payment that overpays the debt drives the balance negative (credit)" do
+      agg = terminal_agg()
+
+      events =
+        Agg.execute(agg, %C.RecordPayment{
+          tenancy_id: "t1",
+          amount_cents: 400_000,
+          received_on: ~D[2026-03-01],
+          source_payment_id: "p-over",
+          recorded_on: ~D[2026-03-01]
+        })
+
+      after_pay = apply_all(agg, events)
+      # $4,000 paid against a $3,000 debt → −$1,000 (credit), no error, still Terminal.
+      assert Tenancy.balance_cents(after_pay.core) == -100_000
+      assert after_pay.core.status == :terminal
+      assert after_pay.core.final_balance_cents == 300_000
     end
   end
 
