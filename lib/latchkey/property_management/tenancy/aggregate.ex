@@ -76,7 +76,10 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
   # The single live wall-clock read-site: the domain stays pure and threads the
   # booking date; the edge sources it from the Clock when the caller omits it.
   defp booked_on(%{recorded_on: %Date{} = d}), do: d
-  defp booked_on(_c), do: Clock.today()
+  defp booked_on(%{recorded_on: nil}), do: Clock.today()
+
+  defp booked_on(c),
+    do: raise(ArgumentError, "invalid recorded_on: #{inspect(c.recorded_on)}")
 
   defp emit({:error, reason}, _tid), do: {:error, reason}
   defp emit({:ok, events}, tid), do: Enum.map(events, &to_struct(&1, tid))
