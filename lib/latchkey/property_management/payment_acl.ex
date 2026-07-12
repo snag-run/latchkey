@@ -60,6 +60,16 @@ defmodule Latchkey.PropertyManagement.PaymentAcl do
 
       :skip ->
         :ok
+
+      # A structurally-invalid date can never parse on retry, so it is non-retryable:
+      # log and advance the checkpoint rather than wedge the subscription forever.
+      {:error, :malformed_date} ->
+        Logger.warning(
+          "ACL-1 skipped payment #{inspect(event.payment_id)}: malformed date " <>
+            "(occurred_on=#{inspect(event.occurred_on)}, recorded_on=#{inspect(event.recorded_on)})"
+        )
+
+        :ok
     end
   end
 
@@ -68,42 +78,59 @@ defmodule Latchkey.PropertyManagement.PaymentAcl do
       :ok ->
         :ok
 
-      {:error, reason} ->
-        # A receipt PM can't record against (e.g. tenancy not commenced) is skipped,
-        # not retried — advancing the checkpoint keeps the subscription alive. The
-        # aggregate's own idempotency makes a re-seen payment a harmless no-op.
-        Logger.warning(
-          "ACL-1 skipped payment #{inspect(id)} for #{inspect(tid)}: #{inspect(reason)}"
-        )
+      # KNOWN, non-retryable business rejection: `decide_payment` returns `:not_active`
+      # when the target tenancy can't accept the payment (never commenced / already
+      # ended). Log and skip — advancing the checkpoint keeps the subscription alive,
+      # and the aggregate's own idempotency makes a re-seen payment a harmless no-op.
+      {:error, :not_active} ->
+        Logger.warning("ACL-1 skipped payment #{inspect(id)} for #{inspect(tid)}: :not_active")
 
         :ok
+
+      # Anything else (dispatch/consistency timeout, infrastructure failure) may be
+      # transient: return the error so Commanded does NOT advance the checkpoint and the
+      # handler retries — a dropped payment must never happen on a recoverable failure.
+      {:error, reason} = error ->
+        Logger.error(
+          "ACL-1 retrying payment #{inspect(id)} for #{inspect(tid)}: #{inspect(reason)}"
+        )
+
+        error
     end
   end
 
   # ── pure translation (Accounts fact → PM command) ─────────────────────────────
 
   @doc """
-  Translate a `PaymentReceived` fact into a `RecordPayment` command, or `:skip` when
-  the money must not cross the seam (an `UNKNOWN`/blank holder, or a holder that is
-  not a well-formed `tenancy_ref`).
+  Translate a `PaymentReceived` fact into a `RecordPayment` command, `:skip` when the
+  money must not cross the seam (an `UNKNOWN`/blank holder, or a holder that is not a
+  well-formed `tenancy_ref`), or `{:error, :malformed_date}` when a carried date is not
+  a `%Date{}` nor a parseable ISO-8601 string.
 
   Pure and total: it coerces the ISO-string dates the JSON serializer returns on
   replay back to `Date`, so the same call is deterministic live and on re-read.
+  `Accounts` does not validate those strings, so a structurally-invalid date is
+  reported (not raised) and handled as a non-retryable skip at the call site.
   """
-  @spec translate(PaymentReceived.t()) :: {:ok, RecordPayment.t()} | :skip
+  @spec translate(PaymentReceived.t()) ::
+          {:ok, RecordPayment.t()} | :skip | {:error, :malformed_date}
   def translate(%PaymentReceived{holder: holder} = event) do
     with true <- Accounts.known_holder?(holder),
-         {:ok, tenancy_id} <- ref_to_tenancy_id(holder) do
+         {:ok, tenancy_id} <- ref_to_tenancy_id(holder),
+         {:ok, received_on} <- to_date(event.occurred_on),
+         {:ok, recorded_on} <- to_date(event.recorded_on) do
       {:ok,
        %RecordPayment{
          tenancy_id: tenancy_id,
          amount_cents: event.amount_cents,
-         received_on: to_date(event.occurred_on),
-         recorded_on: to_date(event.recorded_on),
+         received_on: received_on,
+         recorded_on: recorded_on,
          source_payment_id: event.payment_id
        }}
     else
-      _ -> :skip
+      false -> :skip
+      :error -> :skip
+      {:error, :malformed_date} = err -> err
     end
   end
 
@@ -112,8 +139,17 @@ defmodule Latchkey.PropertyManagement.PaymentAcl do
   defp ref_to_tenancy_id(@ref_prefix <> id) when id != "", do: {:ok, id}
   defp ref_to_tenancy_id(_holder), do: :error
 
-  # JSON rehydration returns ISO strings for Dates on replay — coerce back.
-  defp to_date(%Date{} = d), do: d
-  defp to_date(s) when is_binary(s), do: Date.from_iso8601!(s)
-  defp to_date(nil), do: nil
+  # JSON rehydration returns ISO strings for Dates on replay — coerce back without
+  # raising, since `PaymentReceived` does not validate its date strings.
+  defp to_date(%Date{} = d), do: {:ok, d}
+  defp to_date(nil), do: {:ok, nil}
+
+  defp to_date(s) when is_binary(s) do
+    case Date.from_iso8601(s) do
+      {:ok, %Date{} = d} -> {:ok, d}
+      {:error, _reason} -> {:error, :malformed_date}
+    end
+  end
+
+  defp to_date(_other), do: {:error, :malformed_date}
 end

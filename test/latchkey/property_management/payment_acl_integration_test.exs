@@ -61,7 +61,7 @@ defmodule Latchkey.PropertyManagement.PaymentAclIntegrationTest do
 
     assert :ok = Accounts.append(payment, stream: accounts_stream)
 
-    booked = await_payment_recorded()
+    booked = await_source("acl-p1")
 
     assert booked.source_payment_id == "acl-p1"
     assert booked.amount_cents == 50_000
@@ -84,18 +84,26 @@ defmodule Latchkey.PropertyManagement.PaymentAclIntegrationTest do
       })
 
     assert :ok = Accounts.append(payment, stream: accounts_stream)
-    assert %RentPaymentRecorded{source_payment_id: "acl-dup"} = await_payment_recorded()
+    assert %RentPaymentRecorded{source_payment_id: "acl-dup"} = await_source("acl-dup")
 
     # Re-deliver the identical receipt; the aggregate's source_payment_id idempotency
-    # makes it a no-op — no further events are appended to the tenancy stream.
+    # makes it a no-op. Rather than race a `refute_receive` window, append a second,
+    # known-good receipt AFTER the duplicate and wait for ITS RentPaymentRecorded — the
+    # handler processes the stream in order, so once the sentinel is acked the duplicate
+    # has definitively been processed (and, being idempotent, booked nothing).
     assert :ok = Accounts.append(payment, stream: accounts_stream)
-    refute_receive {:events, [_ | _]}, 800
 
-    assert recorded_count(tenancy_stream) == 1
+    sentinel = tenancy_receipt(tid, "acl-dup-sentinel", 10_000)
+    assert :ok = Accounts.append(sentinel, stream: accounts_stream)
+    assert %RentPaymentRecorded{} = await_source("acl-dup-sentinel")
+
+    # Only the original acl-dup (once) and the sentinel are booked — the duplicate added
+    # nothing. A double-booked duplicate would push this to 3.
+    assert recorded_count(tenancy_stream) == 2
   end
 
   test "an UNKNOWN-held receipt never crosses the seam",
-       %{accounts_stream: accounts_stream, tenancy_stream: tenancy_stream} do
+       %{tid: tid, accounts_stream: accounts_stream, tenancy_stream: tenancy_stream} do
     payment =
       Accounts.payment_received(%{
         payment_id: "acl-unknown",
@@ -106,23 +114,42 @@ defmodule Latchkey.PropertyManagement.PaymentAclIntegrationTest do
 
     assert :ok = Accounts.append(payment, stream: accounts_stream)
 
-    # No RentPaymentRecorded is ever produced for suspense money.
-    refute_receive {:events, [_ | _]}, 800
-    assert recorded_count(tenancy_stream) == 0
+    # Append a known-good tenancy-attributed receipt AFTER the UNKNOWN one and wait for
+    # ITS RentPaymentRecorded. Because the handler processes the stream in order, once
+    # the sentinel is acked the UNKNOWN receipt has definitively been processed — so a
+    # count of exactly 1 proves suspense money never crossed the seam (a leak → 2).
+    sentinel = tenancy_receipt(tid, "acl-unknown-sentinel", 40_000)
+    assert :ok = Accounts.append(sentinel, stream: accounts_stream)
+    assert %RentPaymentRecorded{} = await_source("acl-unknown-sentinel")
+
+    assert recorded_count(tenancy_stream) == 1
   end
 
-  # Accumulate transient-subscription batches until a RentPaymentRecorded arrives.
-  defp await_payment_recorded(acc \\ []) do
+  # A known-good, tenancy-attributed receipt — used as a positive checkpoint the async
+  # handler must observably reach, so earlier events are provably processed-or-skipped.
+  defp tenancy_receipt(tid, payment_id, amount_cents) do
+    Accounts.payment_received(%{
+      payment_id: payment_id,
+      amount_cents: amount_cents,
+      received_on: ~D[2026-01-05],
+      recorded_on: ~D[2026-01-06],
+      holder: "tenancy-" <> tid
+    })
+  end
+
+  # Accumulate transient-subscription batches until the RentPaymentRecorded carrying the
+  # given source_payment_id arrives (its ack is the deterministic checkpoint we sync on).
+  defp await_source(source_id, acc \\ []) do
     receive do
       {:events, events} ->
         acc = acc ++ Enum.map(events, & &1.data)
 
-        case Enum.find(acc, &match?(%RentPaymentRecorded{}, &1)) do
+        case Enum.find(acc, &match?(%RentPaymentRecorded{source_payment_id: ^source_id}, &1)) do
           %RentPaymentRecorded{} = booked -> booked
-          nil -> await_payment_recorded(acc)
+          nil -> await_source(source_id, acc)
         end
     after
-      5000 -> flunk("timed out awaiting RentPaymentRecorded; saw: #{inspect(acc)}")
+      5000 -> flunk("timed out awaiting RentPaymentRecorded #{source_id}; saw: #{inspect(acc)}")
     end
   end
 
