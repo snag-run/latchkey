@@ -130,19 +130,17 @@ access-control list.
 > holder **plus** a fresh `PaymentReceived` on the right one. Correction by
 > compensation, never mutation — the same discipline as PM's adjustments.
 
-**Bitemporal envelope (ADR 0004, amended by [ADR 0005](adr/0005-simulation-and-time-model.md)
-and [ADR 0006](adr/0006-tenancy-timeline-read-model.md)).**
-Every event carries `occurred_on` (when the fact took place in the tenancy's world —
-rent's due date, a payment's received date, a notice's **served** date) and
+**Bitemporal envelope (ADR 0004, amended by [ADR 0005](adr/0005-simulation-and-time-model.md)).**
+Every event carries `occurred_on` (when the fact is true in the tenancy's world) and
 `recorded_on` (when it was booked — **wall-clock for live events, seeder-assigned for
 history**; distinct from the store's `created_at` metadata, which #16's hash preimage
-excludes). `occurred_on` is uniform and the primary sort key; the payload column lists
-each event's *domain-specific* fields. The two dates coincide for live events and
-**lag** only for accrual catch-up (`recorded_on ≥ occurred_on` — rent fell due in the
-past, the sweep just hadn't booked it: *lazy accrual, not backdating*). A notice's
-future **kick-in** date (a rent increase's `effective_from`, a termination's
-`termination_date`) is **payload, not the envelope** — see `CONTEXT.md` "three time
-axes" (`effective_date` was retired there because it conflated the two). **True
+excludes). The payload column lists each event's *domain-specific* fields; the envelope
+pair is uniform and omitted for brevity. Envelope **direction is per-event-kind**:
+**notices carry no forward-dated envelope** — `occurred_on` is the **served** date and
+equals `recorded_on` for live events; the future kick-in date (e.g. `elected_vacate_date`,
+`termination_date`, `new_vacate_date`) lives in the **payload**, not the envelope;
+**accrual catch-up ticks lag** (`recorded_on ≥ occurred_on` — the rent fell due in the
+past, the sweep just hadn't booked it: *lazy accrual, not backdating*); **true
 backdating** (`occurred_on < recorded_on` *and* correcting posted events) is rare and
 deferred (§6, §10).
 
