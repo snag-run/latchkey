@@ -68,6 +68,25 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     apply_all(agg, events)
   end
 
+  # A backdated termination notice (issue #71): served with effective end date
+  # E = 02-16 (a period boundary) but only entered on 03-02, so the command's `as_of`
+  # sits *past* E. Returns the aggregate with the notice applied and the emitted notice
+  # events, for the clamp tests to share.
+  defp backdated_notice_agg do
+    agg = commenced_agg()
+
+    notice =
+      Agg.execute(agg, %C.GiveTerminationNotice{
+        tenancy_id: "t1",
+        termination_date: ~D[2026-02-16],
+        given_on: ~D[2026-01-30],
+        as_of: ~D[2026-03-02],
+        recorded_on: ~D[2026-03-02]
+      })
+
+    {apply_all(agg, notice), notice}
+  end
+
   test "L7 gate refuses under 14 days behind" do
     assert {:error, {:not_in_arrears, 7}} =
              Agg.execute(commenced_agg(), %C.GiveTerminationNotice{
@@ -140,37 +159,19 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     # E-aware: it must not book whole periods past E, or the `[E, V)` overstay appended
     # at keys-return (issue #32) double-charges the hold-over span.
     test "the notice-time catch-up books no RentFellDue on or after the proposed end date E" do
-      events =
-        Agg.execute(commenced_agg(), %C.GiveTerminationNotice{
-          tenancy_id: "t1",
-          termination_date: ~D[2026-02-16],
-          given_on: ~D[2026-01-30],
-          as_of: ~D[2026-03-02],
-          recorded_on: ~D[2026-03-02]
-        })
+      {_agg, notice} = backdated_notice_agg()
 
-      charges = Enum.filter(events, &match?(%RentFellDue{}, &1))
+      charges = Enum.filter(notice, &match?(%RentFellDue{}, &1))
 
       # Six whole weeks 01-05..02-09 land before E; the sweep halts at E rather than
       # running on to `as_of` (which would book 02-16/02-23/03-02 past the end date).
       assert length(charges) == 6
       refute Enum.any?(charges, &(Date.compare(&1.occurred_on, ~D[2026-02-16]) != :lt))
-      assert %TerminationNoticeGiven{termination_date: ~D[2026-02-16]} = List.last(events)
+      assert %TerminationNoticeGiven{termination_date: ~D[2026-02-16]} = List.last(notice)
     end
 
     test "keys returned after a backdated E charge the [E, V) hold-over exactly once" do
-      agg = commenced_agg()
-
-      notice =
-        Agg.execute(agg, %C.GiveTerminationNotice{
-          tenancy_id: "t1",
-          termination_date: ~D[2026-02-16],
-          given_on: ~D[2026-01-30],
-          as_of: ~D[2026-03-02],
-          recorded_on: ~D[2026-03-02]
-        })
-
-      agg = apply_all(agg, notice)
+      {agg, notice} = backdated_notice_agg()
 
       exit_events =
         Agg.execute(agg, %C.ReturnKeys{
