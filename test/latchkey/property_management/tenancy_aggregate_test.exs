@@ -132,6 +132,72 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
              })
   end
 
+  describe "backdated termination notice — notice-time catch-up clamps at E (issue #71)" do
+    # A notice entered into the system late: served with effective end date E = 02-16
+    # (a period boundary), but only recorded on 03-02, so the command's `as_of` (03-02)
+    # sits *past* E. Backdating is a soft invariant — legitimate when proper notice was
+    # genuinely given — so the command is accepted, but the notice-time sweep must be
+    # E-aware: it must not book whole periods past E, or the `[E, V)` overstay appended
+    # at keys-return (issue #32) double-charges the hold-over span.
+    test "the notice-time catch-up books no RentFellDue on or after the proposed end date E" do
+      events =
+        Agg.execute(commenced_agg(), %C.GiveTerminationNotice{
+          tenancy_id: "t1",
+          termination_date: ~D[2026-02-16],
+          given_on: ~D[2026-01-30],
+          as_of: ~D[2026-03-02],
+          recorded_on: ~D[2026-03-02]
+        })
+
+      charges = Enum.filter(events, &match?(%RentFellDue{}, &1))
+
+      # Six whole weeks 01-05..02-09 land before E; the sweep halts at E rather than
+      # running on to `as_of` (which would book 02-16/02-23/03-02 past the end date).
+      assert length(charges) == 6
+      refute Enum.any?(charges, &(Date.compare(&1.occurred_on, ~D[2026-02-16]) != :lt))
+      assert %TerminationNoticeGiven{termination_date: ~D[2026-02-16]} = List.last(events)
+    end
+
+    test "keys returned after a backdated E charge the [E, V) hold-over exactly once" do
+      agg = commenced_agg()
+
+      notice =
+        Agg.execute(agg, %C.GiveTerminationNotice{
+          tenancy_id: "t1",
+          termination_date: ~D[2026-02-16],
+          given_on: ~D[2026-01-30],
+          as_of: ~D[2026-03-02],
+          recorded_on: ~D[2026-03-02]
+        })
+
+      agg = apply_all(agg, notice)
+
+      exit_events =
+        Agg.execute(agg, %C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-03-02],
+          recorded_on: ~D[2026-03-02]
+        })
+
+      charges = Enum.filter(notice ++ exit_events, &match?(%RentFellDue{}, &1))
+
+      # Exactly one charge lands on/after E: the single `[E, V)` overstay. Without the
+      # clamp the notice-time sweep also booked whole weeks 02-16/02-23/03-02 here.
+      on_or_after_e =
+        Enum.filter(charges, &(Date.compare(&1.occurred_on, ~D[2026-02-16]) != :lt))
+
+      assert [overstay] = on_or_after_e
+      assert overstay.period_from == ~D[2026-02-16]
+      assert overstay.period_to == ~D[2026-03-02]
+      # [02-16, 03-02) = 14 days at the $500/wk daily rate = $1,000.
+      assert overstay.amount_cents == 100_000
+
+      # Total fold: 6 weeks to E ($3,000) + one $1,000 overstay − $0 paid = $4,000.
+      settled = Enum.find(exit_events, &match?(%TenancySettled{}, &1))
+      assert settled.final_balance_cents == 400_000
+    end
+  end
+
   describe "bitemporal envelope {occurred_on, recorded_on}" do
     test "commence stamps occurred_on = first due date and the provided recorded_on" do
       [event] =
