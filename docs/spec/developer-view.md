@@ -225,12 +225,18 @@ asymmetry rather than force-fitting:
   environments including prod**, *not* behind the `dev_routes` compile flag (which
   is off in prod and would make the portfolio artifact unreachable). Distinct path
   from the compile-gated `/dev` LiveDashboard scope.
-- **No auth for v1.** Justification (on the record for future reviewers): data is
-  **synthetic** (no real PII), the view is **read-only, no commands, no mutation**
-  (D1) → no meaningful attack surface; and there is **no user/auth system** in the
-  codebase to lean on. It renders **domain-event data only — never runtime/system
-  internals** (those stay behind LiveDashboard's gate), so "public" doesn't leak
-  the host.
+- **No auth for v1.** Justification (on the record for future reviewers): the view is
+  **read-only, no commands, no mutation** (D1) → no meaningful attack surface; and
+  there is **no user/auth system** in the codebase to lean on. It renders
+  **domain-event data only — never runtime/system internals** (those stay behind
+  LiveDashboard's gate), so "public" doesn't leak the host.
+- **No PII on the log — an enforced control, not a synthetic-data assumption (ADR 0008).**
+  Identity PII (tenant names, property address) is **never written to the event log**;
+  log identity fields are a **non-PII allowlist** (`property_ref`, `tenancy_id`), and
+  human labels are resolved at render from the disposable `Simulation.Directory` read
+  model. The inspector can therefore render **every stored event** publicly without
+  exposing names or addresses — the safeguard is the write-side invariant, not the
+  assumption that the data happens to be synthetic.
 - **Immutability is universal:** no update/delete of events, ever, for anyone —
   corrections are compensating appends (cut #3 intact).
 - **Admin-write is a follow-on slice, not v1.** A later slice may let an

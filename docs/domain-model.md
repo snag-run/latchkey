@@ -105,7 +105,7 @@ access-control list.
 
 | Event | Payload | Notes |
 |---|---|---|
-| `TenancyCommenced` | `tenancy_id, property_ref, tenants, rent_amount, cycle, first_due_date` | Establishes the tenancy: which **property** (`property_ref`, stable across re-lets), the **joint tenants** (list of names, frozen — evidence-grade), and initial rent terms. Commencement date is the envelope `occurred_on`. See ADR 0008 |
+| `TenancyCommenced` | `tenancy_id, property_ref, rent_amount, cycle, first_due_date` | Establishes the tenancy: which **property** (`property_ref`, non-PII, stable across re-lets) and initial rent terms. **Tenant names live off the log** in the `Directory` read model (ADR 0008), never in this payload. Commencement date is the envelope `occurred_on`. See ADR 0008 |
 | `RentScheduleChanged` | `tenancy_id, effective_from, new_amount, new_cycle?` | Mid-lease increase; **may be backdated** (see §6) |
 | `RentFellDue` | `tenancy_id, due_date, amount, period_from, period_to` | Step tick, via lazy catch-up; **carries the amount** |
 | `RentPaymentRecorded` | `tenancy_id, amount, received_on, source_payment_id` | **Output of ACL-1**; signed (reversal ⇒ negative) |
@@ -130,17 +130,21 @@ access-control list.
 > holder **plus** a fresh `PaymentReceived` on the right one. Correction by
 > compensation, never mutation — the same discipline as PM's adjustments.
 
-**Bitemporal envelope (ADR 0004, amended by [ADR 0005](adr/0005-simulation-and-time-model.md)).**
-Every event carries `effective_date` (when the fact is true in the tenancy's world)
-and `recorded_on` (when it was booked — **wall-clock for live events, seeder-assigned
-for history**; distinct from the store's `created_at` metadata, which #16's hash
-preimage excludes). The payload column lists each event's *domain-specific* fields;
-the envelope pair is uniform and omitted for brevity. Envelope **direction is
-per-event-kind**: **notices forward-date** (`effective ≥ recorded` — a pre-entered
-notice kicks in later); **accrual catch-up ticks lag** (`recorded ≥ effective` — the
-rent fell due in the past, the sweep just hadn't booked it: *lazy accrual, not
-backdating*); **true backdating** (`effective < recorded` *and* correcting posted
-events) is rare and deferred (§6, §10).
+**Bitemporal envelope (ADR 0004, amended by [ADR 0005](adr/0005-simulation-and-time-model.md)
+and [ADR 0006](adr/0006-tenancy-timeline-read-model.md)).**
+Every event carries `occurred_on` (when the fact took place in the tenancy's world —
+rent's due date, a payment's received date, a notice's **served** date) and
+`recorded_on` (when it was booked — **wall-clock for live events, seeder-assigned for
+history**; distinct from the store's `created_at` metadata, which #16's hash preimage
+excludes). `occurred_on` is uniform and the primary sort key; the payload column lists
+each event's *domain-specific* fields. The two dates coincide for live events and
+**lag** only for accrual catch-up (`recorded_on ≥ occurred_on` — rent fell due in the
+past, the sweep just hadn't booked it: *lazy accrual, not backdating*). A notice's
+future **kick-in** date (a rent increase's `effective_from`, a termination's
+`termination_date`) is **payload, not the envelope** — see `CONTEXT.md` "three time
+axes" (`effective_date` was retired there because it conflated the two). **True
+backdating** (`occurred_on < recorded_on` *and* correcting posted events) is rare and
+deferred (§6, §10).
 
 ---
 
@@ -460,7 +464,7 @@ values. It's where small domain rules live, keeping the aggregate clean.
   terminal marker, signed `final_balance_cents`); overstay is a crystallised
   `RentFellDue`; refund declared-not-disbursed. `RentChargeAdjusted` retired as a delta
   and **deferred** to the rent-increase slice as a reverse+repost correction.
-  Bitemporal `{effective_date, recorded_on}` envelope adopted on events.
+  Bitemporal `{occurred_on, recorded_on}` envelope adopted on events.
 - **Repayment plan: conditional suspension vs one-shot void (§5 L8, §4 SM).** The
   general guarantee holds only *while the tenant keeps complying*; a breach revives the
   termination. Should a plan introduce a **plan-active sub-state + `RepaymentPlanBreached`**
@@ -504,8 +508,9 @@ values. It's where small domain rules live, keeping the aggregate clean.
   aggregate-worthy form of §1's out-of-scope *owner statements / disbursement /
   trust-account internals* and the *Accounts → double-entry* goal above. A thin
   **`Property`** identity (address + owner, no money invariant) lands now with
-  `property_ref` + a `tenants` list on `TenancyCommenced`; the stateful
-  `Property Balance` aggregate is built when billing/fees are tackled.
+  `property_ref` on `TenancyCommenced` (tenant names live off-log in the `Directory`
+  read model); the stateful `Property Balance` aggregate is built when billing/fees
+  are tackled.
 - **PII & erasure posture — deliberately unsolved.** Names/addresses recorded in
   events land in the **immutable log** by definition — the classic ES ↔ "right to be
   forgotten" conflict. Not solving it here (synthetic data, learning sim), but the
@@ -516,9 +521,11 @@ values. It's where small domain rules live, keeping the aggregate clean.
   evidence** (frozen at event time, like a folded fact) from **incidental** PII; the
   escape hatch for the latter, if ever needed, is **crypto-shredding** (per-subject key
   in a mutable store, destroy the key to render ciphertext-in-events unreadable) rather
-  than mutating the log. Reference-only events (id in log, PII in a mutable table) is
-  the other option but sacrifices event self-containment. **Out of scope** — noted, not
-  designed.
+  than mutating the log. **For tenant identity, ADR 0008 adopts exactly this
+  reference-only posture** — id / non-PII `property_ref` in the log, names + address in
+  the disposable `Directory` table — trading event self-containment for identity to
+  keep PII out of the immutable, public log. Broader crypto-shredding / erasure of
+  incidental PII remains **out of scope** — noted, not designed.
 - **UNKNOWN / suspense matching (secondary/tertiary goal).** A read model + workflow
   in **Accounts** to hold and cross-reference unmatched receipts, then reallocate
   (reverse + fresh receive). Suspense is an **Accounts** entity, *never* a PM

@@ -14,15 +14,24 @@ toward ~100 tenancies, where a property recurs across successive tenancies.
 
 ## Decisions
 
-### 1. Identity by reference; human labels captured at commencement
+### 1. Identity by reference; PII in a disposable directory, not the log
 
-`TenancyCommenced` carries **`property_ref`** (a stable property id that recurs
-across re-lets) and **`tenants`** — a **list of names** (NSW leases are routinely
-joint & several), frozen at commencement (evidence-grade, per §10's
-PII-is-evidence posture). Identity is captured **once**, **folded** into `Tenancy`
-state, and exposed via a read model for cross-stream display (the firehose) —
-**not** stamped on every `RentFellDue` / `RentPaymentRecorded`, which stay on the
-`tenancy-<id>` stream and inherit identity by fold.
+`TenancyCommenced` carries **`property_ref`** — a **non-PII** stable property id
+that recurs across re-lets — and nothing else identity-bearing. Human labels
+(**tenant names** and the **property address**) are **kept out of the immutable,
+public log**: they live in a disposable, **non-event-sourced** read model,
+`Latchkey.Simulation.Directory` (keyed by `tenancy_id`), resolved into the inspector
+at render by an in-Elixir merge with the `Arrears` row — no PII off the raw log, no
+cross-schema join. This is the "reference-only events" option §10 flagged: id/ref in
+the log, PII in a mutable table.
+
+**Invariant:** no PII is ever written to the event log; log identity fields are a
+**non-PII allowlist** (`property_ref`, `tenancy_id`). This is an *enforced control*,
+not a synthetic-data assumption — the public `/inspector` (D6) can render every
+stored event without exposing names or addresses. `property_ref` stays in the log
+because it is non-PII and **structural**: it makes "these successive tenancies are
+the same premises" a first-class log fact (needed as the board scales to ~100
+tenancies), rather than a guess reconstructed from a disposable table.
 
 ### 2. Property is a thin identity, not a money aggregate
 
@@ -45,17 +54,19 @@ the thin Property and `property_ref` don't foreclose it.
 
 ## Consequences
 
-- **Event-contract change:** `TenancyCommenced` gains `property_ref` (reconciling
-  doc↔code) and `tenants`; the seeder and the `Tenancy` fold that surfaces identity
-  follow. A small **tenancy-identity slice** lands before inspector #81 can display
-  property/tenant.
-- **`CONTEXT.md`** gains *Property · Property Balance* and *Tenant · joint tenants*.
-- **`domain-model.md`** §3 (`TenancyCommenced` payload), §4 (independence-finding
-  amendment), and §10 (Property Balance parked) updated.
-- Address resolves via the thin **Property** (single source, itself in the
-  log/reference), so it is **not** duplicated onto every event; a belt-and-braces
-  frozen `property_address` snapshot on `TenancyCommenced` is an easy later add if
-  an evidence need names it.
+- **Event-contract change:** `TenancyCommenced` gains **`property_ref`** only
+  (reconciling doc↔code) — **not** tenant names. The seeder sets it; no PII enters
+  the log.
+- **New read model:** `Latchkey.Simulation.Directory` — a **second Ash domain**
+  (`Simulation`, alongside `PropertyManagement`) holding `{tenancy_id → tenant names,
+  property address}`. **Disposable, non-event-sourced, regenerable**: the PII home.
+  The inspector merges it with the `Arrears` row in Elixir at render (#81).
+- **`CONTEXT.md`** gains *Property · Property Balance*, *Tenant · joint tenants*, and
+  *Directory*.
+- **`domain-model.md`** §3 (`TenancyCommenced` payload = `property_ref`), §4
+  (independence-finding amendment), and §10 (reference-only PII posture adopted for
+  tenant identity; Property Balance parked) updated.
+- **Spec D6** records the no-PII-on-log invariant as the public-route control.
 
 ## Considered options
 
@@ -65,6 +76,10 @@ the thin Property and `property_ref` don't foreclose it.
 - *The owner balance grows the `Tenancy` or `Property` aggregate* — rejected: it's
   a distinct, property-keyed balance that spans tenancies (a management-engagement
   concern, not one tenant's rent and not the bricks), so it earns its own aggregate.
+- *Tenant names frozen on the event (evidence-grade)* — rejected: the log is
+  immutable **and** public (D6), so real-looking PII in it is a liability that can't
+  be undone; for synthetic data the disposable Directory gives display identity
+  without that cost, and `property_ref` (non-PII) still carries the structural
+  identity that recurs across re-lets.
 - *Tenant as a `Party` entity* — deferred: over-modeling for a learning sim with no
-  cross-tenancy party invariant; names frozen on the event are evidence-grade and
-  enough.
+  cross-tenancy party invariant.

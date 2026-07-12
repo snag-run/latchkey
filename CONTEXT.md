@@ -20,7 +20,8 @@ the **owner** it is managed for). It carries **no money invariant of its own**:
 tenancies are independent and re-letting can legitimately double-charge overlapping
 days (`domain-model.md` §4), so a Property imposes no cross-tenancy consistency. A
 tenancy names its property by a stable **`property_ref`** that **recurs across
-successive tenancies** of the same premises.
+successive tenancies** of the same premises — a **non-PII** key carried on
+`TenancyCommenced` (ADR 0008).
 
 A **Property Balance** is the **owner-side running balance** for a property: rent
 **collected** on the owner's behalf, **less** management fees, invoices/bills paid
@@ -36,9 +37,20 @@ billing/fees are tackled (ADR 0008).
 
 The **party or parties** on the lease. A tenancy may have **several co-tenants**
 (NSW residential leases are routinely **joint & several**), so a tenancy's
-**tenants** are a **list of names**, captured — frozen, evidence-grade — when the
-tenancy commences (ADR 0008). Distinct from the **tenant balance**, which is the
-tenancy's rent-ledger position (the *Rental ledger* above).
+**tenants** are a **list of names**. Names are **PII kept out of the immutable log**
+(ADR 0008): they live in the **Directory** (below), keyed by `tenancy_id`, and are
+resolved for display — the log carries only the non-PII `property_ref`. Distinct from
+the **tenant balance**, which is the tenancy's rent-ledger position (the *Rental
+ledger* above).
+
+## Directory
+
+A **disposable, non-event-sourced read model** (`Latchkey.Simulation.Directory`, in
+the **Simulation** Ash domain) mapping `tenancy_id →` the tenant **names** and
+**property address** for display. It is the home for identity **PII**, deliberately
+**outside the append-only log** (ADR 0008): regenerable, erasable, never part of the
+evidence chain. The inspector renders identity by merging a Directory row with the
+tenancy's `Arrears` row in Elixir — no PII off the raw log, no cross-schema join.
 
 ## Timeline
 
