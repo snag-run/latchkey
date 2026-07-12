@@ -7,6 +7,12 @@
 # General application configuration
 import Config
 
+config :latchkey, Oban,
+  engine: Oban.Engines.Basic,
+  notifier: Oban.Notifiers.Postgres,
+  queues: [default: 10],
+  repo: Latchkey.Repo
+
 # Event-sourcing foundation (ADR 0003): raw Commanded + its Postgres EventStore.
 config :latchkey, ash_domains: [Latchkey.PropertyManagement]
 config :latchkey, event_stores: [Latchkey.EventStore]
