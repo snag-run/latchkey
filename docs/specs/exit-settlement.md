@@ -29,10 +29,12 @@ Complete the lifecycle to `Terminal` and record the exit reckoning, per ADR 0004
 - Live accrual clamps to `E`: full rent periods accrue until a full period no longer fits
   before `E`, then the boundary period is **pro-rated daily to `E`** (lazy, forward —
   never charged whole and clawed back).
-- **Overstay** (`V ≥ E` — keys returned on/after `E`) is reckoned at `V`: the exit
+- **Overstay** (`V > E` — keys returned after `E`) is reckoned at `V`: the exit
   **appends** the `[E, V)` span as a single crystallised `RentFellDue` at the daily rate.
   This is a **forward append** — reckoning at `V` never rewrites already-booked periods.
-- **Early leave** (`V ≤ E` — legitimate early hand-back) over-charges periods booked out
+- **Same-day** (`V = E`) — the `[E, V)` span is empty: **no** overstay charge and **no**
+  correction; the boundary period pro-rates exactly to `E = V`.
+- **Early leave** (`V < E` — legitimate early hand-back) over-charges periods booked out
   to `E` and needs a **correcting entry** (visible reversal, never a silent un-charge) —
   deferred to **#64**, out of scope here.
 - **`TenancySettled`** records the reckoning — a signed `final_balance_cents` (negative =
@@ -136,8 +138,9 @@ Complete the lifecycle to `Terminal` and record the exit reckoning, per ADR 0004
   daily rate (`period_from = E` **inclusive**, `period_to = V` **exclusive**), computed at
   keys-return. Linear ramp ⇒ one derived figure, not per-day events. This is a **forward
   append** of the `[E, V)` delta on top of whatever live accrual already booked to `E` —
-  reckoning at `V` never rewrites or re-pro-rates an already-booked period. The mirror case
-  `V ≤ E` (over-booked periods needing a correcting entry) is **#64**, not this slice.
+  reckoning at `V` never rewrites or re-pro-rates an already-booked period. `V = E` is the
+  degenerate same-day case (empty `[E, V)` ⇒ no overstay charge). The mirror case `V < E`
+  (over-booked periods needing a correcting entry) is **#64**, not this slice.
 - **Worked boundary examples** (weekly $700, period_length 7, so daily = $100):
   - *Keys returned on E (same-day):* boundary period `[.., E)` charges the days up to E;
     overstay span is `[E, E)` = **empty** ⇒ no overstay `RentFellDue`. E is counted once,

@@ -57,9 +57,12 @@ be reckoned to a keys date that hasn't happened yet).
 
 The two diverge, and which side they fall on is the whole shape of the exit:
 
-- **Overstay (`V ≥ E`)** — the tenant holds over; possession recovered *after*
+- **Overstay (`V > E`)** — the tenant holds over; possession recovered *after*
   `E`. The exit **appends** the extra `[E, V)` accrual (issue #32).
-- **Early leave (`V ≤ E`)** — legitimate early hand-back (sale, old no-grounds);
+- **Same-day (`V = E`)** — possession recovered exactly on `E`; the `[E, V)` span
+  is empty, so **neither** an overstay charge nor an early-leave correction — the
+  boundary period simply pro-rates to `E = V`.
+- **Early leave (`V < E`)** — legitimate early hand-back (sale, old no-grounds);
   possession recovered *before* `E`, so periods booked out to `E` were
   **over-charged** and need a **correcting entry** — a visible reversal, never a
   silent un-charge (issue #64).
