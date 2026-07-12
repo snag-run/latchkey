@@ -178,6 +178,55 @@ defmodule Latchkey.PropertyManagement.TenancyExitIntegrationTest do
     assert proj.balance_cents == -28_571
   end
 
+  test "an overstay past E appends one overstay charge and settles at the higher balance" do
+    tid = "exit-#{System.unique_integer([:positive])}"
+    ending_tenancy(tid)
+
+    # E = 02-16; keys returned a full week late (02-23) → one $500 overstay week appended.
+    assert :ok =
+             CommandedApp.dispatch(
+               %C.ReturnKeys{tenancy_id: tid, keys_on: ~D[2026-02-23]},
+               consistency: :strong
+             )
+
+    proj = projection(tid)
+    assert proj.status == :terminal
+    # Six weeks booked to E ($3,000) + one $500 overstay week − nothing paid = $3,500.
+    assert proj.final_balance_cents == 350_000
+    assert proj.balance_cents == 350_000
+    assert proj.oldest_unpaid_due_date == ~D[2026-01-05]
+  end
+
+  test "an overstaying tenant with credit has it consumed first before the residual persists" do
+    tid = "exit-#{System.unique_integer([:positive])}"
+    ending_tenancy(tid)
+
+    # Prepay $3,200 — a $200 credit over the $3,000 owed at E.
+    assert :ok =
+             CommandedApp.dispatch(
+               %C.RecordPayment{
+                 tenancy_id: tid,
+                 amount_cents: 320_000,
+                 received_on: ~D[2026-02-10],
+                 source_payment_id: "p-#{tid}"
+               },
+               consistency: :strong
+             )
+
+    # Overstay a full week: the $500 overstay consumes the $200 credit first.
+    assert :ok =
+             CommandedApp.dispatch(
+               %C.ReturnKeys{tenancy_id: tid, keys_on: ~D[2026-02-23]},
+               consistency: :strong
+             )
+
+    proj = projection(tid)
+    assert proj.status == :terminal
+    # (6 × $500 + $500 overstay) − $3,200 = $300 residual debt (credit absorbed).
+    assert proj.final_balance_cents == 30_000
+    assert proj.balance_cents == 30_000
+  end
+
   test "keys-return is refused on a live tenancy that has no effective end date" do
     tid = "exit-#{System.unique_integer([:positive])}"
 

@@ -16,7 +16,8 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   L7 (arrears gate), L9 (keys-return needs an effective end date, reaches Terminal,
   fires at most once). Exit catch-up books whole periods until a full period no longer
   fits before the effective end date E, then pro-rates the boundary period daily to E
-  (issue #31); overstay past E is a later slice (#32, ADR 0004). See
+  (issue #31); an overstay (`V > E`) appends the `[E, V)` hold-over span as one
+  crystallised daily-rate `RentFellDue` at keys-return (issue #32, ADR 0004). See
   `docs/adr/0003-es-foundation-bakeoff.md`.
   """
   alias Latchkey.PropertyManagement.Tenancy.State
@@ -127,8 +128,9 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   tenancy — `[period_from, E)` — never the whole week. When `E` is itself a period
   boundary (`E == period_from`) nothing is pro-rated: whole periods run right up to `E`
   and the period starting *on* `E` is post-exit (the #30 boundary-aligned case). No
-  charge fires on or after `E`; the post-`E` span is the overstay reckoning (issue #32),
-  out of this slice. With no `E` (an active tenancy) every due period is charged whole.
+  step charge fires on or after `E`; the post-`E` span is the overstay reckoning, which
+  `decide_return_keys` appends as a single `[E, V)` charge (issue #32) — not on this
+  sweep. With no `E` (an active tenancy) every due period is charged whole.
   """
   def catch_up_events(%State{status: :pending}, _as_of, _recorded_on), do: []
 
@@ -354,28 +356,38 @@ defmodule Latchkey.PropertyManagement.Tenancy do
 
   def decide_return_keys(%State{effective_end_date: %Date{} = e} = s, cmd) do
     if Date.compare(cmd.keys_on, e) == :lt do
-      # L9 — keys returned *before* E would terminalize the tenancy prematurely; the
-      # tenant is still on the hook through E. A valid return is dated on or after E
-      # (the after-E overstay reckoning is a later slice, #32).
+      # L9 — keys returned *before* E (early leave `V < E`) over-charges periods booked
+      # out to E and needs a **correcting entry** — deferred to #64. Refuse it here so
+      # this slice never silently un-charges: a valid return is dated on or after E.
       {:error, :keys_returned_before_end_date}
     else
-      # Catch rent up to — but not past — E: the end-date-aware sweep books whole periods
-      # until a full period no longer fits before E, then a single pro-rated boundary
-      # charge covering `[period_from, E)` (issue #31). E belongs to the post-exit span
-      # (half-open `[from, to)`, ADR 0004 / spec), so no step `RentFellDue` lands on or
-      # after E. When E is a period boundary this reduces to whole periods only (the #30
-      # boundary-aligned case). A prior sweep/payment may already have booked the boundary
-      # pro-rated; `due_through` makes this idempotent.
+      # The exit is reckoned against the vacant-possession date `V` (= keys_on), not E.
+      # Two forward-append steps compose the ledger, in order (spec / ADR 0004 §2):
+      #
+      # 1. Catch rent up to — but not past — `min(V, E) = E` (V >= E here). The
+      #    end-date-aware sweep books whole periods until a full period no longer fits
+      #    before E, then a single pro-rated boundary charge covering `[period_from, E)`
+      #    (issue #31). E belongs to the post-exit span (half-open `[from, to)`), so no
+      #    step `RentFellDue` lands on or after E. A prior sweep/payment may already have
+      #    booked the boundary; `due_through` makes catch-up idempotent.
+      # 2. If the tenant held over (`V > E`), append the `[E, V)` overstay as a **single**
+      #    crystallised `RentFellDue` at the daily rate (linear ramp ⇒ one figure). This
+      #    is a forward append *on top of* whatever accrual already booked to E — it never
+      #    rewrites or re-pro-rates an already-booked period. `V = E` ⇒ empty span ⇒ no
+      #    charge. Any credit the tenant holds is consumed first automatically under
+      #    balance-as-truth (the fold nets it), so no special handling is needed.
       catch_up = catch_up_events(s, e, cmd.recorded_on)
-      s_now = Enum.reduce(catch_up, s, &evolve(&2, &1))
+      overstay = overstay_events(s, e, cmd.keys_on, cmd.recorded_on)
+      exit_charges = catch_up ++ overstay
+      s_now = Enum.reduce(exit_charges, s, &evolve(&2, &1))
 
-      # `final_balance_cents` is the fold snapshot after the boundary charges land
-      # (signed: negative = refund owed, positive = debt). Declared, not disbursed.
+      # `final_balance_cents` is the fold snapshot after the boundary + overstay charges
+      # land (signed: negative = refund owed, positive = debt). Declared, not disbursed.
       final = balance_cents(s_now)
 
       keys = %{
         type: :keys_returned,
-        # occurrence = the keys-return (possession-recovered) date.
+        # occurrence = the keys-return (possession-recovered) date `V`.
         occurred_on: cmd.keys_on,
         recorded_on: cmd.recorded_on
       }
@@ -387,7 +399,34 @@ defmodule Latchkey.PropertyManagement.Tenancy do
         final_balance_cents: final
       }
 
-      {:ok, catch_up ++ [keys, settled]}
+      {:ok, exit_charges ++ [keys, settled]}
+    end
+  end
+
+  # The overstay reckoning (issue #32): when possession is recovered *after* E (`V > E`),
+  # the `[E, V)` hold-over span is one crystallised `RentFellDue` at the daily rate —
+  # `round_half_up(period_rent × days ÷ period_length)`, `days = Date.diff(V, E)` (V
+  # exclusive), the same daily-rate maths as the boundary charge (#31). `period_from = E`
+  # inclusive, `period_to = V` exclusive, so V (the keys-return day, possession recovered)
+  # is not charged and E is counted once — in the overstay span, never the boundary period.
+  # `occurred_on = E` is the accrual/FIFO key. `V = E` ⇒ empty span ⇒ no event.
+  defp overstay_events(%State{} = s, %Date{} = e, %Date{} = v, recorded_on) do
+    if Date.compare(v, e) == :gt do
+      days = Date.diff(v, e)
+      period_length = Date.diff(Date.add(e, 7), e)
+
+      [
+        %{
+          type: :rent_fell_due,
+          occurred_on: e,
+          recorded_on: recorded_on,
+          amount_cents: round_half_up(s.rent_amount_cents * days, period_length),
+          period_from: e,
+          period_to: v
+        }
+      ]
+    else
+      []
     end
   end
 end
