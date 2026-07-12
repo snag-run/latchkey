@@ -40,6 +40,7 @@ defmodule Latchkey.Inspector.BroadcasterTest do
              CommandedApp.dispatch(
                %C.CommenceTenancy{
                  tenancy_id: tid,
+                 property_ref: "prop-" <> tid,
                  rent_amount_cents: 50_000,
                  cycle: :weekly,
                  first_due_date: ~D[2026-01-05]

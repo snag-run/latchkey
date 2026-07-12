@@ -216,15 +216,17 @@ defmodule Latchkey.PropertyManagement.Tenancy do
 
   # ── Decisions (execute) — {:ok, [event]} | {:error, reason} ──────────────────
 
-  def decide_commence(%State{status: :pending}, %{cycle: :weekly} = cmd) do
+  def decide_commence(%State{status: :pending}, %{cycle: :weekly, property_ref: ref} = cmd)
+      when is_binary(ref) and ref != "" do
     {:ok,
      [
        %{
          type: :tenancy_commenced,
          tenancy_id: cmd.tenancy_id,
          # Non-PII property id (ADR 0008) — log metadata for the read side; recurs
-         # across re-lets. Does not affect accrual or the aggregate invariants.
-         property_ref: Map.get(cmd, :property_ref),
+         # across re-lets. Does not affect accrual or the aggregate invariants, but is
+         # required so every tenancy is resolvable by the inspector/Directory.
+         property_ref: ref,
          # occurrence = commencement date (the first due date in this weekly slice).
          occurred_on: cmd.first_due_date,
          recorded_on: cmd.recorded_on,
@@ -234,6 +236,12 @@ defmodule Latchkey.PropertyManagement.Tenancy do
        }
      ]}
   end
+
+  # A weekly commence must carry a non-empty `property_ref` (the non-PII identity key,
+  # ADR 0008) — refuse one without it rather than write an event the read side can't
+  # resolve. Ordered before the cycle guard so the error names the real problem.
+  def decide_commence(%State{status: :pending}, %{cycle: :weekly}),
+    do: {:error, :missing_property_ref}
 
   # Slice supports weekly accrual only; refuse cycles we'd silently mischarge.
   def decide_commence(%State{status: :pending}, _cmd), do: {:error, :unsupported_cycle}

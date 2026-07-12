@@ -132,6 +132,16 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
              })
   end
 
+  test "refuses a weekly commence missing the non-PII property_ref (ADR 0008)" do
+    assert {:error, :missing_property_ref} =
+             Agg.execute(%Agg{}, %C.CommenceTenancy{
+               tenancy_id: "t1",
+               rent_amount_cents: 50_000,
+               cycle: :weekly,
+               first_due_date: ~D[2026-01-05]
+             })
+  end
+
   test "refuses an unsupported (non-weekly) cycle" do
     assert {:error, :unsupported_cycle} =
              Agg.execute(%Agg{}, %C.CommenceTenancy{
