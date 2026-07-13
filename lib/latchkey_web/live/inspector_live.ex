@@ -27,19 +27,19 @@ defmodule LatchkeyWeb.InspectorLive do
   import LatchkeyWeb.Inspector.EventLog
   import LatchkeyWeb.Inspector.Firehose
   import LatchkeyWeb.Inspector.LedgerPane
+  import LatchkeyWeb.Inspector.LogPane
   import LatchkeyWeb.Inspector.Scrubber
   import LatchkeyWeb.Inspector.StatePanes
   import LatchkeyWeb.InspectorComponents
 
-  alias Latchkey.Accounts
-  alias Latchkey.Accounts.Events.PaymentReceived
   alias Latchkey.EventStore
   alias Latchkey.Inspector.Broadcaster
+  alias Latchkey.Inspector.Log
+  alias Latchkey.Inspector.Resolver
   alias Latchkey.PropertyManagement.Arrears
   alias Latchkey.PropertyManagement.ArrearsFold
   alias Latchkey.PropertyManagement.Tenancy.Events.TenancyCommenced
   alias Latchkey.PropertyManagement.Timeline
-  alias Latchkey.Simulation.Directory
   alias Latchkey.Simulation.Identity
 
   # Bound on the firehose feed's live retained rows — old rows fall off the head
@@ -139,7 +139,15 @@ defmodule LatchkeyWeb.InspectorLive do
       # navigating between streams unsubscribes the old one before subscribing).
       |> assign(:new_events_available?, false)
       |> assign(:subscribed_stream_topic, nil)
+      # Paginated full-history log (issue #114, D8): keyset cursors over the global
+      # $all stream, held in assigns so the pager links can page newer/older. The
+      # rows themselves are a LiveView stream so the page can't balloon memory.
+      |> assign(:log_head, 0)
+      |> assign(:log_range, nil)
+      |> assign(:log_newer_cursor, nil)
+      |> assign(:log_older_cursor, nil)
       |> stream(:firehose, [])
+      |> stream(:log_rows, [])
 
     {:ok, socket}
   end
@@ -358,7 +366,28 @@ defmodule LatchkeyWeb.InspectorLive do
     |> assign(:active_stream, nil)
   end
 
-  defp apply_action(socket, :stream, %{"stream_id" => stream_id}) do
+  # ── Full paginated log (issue #114, spec D8) ────────────────────────────────
+  # A read-only historical browser over the entire $all stream, newest-first, with
+  # keyset paging. Cursor comes from the URL (`?before=`/`?after=`) so pages are
+  # bookmarkable and the browser back button works; each patch re-fetches and
+  # re-streams. Like the landing, it holds no open stream (no scrubber, no nudge).
+  defp apply_action(socket, :log, params) do
+    page = Log.page(parse_cursor(params))
+
+    socket
+    |> cancel_play()
+    |> resubscribe_stream(nil)
+    |> assign(:new_events_available?, false)
+    |> assign(:active_stream, nil)
+    |> assign(:page_title, "Inspector — event log")
+    |> assign(:log_head, page.head)
+    |> assign(:log_range, page.range)
+    |> assign(:log_newer_cursor, page.newer_cursor)
+    |> assign(:log_older_cursor, page.older_cursor)
+    |> stream(:log_rows, page.rows, reset: true)
+  end
+
+  defp apply_action(socket, :stream, %{"stream_id" => stream_id} = params) do
     # Navigating away from a stream stops any in-flight auto-advance (spec D4).
     socket = cancel_play(socket)
 
@@ -398,9 +427,53 @@ defmodule LatchkeyWeb.InspectorLive do
         |> assign(:recorded, recorded)
         |> assign(:event_rows, build_event_rows(stream_id, context.kind, recorded))
         |> init_scrubber(context.kind, recorded)
+        |> apply_at(params, context.kind)
         |> expand_active_group(stream_id)
     end
   end
+
+  # Deep-linked from the paginated log (D8): `?at=<stream_version>` opens a deep
+  # stream scrubbed to that event's position (the prefix folding the first N events
+  # highlights the Nth). `assign_prefix/2` clamps to 0..N, so a stale/bogus value is
+  # harmless. The Accounts edge folds no state, so it has no scrubber to position.
+  defp apply_at(socket, %{"at" => at}, :deep) do
+    case to_pos_int(at) do
+      nil -> socket
+      k -> assign_prefix(socket, k)
+    end
+  end
+
+  defp apply_at(socket, _params, _kind), do: socket
+
+  # Parse the URL keyset cursor for the paginated log. A missing or malformed value
+  # falls back to the newest page (nil cursor) rather than erroring.
+  defp parse_cursor(%{"before" => before}) do
+    case to_pos_int(before) do
+      nil -> nil
+      n -> {:before, n}
+    end
+  end
+
+  defp parse_cursor(%{"after" => after_}) do
+    case to_pos_int(after_) do
+      nil -> nil
+      n -> {:after, n}
+    end
+  end
+
+  defp parse_cursor(_params), do: nil
+
+  # Parse a positive integer from a query value; nil on anything else.
+  defp to_pos_int(value) when is_integer(value) and value > 0, do: value
+
+  defp to_pos_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} when n > 0 -> n
+      _ -> nil
+    end
+  end
+
+  defp to_pos_int(_value), do: nil
 
   # Deep-linking into a stream opens its nav group, so it isn't hidden behind a
   # collapsed section. Keyed off the live groups so "other"-bucketed singletons
@@ -570,10 +643,12 @@ defmodule LatchkeyWeb.InspectorLive do
   # `accounts` edge derives identity from each payment `holder`, honestly showing
   # UNKNOWN when unresolvable (D3).
   defp build_event_rows(_stream_id, :edge, recorded) do
-    directory = directory_map()
-    holders = payment_holders(recorded)
+    directory = Resolver.directory_map()
+    holders = Resolver.payment_holders(recorded)
 
-    Enum.map(recorded, fn r -> base_row(r, accounts_identity(r.data, directory, holders)) end)
+    Enum.map(recorded, fn r ->
+      base_row(r, Resolver.accounts_identity(r.data, directory, holders))
+    end)
   end
 
   defp build_event_rows(stream_id, _deep, recorded) do
@@ -592,39 +667,18 @@ defmodule LatchkeyWeb.InspectorLive do
 
   defp base_row(recorded, identity) do
     data = recorded.data
-    occurred_on = to_date(Map.get(data, :occurred_on))
-    recorded_on = to_date(Map.get(data, :recorded_on))
+    {occurred_on, recorded_on, divergent?} = Resolver.bitemporal(data)
 
     %{
       version: recorded.stream_version,
-      type: short_type(data),
+      type: Resolver.short_type(data),
       occurred_on: occurred_on,
       recorded_on: recorded_on,
-      divergent?: divergent?(occurred_on, recorded_on),
+      divergent?: divergent?,
       identity: identity,
       payload: payload_pairs(data)
     }
   end
-
-  defp short_type(%module{}), do: module |> Module.split() |> List.last()
-
-  # Payload columns deserialize dates as ISO strings (JSON serializer); coerce so
-  # the divergence check compares real dates, not string shapes.
-  defp to_date(%Date{} = date), do: date
-
-  defp to_date(value) when is_binary(value) do
-    case Date.from_iso8601(value) do
-      {:ok, date} -> date
-      _ -> nil
-    end
-  end
-
-  defp to_date(_), do: nil
-
-  defp divergent?(%Date{} = occurred, %Date{} = recorded),
-    do: Date.compare(occurred, recorded) != :eq
-
-  defp divergent?(_, _), do: false
 
   defp payload_pairs(%_struct{} = data) do
     data
@@ -632,10 +686,13 @@ defmodule LatchkeyWeb.InspectorLive do
     |> Enum.sort_by(fn {key, _value} -> Atom.to_string(key) end)
   end
 
-  # ── Identity resolution ─────────────────────────────────────────────────────
+  # ── Identity resolution (shared: Latchkey.Inspector.Resolver) ────────────────
   # Tenancy stream: one identity for the whole stream, keyed off the commencement
   # event's non-PII `property_ref` + the stream's `tenancy_id` (ADR 0008). Property
-  # leads — it is the primary PM identifier.
+  # leads — it is the primary PM identifier. This per-stream path re-resolves via
+  # `Identity.resolve/2` (it has the property_ref in-hand); the cross-stream
+  # paginated log (D8) leans on the Directory instead. The accounts-edge and
+  # display primitives are the shared `Resolver` ones, so both views can't drift.
   defp tenancy_identity(stream_id, recorded) do
     tenancy_id = String.replace_prefix(stream_id, "tenancy-", "")
 
@@ -653,51 +710,8 @@ defmodule LatchkeyWeb.InspectorLive do
 
       %{property: property, tenant: tenant, ref: stream_id, resolved?: true}
     else
-      unknown_identity(stream_id)
+      Resolver.unknown_identity(stream_id)
     end
-  end
-
-  # Accounts edge: identity derives from the payment `holder` (a `tenancy_ref`).
-  # A reversal carries no holder of its own, so it inherits the holder of the
-  # payment it reverses. Unresolvable holders honestly render UNKNOWN (D3).
-  defp accounts_identity(%PaymentReceived{holder: holder}, directory, _holders) do
-    holder_identity(holder, directory)
-  end
-
-  defp accounts_identity(%{reverses: reverses}, directory, holders) do
-    holder_identity(Map.get(holders, reverses), directory)
-  end
-
-  defp accounts_identity(_data, directory, _holders), do: holder_identity(nil, directory)
-
-  defp holder_identity(holder, directory) do
-    with true <- Accounts.known_holder?(holder),
-         tenancy_id = String.replace_prefix(holder, "tenancy-", ""),
-         %{tenant_name: tenant, property_address: property} <- Map.get(directory, tenancy_id) do
-      %{property: property, tenant: tenant, ref: holder, resolved?: true}
-    else
-      _ -> unknown_identity(holder)
-    end
-  end
-
-  defp unknown_identity(ref) do
-    ref = if is_binary(ref) and ref != "", do: ref, else: "UNKNOWN"
-    %{property: "UNKNOWN", tenant: "UNKNOWN", ref: ref, resolved?: false}
-  end
-
-  defp payment_holders(recorded) do
-    for %{data: %PaymentReceived{payment_id: payment_id, holder: holder}} <- recorded,
-        into: %{},
-        do: {payment_id, holder}
-  end
-
-  # A disposable, non-PII display lookup keyed by `tenancy_id` (ADR 0008 Directory).
-  defp directory_map do
-    Directory
-    |> Ash.read!()
-    |> Map.new(fn dir ->
-      {dir.tenancy_id, %{tenant_name: dir.tenant_name, property_address: dir.property_address}}
-    end)
   end
 
   @impl true
@@ -774,6 +788,15 @@ defmodule LatchkeyWeb.InspectorLive do
                 </div>
               <% @live_action == :stream -> %>
                 <.stream_not_found stream_id={@unknown_stream_id} />
+              <% @live_action == :log -> %>
+                <.log_pane
+                  rows={@streams.log_rows}
+                  head={@log_head}
+                  range={@log_range}
+                  newer_cursor={@log_newer_cursor}
+                  older_cursor={@log_older_cursor}
+                  docs={@docs}
+                />
               <% true -> %>
                 <.orientation_map
                   deep_context={@tenancy_context}
