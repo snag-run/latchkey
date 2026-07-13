@@ -95,6 +95,18 @@ defmodule Latchkey.PropertyManagement.PaymentAclTest do
     end
   end
 
+  describe "translate/1 — malformed carried dates" do
+    test "reports a malformed occurred_on rather than raising" do
+      assert {:error, :malformed_date} =
+               PaymentAcl.translate(received(%{occurred_on: "not-a-date"}))
+    end
+
+    test "reports a malformed recorded_on rather than raising" do
+      assert {:error, :malformed_date} =
+               PaymentAcl.translate(received(%{recorded_on: "not-a-date"}))
+    end
+  end
+
   describe "translate/1 — money that must not cross the seam" do
     test "an UNKNOWN-held receipt is skipped" do
       assert :skip = PaymentAcl.translate(received(%{holder: "UNKNOWN"}))
