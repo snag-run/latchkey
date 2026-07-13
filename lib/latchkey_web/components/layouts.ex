@@ -102,6 +102,13 @@ defmodule LatchkeyWeb.Layouts do
         >
           full log
         </.link>
+        <.link
+          navigate={~p"/inspector/glossary"}
+          id="inspector-glossary-link"
+          class="text-sm text-base-content/60 hover:text-base-content"
+        >
+          glossary
+        </.link>
         <span class="ml-auto">
           <.theme_toggle />
         </span>

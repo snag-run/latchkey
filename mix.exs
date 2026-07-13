@@ -87,6 +87,10 @@ defmodule Latchkey.MixProject do
        compile: false,
        depth: 1},
       {:swoosh, "~> 1.16"},
+      # In-app markdown rendering for the glossary (spec glossary.md, D2). Content is
+      # trusted first-party markdown, so no sanitisation is a driver. Actively
+      # maintained (Earmark is deprecated); ships precompiled NIFs.
+      {:mdex, "~> 0.13"},
       {:req, "~> 0.5"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},

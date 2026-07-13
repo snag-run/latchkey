@@ -26,6 +26,7 @@ defmodule LatchkeyWeb.Router do
     # the compile-gated LiveDashboard). No auth in v1; no commands, no mutation.
     live_session :inspector do
       live "/inspector", InspectorLive, :landing
+      live "/inspector/glossary", InspectorLive, :glossary
       live "/inspector/log", InspectorLive, :log
       live "/inspector/streams/:stream_id", InspectorLive, :stream
     end

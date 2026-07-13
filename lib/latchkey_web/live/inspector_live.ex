@@ -366,6 +366,20 @@ defmodule LatchkeyWeb.InspectorLive do
     |> assign(:active_stream, nil)
   end
 
+  # ── Glossary (spec glossary.md, D1/D2/D3/D6) ────────────────────────────────
+  # The in-app, markdown-rendered on-ramp: three lens-sections (domain from
+  # CONTEXT.md, DDD, ES) with per-term heading anchors for deep-linking. Static
+  # content compiled from `Glossary` — like the landing it holds no open stream,
+  # no scrubber, no live subscription.
+  defp apply_action(socket, :glossary, _params) do
+    socket
+    |> cancel_play()
+    |> resubscribe_stream(nil)
+    |> assign(:new_events_available?, false)
+    |> assign(:page_title, "Inspector — glossary")
+    |> assign(:active_stream, nil)
+  end
+
   # ── Full paginated log (issue #114, spec D8) ────────────────────────────────
   # A read-only historical browser over the entire $all stream, newest-first, with
   # keyset paging. Cursor comes from the URL (`?before=`/`?after=`) so pages are
@@ -797,6 +811,8 @@ defmodule LatchkeyWeb.InspectorLive do
                   older_cursor={@log_older_cursor}
                   docs={@docs}
                 />
+              <% @live_action == :glossary -> %>
+                <.glossary_page />
               <% true -> %>
                 <.orientation_map
                   deep_context={@tenancy_context}
