@@ -24,6 +24,7 @@ defmodule Latchkey.Inspector.Resolver do
   alias EventStore.RecordedEvent
   alias Latchkey.Accounts
   alias Latchkey.Accounts.Events.PaymentReceived
+  alias Latchkey.Accounts.Events.PaymentReversed
   alias Latchkey.Simulation.Directory
 
   @typedoc "A resolved, property-leading display identity for an event row."
@@ -88,7 +89,7 @@ defmodule Latchkey.Inspector.Resolver do
     holder_identity(holder, directory)
   end
 
-  def accounts_identity(%{reverses: reverses}, directory, holders) do
+  def accounts_identity(%PaymentReversed{reverses: reverses}, directory, holders) do
     holder_identity(Map.get(holders, reverses), directory)
   end
 
@@ -142,4 +143,16 @@ defmodule Latchkey.Inspector.Resolver do
     do: Date.compare(occurred, recorded) != :eq
 
   def divergent?(_, _), do: false
+
+  @doc """
+  Extract an event payload's two envelope dates (coerced to `Date`) and whether
+  they diverge — the shared bitemporal triple both row-builders render (D7), so
+  the `occurred_on`/`recorded_on`/`divergent?` derivation lives in one home.
+  """
+  @spec bitemporal(map()) :: {Date.t() | nil, Date.t() | nil, boolean()}
+  def bitemporal(data) do
+    occurred_on = to_date(Map.get(data, :occurred_on))
+    recorded_on = to_date(Map.get(data, :recorded_on))
+    {occurred_on, recorded_on, divergent?(occurred_on, recorded_on)}
+  end
 end

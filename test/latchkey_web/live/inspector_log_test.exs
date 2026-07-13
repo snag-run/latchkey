@@ -69,8 +69,12 @@ defmodule LatchkeyWeb.InspectorLogTest do
   defp seed_stream!(opts \\ []) do
     tid = uniq()
     stream = "tenancy-" <> tid
-    if opts[:arrears], do: put_arrears!(%{tenancy_id: tid, status: :active})
-    if opts[:directory], do: put_directory!(tid, "Jane Tenant", "42 Wallaby Way, Sydney NSW 2000")
+
+    if Keyword.get(opts, :arrears, false),
+      do: put_arrears!(%{tenancy_id: tid, status: :active})
+
+    if Keyword.get(opts, :directory, false),
+      do: put_directory!(tid, "Jane Tenant", "42 Wallaby Way, Sydney NSW 2000")
 
     append!(stream, [
       %TenancyCommenced{
@@ -129,9 +133,12 @@ defmodule LatchkeyWeb.InspectorLogTest do
       assert has_element?(view, "#log-divergence-#{n2}")
       # Property-leading identity resolved from the Directory.
       assert has_element?(view, "#log-identity-#{n3}", "42 Wallaby Way, Sydney NSW 2000")
-      # A deep row links through scrubbed to the event's position (?at=).
-      assert has_element?(view, ~s{a#log-row-#{n3}[href*="/inspector/streams/#{stream}"]})
-      assert has_element?(view, ~s{a#log-row-#{n3}[href*="at="]})
+      # A deep row links through scrubbed to the event's exact position: n3 is
+      # stream version 3, so the scrubber target is `?at=3` (catches off-by-one).
+      assert has_element?(
+               view,
+               ~s{a#log-row-#{n3}[href="/inspector/streams/#{stream}?at=3"]}
+             )
     end
 
     test "pages back through history and forward again by keyset cursor", %{conn: conn} do

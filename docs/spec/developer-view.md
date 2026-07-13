@@ -263,7 +263,7 @@ asymmetry rather than force-fitting:
 - **The firehose (D5) is a live *tail*** — it only shows events that arrive while
   watching and is capped at ~200 retained rows (memory bound). A separate read-only
   route (`/inspector/log`, issue #114) pages the **entire recorded history** across
-  every stream — every event ever, oldest to newest. It **complements, never
+  every stream — every event ever, newest to oldest. It **complements, never
   replaces**, the firehose (the firehose still runs on the right rail of the log
   page).
 - **Keyset pagination over the global event number, not offset.** A page is one

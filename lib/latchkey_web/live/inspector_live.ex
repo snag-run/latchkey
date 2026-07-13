@@ -381,7 +381,7 @@ defmodule LatchkeyWeb.InspectorLive do
     |> assign(:active_stream, nil)
     |> assign(:page_title, "Inspector — event log")
     |> assign(:log_head, page.head)
-    |> assign(:log_range, log_range(page.rows))
+    |> assign(:log_range, page.range)
     |> assign(:log_newer_cursor, page.newer_cursor)
     |> assign(:log_older_cursor, page.older_cursor)
     |> stream(:log_rows, page.rows, reset: true)
@@ -462,11 +462,6 @@ defmodule LatchkeyWeb.InspectorLive do
   end
 
   defp parse_cursor(_params), do: nil
-
-  # The {oldest, newest} global event numbers on a page (rows are newest-first), or
-  # nil when the page is empty — drives the "N–M of head" indicator.
-  defp log_range([]), do: nil
-  defp log_range(rows), do: {List.last(rows).event_number, hd(rows).event_number}
 
   # Parse a positive integer from a query value; nil on anything else.
   defp to_pos_int(value) when is_integer(value) and value > 0, do: value
@@ -672,15 +667,14 @@ defmodule LatchkeyWeb.InspectorLive do
 
   defp base_row(recorded, identity) do
     data = recorded.data
-    occurred_on = Resolver.to_date(Map.get(data, :occurred_on))
-    recorded_on = Resolver.to_date(Map.get(data, :recorded_on))
+    {occurred_on, recorded_on, divergent?} = Resolver.bitemporal(data)
 
     %{
       version: recorded.stream_version,
       type: Resolver.short_type(data),
       occurred_on: occurred_on,
       recorded_on: recorded_on,
-      divergent?: Resolver.divergent?(occurred_on, recorded_on),
+      divergent?: divergent?,
       identity: identity,
       payload: payload_pairs(data)
     }

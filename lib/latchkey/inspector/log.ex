@@ -6,7 +6,7 @@ defmodule Latchkey.Inspector.Log do
 
   This is the historical browser that complements — never replaces — the live
   firehose (D5). The firehose is a live tail capped at ~200 retained rows; this
-  pages the full recorded history, oldest event to newest.
+  pages the full recorded history, newest event to oldest.
 
   ## Keyset, not offset
 
@@ -56,6 +56,7 @@ defmodule Latchkey.Inspector.Log do
           rows: [row()],
           head: non_neg_integer(),
           page_size: pos_integer(),
+          range: {pos_integer(), pos_integer()} | nil,
           newer_cursor: pos_integer() | nil,
           older_cursor: pos_integer() | nil
         }
@@ -85,6 +86,9 @@ defmodule Latchkey.Inspector.Log do
       rows: rows,
       head: head,
       page_size: page_size,
+      # The {oldest, newest} global event numbers on this page (nil when empty),
+      # exposed so the web layer need not re-derive them from the row ordering.
+      range: if(newest && oldest, do: {oldest, newest}),
       # A page is at the head when its newest event is the store's head; it is at
       # the floor when its oldest event is the first ever recorded (number 1).
       newer_cursor: if(newest && newest < head, do: newest),
@@ -132,8 +136,7 @@ defmodule Latchkey.Inspector.Log do
   # ── Row building ────────────────────────────────────────────────────────────
   defp to_row(%RecordedEvent{} = event, directory, holders) do
     data = event.data
-    occurred_on = Resolver.to_date(Map.get(data, :occurred_on))
-    recorded_on = Resolver.to_date(Map.get(data, :recorded_on))
+    {occurred_on, recorded_on, divergent?} = Resolver.bitemporal(data)
 
     %{
       id: event.event_number,
@@ -144,7 +147,7 @@ defmodule Latchkey.Inspector.Log do
       type: Resolver.short_type(data),
       occurred_on: occurred_on,
       recorded_on: recorded_on,
-      divergent?: Resolver.divergent?(occurred_on, recorded_on),
+      divergent?: divergent?,
       identity: resolve_identity(event.stream_uuid, data, directory, holders),
       created_at: event.created_at
     }
