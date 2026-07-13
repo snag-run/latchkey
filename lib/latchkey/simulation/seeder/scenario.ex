@@ -29,11 +29,16 @@ defmodule Latchkey.Simulation.Seeder.Scenario do
       `TenancyCommenced` (ADR 0008). Unique per tenancy for the 1:1 majority; a
       **shared** ref across a re-let pair (a new tenancy on the same premises), which
       is how the address recurs while the tenants differ.
-    * `:rent_amount_cents` — the weekly rent.
+    * `:rent_amount_cents` — the **whole-period** rent for the tenancy's cadence (a
+      monthly tenancy carries a monthly amount, a weekly one a weekly amount; ADR 0009
+      decision 1 — never converted between cadences).
     * `:first_due_date` — the backdated commencement / first due date (drives accrual).
+    * `:cycle` — the payment cadence (`:weekly` | `:fortnightly` | `:monthly`, ADR
+      0009). Defaults to `:weekly`; the catalogue draws a 60/30/10 mix across the
+      generated scenarios (featured headliners stay weekly).
     * `:profile` — the tenant behaviour archetype (+ any scripted overrides) the
       engine folds over the payment schedule.
-    * `:schedule_count` — how many weekly periods the payment schedule spans.
+    * `:schedule_count` — how many cadence periods the payment schedule spans.
     * `:notice` — `nil`, or a planted `%{given_on, termination_date, as_of}` the agent
       issues at a historical date (a `GiveTerminationNotice`).
     * `:exit` — `nil`, or a planted `%{keys_on}` the agent records once the tenancy is
@@ -56,6 +61,7 @@ defmodule Latchkey.Simulation.Seeder.Scenario do
             property_ref: nil,
             rent_amount_cents: nil,
             first_due_date: nil,
+            cycle: :weekly,
             profile: nil,
             schedule_count: nil,
             notice: nil,
@@ -81,6 +87,7 @@ defmodule Latchkey.Simulation.Seeder.Scenario do
           property_ref: String.t() | nil,
           rent_amount_cents: pos_integer(),
           first_due_date: Date.t(),
+          cycle: :weekly | :fortnightly | :monthly,
           profile: Profile.t(),
           schedule_count: pos_integer(),
           notice: notice() | nil,
