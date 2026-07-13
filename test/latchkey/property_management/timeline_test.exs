@@ -115,6 +115,23 @@ defmodule Latchkey.PropertyManagement.TimelineTest do
     assert entry.recorded_on == ~D[2026-01-05]
   end
 
+  test "a whole monthly charge renders its real period span, not a hardcoded 7 days" do
+    # A monthly RentFellDue carries a full calendar-month span (ADR 0009). The timeline
+    # must read `[period_from, period_to)` straight off the event — a 31-day January
+    # period, not a 7-day week — so the exhibit states the real month length.
+    events = [
+      {0, commenced(~D[2026-01-15])},
+      {1, rent_span(~D[2026-01-15], 200_000, ~D[2026-01-15], ~D[2026-02-15])}
+    ]
+
+    charge = Enum.find(Timeline.fold(events), &(&1.kind == :rent_fell_due))
+
+    assert charge.period_from == ~D[2026-01-15]
+    assert charge.period_to == ~D[2026-02-15]
+    # 31 days, read from the event — decisively not the legacy `Date.add(due, 7)` guess.
+    assert Date.diff(charge.period_to, charge.period_from) == 31
+  end
+
   describe "accrual + payment + notice story" do
     # occurred order after sort:
     #   commenced 01-05 (seq 0)

@@ -161,7 +161,7 @@ defmodule Latchkey.Simulation.Seeder do
       # shares it so the read side derives the same address for the same premises.
       property_ref: scenario.property_ref,
       rent_amount_cents: scenario.rent_amount_cents,
-      cycle: :weekly,
+      cycle: scenario.cycle,
       first_due_date: scenario.first_due_date,
       recorded_on: scenario.first_due_date
     }

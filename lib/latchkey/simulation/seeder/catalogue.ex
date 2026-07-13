@@ -10,6 +10,20 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   stable slugs and every date is an offset from `today`, so a re-seed of a fresh store
   reproduces the same catalogue byte-for-byte (ADR 0005 decision 8).
 
+  ## Payment cadences (ADR 0009)
+
+  Generated tenancies pay on a mix of cadences — **60 % weekly / 30 % fortnightly /
+  10 % monthly** — drawn **deterministically** so the board stays a pure function of
+  `today`. The split is applied to **each generated category independently**, keyed on
+  that category's local `idx` via `rem(idx, 10)`: `0–5 → :weekly`, `6–8 →
+  :fortnightly`, `9 → :monthly` (`cycle_for/1`). It is just the modulo — no rounding —
+  so a category whose size is not a multiple of 10 fills weekly-first, and small
+  categories (`exited`, `relet`) skew all-weekly, which is fine. The three featured
+  headliners are **excluded** from the split and stay weekly. Each scenario's
+  backdated `first_due_date` is placed by **stepping back whole cadence periods**
+  (`back_periods/3`), so a scenario sits at its intended arrears/exit state regardless
+  of cadence — a monthly noticed tenancy is genuinely far enough behind to clear L7.
+
   ## Re-lets (ADR 0008)
 
   A **re-let** is a genuinely **new tenancy** (new `tenancy_id`, new tenants) on the
@@ -136,20 +150,24 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
     healthy(today) ++ arrears(today) ++ under_notice(today) ++ exited(today) ++ relets(today)
   end
 
-  # Reliable tenants square today: the schedule spans `weeks` paid periods, and the
+  # Reliable tenants square today: the schedule spans `periods` paid periods, and the
   # first_due offset lands the *next* due date after today, so nothing dangles unpaid.
+  # `first_due` is stepped back `periods` whole cadence periods from `today` (then nudged
+  # `offset` days forward), so it stays square on any cadence.
   defp healthy(today) do
     for idx <- 0..(@healthy_count - 1) do
-      weeks = 6 + rem(idx, 8)
+      cycle = cycle_for(idx)
+      periods = 6 + rem(idx, 8)
       offset = 1 + rem(idx, 6)
 
       %Scenario{
         label: "healthy-#{pad(idx + 1)}",
         tenancy_id: "healthy-#{pad(idx + 1)}",
         rent_amount_cents: rent(idx),
-        first_due_date: days_before(today, weeks * @week - offset),
+        cycle: cycle,
+        first_due_date: Date.add(back_periods(today, cycle, periods), offset),
         profile: Profile.reliable(),
-        schedule_count: weeks
+        schedule_count: periods
       }
     end
   end
@@ -158,6 +176,7 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   # from a couple of days to ~8 weeks so the board shows both pre- and post-L7 arrears.
   defp arrears(today) do
     for idx <- 0..(@arrears_count - 1) do
+      cycle = cycle_for(idx)
       paid = 1 + rem(idx, 3)
       days_behind = 2 + rem(idx * 9 + 3, 55)
 
@@ -165,7 +184,10 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
         label: "arrears-#{pad(idx + 1)}",
         tenancy_id: "arrears-#{pad(idx + 1)}",
         rent_amount_cents: rent(idx),
-        first_due_date: days_before(today, days_behind + paid * @week),
+        cycle: cycle,
+        # The first unpaid period falls due `days_behind` ago; step back `paid` whole
+        # cadence periods from there to the anchor, so `days_behind` holds on any cadence.
+        first_due_date: back_periods(days_before(today, days_behind), cycle, paid),
         profile: Profile.reliable(),
         schedule_count: paid
       }
@@ -177,6 +199,7 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   # construction (>= 21 days behind at its assessment date).
   defp under_notice(today) do
     for idx <- 0..(@under_notice_count - 1) do
+      cycle = cycle_for(idx)
       paid = 1 + rem(idx, 3)
       notice_age = @week + rem(idx, 3) * @week
       first_unpaid_age = first_unpaid_age(idx, notice_age)
@@ -185,7 +208,8 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
         label: "under-notice-#{pad(idx + 1)}",
         tenancy_id: "under-notice-#{pad(idx + 1)}",
         rent_amount_cents: rent(idx),
-        first_due_date: days_before(today, first_unpaid_age + paid * @week),
+        cycle: cycle,
+        first_due_date: back_periods(days_before(today, first_unpaid_age), cycle, paid),
         profile: Profile.reliable(),
         schedule_count: paid,
         notice: %{
@@ -201,6 +225,7 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   # settled to `:terminal`. Some held over past the end date (V > E), some left on it.
   defp exited(today) do
     for idx <- 0..(@exited_count - 1) do
+      cycle = cycle_for(idx)
       paid = 1 + rem(idx, 3)
       notice_age = 42 + rem(idx, 3) * @week
       first_unpaid_age = first_unpaid_age(idx, notice_age)
@@ -214,7 +239,8 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
         label: "exited-#{pad(idx + 1)}",
         tenancy_id: "exited-#{pad(idx + 1)}",
         rent_amount_cents: rent(idx),
-        first_due_date: days_before(today, first_unpaid_age + paid * @week),
+        cycle: cycle,
+        first_due_date: back_periods(days_before(today, first_unpaid_age), cycle, paid),
         profile: Profile.reliable(),
         schedule_count: paid,
         notice: notice,
@@ -237,6 +263,7 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
     n = pad(idx + 1)
     property_ref = "prop-relet-#{n}"
     rent = rent(idx)
+    cycle = cycle_for(idx)
 
     # Prior leg (the existing exited/terminal pattern, but dated further back so the
     # successor has room to run): noticed on arrears, keys returned 8–11 weeks ago.
@@ -254,7 +281,8 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
       tenancy_id: "relet-#{n}-prior",
       property_ref: property_ref,
       rent_amount_cents: rent,
-      first_due_date: days_before(today, prior_first_unpaid_age + prior_paid * @week),
+      cycle: cycle,
+      first_due_date: back_periods(days_before(today, prior_first_unpaid_age), cycle, prior_paid),
       profile: Profile.reliable(),
       schedule_count: prior_paid,
       notice: notice,
@@ -274,6 +302,7 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
       tenancy_id: "relet-#{n}-current",
       property_ref: property_ref,
       rent_amount_cents: rent,
+      cycle: cycle,
       first_due_date: days_before(today, commence_age),
       profile: Profile.reliable(),
       schedule_count: paid
@@ -304,7 +333,29 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   # (>= the L7 gate, so the planted notice is valid by construction).
   defp first_unpaid_age(idx, notice_age), do: notice_age + 21 + rem(idx, 2) * @week
 
-  # A little deterministic rent variation (45k..70k) so the board isn't monotone.
+  # The deterministic 60/30/10 cadence draw (ADR 0009 decision 1): keyed on a
+  # category's local `idx` via `rem(idx, 10)` — 0–5 weekly, 6–8 fortnightly, 9 monthly.
+  # Pure modulo, no rounding; a category smaller than 10 skews weekly, by design.
+  defp cycle_for(idx) do
+    case rem(idx, 10) do
+      r when r in 0..5 -> :weekly
+      r when r in 6..8 -> :fortnightly
+      _ -> :monthly
+    end
+  end
+
+  # Step `date` back by `n` whole cadence periods — the inverse of the Schedule/aggregate
+  # forward walk (weekly `-7·n`, fortnightly `-14·n`, monthly `Date.shift(month: -n)`
+  # from the anchor). Used to place a backdated `first_due_date` `n` paid periods before a
+  # target due date, so a scenario sits at its intended state on any cadence. Monthly
+  # month-end clamping means `forward(back(d, n), n)` can differ from `d` by a couple of
+  # days after a short month — well inside the arrears margins the callers leave.
+  defp back_periods(%Date{} = date, :weekly, n), do: Date.add(date, -7 * n)
+  defp back_periods(%Date{} = date, :fortnightly, n), do: Date.add(date, -14 * n)
+  defp back_periods(%Date{} = date, :monthly, n), do: Date.shift(date, month: -n)
+
+  # A little deterministic rent variation (45k..70k) so the board isn't monotone. This is
+  # the whole-period rent for the tenancy's cadence (ADR 0009 decision 1).
   defp rent(idx), do: 45_000 + rem(idx, 6) * 5_000
 
   defp days_before(%Date{} = date, days), do: Date.add(date, -days)

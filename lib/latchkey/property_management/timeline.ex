@@ -165,9 +165,11 @@ defmodule Latchkey.PropertyManagement.Timeline do
   defp money(_marker), do: {nil, nil}
 
   # A charge renders the exact half-open `[period_from, period_to)` span the event
-  # carries (a whole week, or the pro-rated boundary / overstay span at exit, #31/#32) so
-  # the exhibit is auditable line-by-line (spec story 12). Fall back to a whole weekly
-  # span only for legacy charges persisted before the period fields existed.
+  # carries — a whole cadence period (weekly 7, fortnightly 14, monthly 28–31 days; ADR
+  # 0009), or the pro-rated boundary / overstay span at exit (#31/#32) — so the exhibit is
+  # auditable line-by-line (spec story 12). The span is read straight off the event and
+  # never assumed, so a monthly charge shows its real month length. Fall back to a whole
+  # weekly span only for legacy charges persisted before the period fields existed.
   defp period(%{kind: :rent_fell_due, period_from: %Date{} = from, period_to: %Date{} = to}),
     do: {from, to}
 

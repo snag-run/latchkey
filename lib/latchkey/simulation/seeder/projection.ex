@@ -65,12 +65,14 @@ defmodule Latchkey.Simulation.Seeder.Projection do
   end
 
   @doc """
-  The weekly payment schedule the behaviour engine folds over for `scenario`, keyed to
-  `tenancy_id`'s `tenancy_ref`.
+  The payment schedule the behaviour engine folds over for `scenario`, on the scenario's
+  cadence (ADR 0009) and keyed to `tenancy_id`'s `tenancy_ref`. Cadence-matched so the
+  engine's payment due dates line up with the `RentFellDue` charges the tenancy accrues.
   """
   @spec schedule(Scenario.t(), String.t()) :: Schedule.t()
   def schedule(%Scenario{} = scenario, tenancy_id) do
-    Schedule.weekly(
+    Schedule.for_cycle(
+      scenario.cycle,
       "tenancy-" <> tenancy_id,
       scenario.first_due_date,
       scenario.rent_amount_cents,
@@ -108,7 +110,7 @@ defmodule Latchkey.Simulation.Seeder.Projection do
       tenancy_id: scenario.tenancy_id,
       property_ref: scenario.property_ref,
       rent_amount_cents: scenario.rent_amount_cents,
-      cycle: :weekly,
+      cycle: scenario.cycle,
       first_due_date: scenario.first_due_date,
       recorded_on: scenario.first_due_date
     }

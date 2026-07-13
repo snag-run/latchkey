@@ -54,6 +54,74 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
       assert derived.balance_cents > 0
     end
 
+    test "a fortnightly reliable tenant paid up to today is square and active" do
+      # Periods due today-40, today-26, today-12 (all ≤ today, paid); next period
+      # (today+2) is future, so nothing dangles — a truthful fortnightly fold.
+      scenario = %Scenario{
+        label: "fortnightly-square",
+        tenancy_id: "fortnightly-square",
+        property_ref: "prop-fn-square",
+        rent_amount_cents: 60_000,
+        first_due_date: Date.add(@today, -40),
+        cycle: :fortnightly,
+        profile: Profile.reliable(),
+        schedule_count: 3
+      }
+
+      assert %{
+               status: :active,
+               balance_cents: 0,
+               oldest_unpaid_due_date: nil,
+               days_behind: 0
+             } = Projection.derive(scenario, @today)
+    end
+
+    test "a monthly reliable tenant paid up to today is square and active" do
+      # Anchor Apr 20: periods Apr 20 and May 20 are ≤ today (2026-06-15) and paid; the
+      # next monthly period (Jun 20) is future, so the tenant is square.
+      scenario = %Scenario{
+        label: "monthly-square",
+        tenancy_id: "monthly-square",
+        property_ref: "prop-mo-square",
+        rent_amount_cents: 200_000,
+        first_due_date: ~D[2026-04-20],
+        cycle: :monthly,
+        profile: Profile.reliable(),
+        schedule_count: 2
+      }
+
+      assert %{
+               status: :active,
+               balance_cents: 0,
+               oldest_unpaid_due_date: nil,
+               days_behind: 0
+             } = Projection.derive(scenario, @today)
+    end
+
+    test "a monthly tenant behind one month surfaces the real month span the sweep reveals" do
+      # Anchor Apr 20, pays only the first month. May 20 falls due unpaid; the sweep as of
+      # today (Jun 15) reveals it — days_behind counts the *actual* days since May 20, and
+      # exactly one whole monthly period is owed.
+      scenario = %Scenario{
+        label: "monthly-behind",
+        tenancy_id: "monthly-behind",
+        property_ref: "prop-mo-behind",
+        rent_amount_cents: 200_000,
+        first_due_date: ~D[2026-04-20],
+        cycle: :monthly,
+        profile: Profile.reliable(),
+        schedule_count: 1
+      }
+
+      derived = Projection.derive(scenario, @today)
+
+      assert derived.status == :active
+      assert derived.oldest_unpaid_due_date == ~D[2026-05-20]
+      # Date.diff(~D[2026-06-15], ~D[2026-05-20]) — the real elapsed days, not a 7-day guess.
+      assert derived.days_behind == 26
+      assert derived.balance_cents == 200_000
+    end
+
     test "raises with context on a domain-invalid planted step (notice below the L7 gate)" do
       # A paid-up tenant is not in arrears, so the planted notice fails the L7 gate.
       scenario = %Scenario{
