@@ -95,6 +95,37 @@ defmodule Latchkey.PropertyManagement.ArrearsFold do
     |> Map.fetch!(:core)
   end
 
+  @doc """
+  The **D1 consistency check** made computable: does the in-memory full-prefix
+  recompute equal the live `Arrears` read-model row? Compares only the
+  **event-driven, persisted** fields — `status`, `balance_cents`,
+  `oldest_unpaid_due_date`, `final_balance_cents`. `days_behind` is **excluded on
+  purpose**: the read model computes it on read as-at *today* (ADR 0005 decision 6),
+  while the fold reckons it as-at the prefix's last event, so the two legitimately
+  differ and are not part of the persisted equality.
+
+  Returns a structured report — a per-field list (`recomputed` vs `live`, `match?`)
+  plus an overall `consistent?` — so the inspector can render "the read model is
+  just a fold of the log" honestly, field by field. Pure: it reads the live row's
+  fields, it never writes.
+  """
+  @compared_fields [:status, :balance_cents, :oldest_unpaid_due_date, :final_balance_cents]
+
+  @spec reconcile(t(), struct() | map()) :: %{
+          fields: [%{field: atom(), recomputed: term(), live: term(), match?: boolean()}],
+          consistent?: boolean()
+        }
+  def reconcile(%__MODULE__{} = derived, live) do
+    fields =
+      Enum.map(@compared_fields, fn field ->
+        recomputed = Map.get(derived, field)
+        persisted = Map.get(live, field)
+        %{field: field, recomputed: recomputed, live: persisted, match?: recomputed == persisted}
+      end)
+
+    %{fields: fields, consistent?: Enum.all?(fields, & &1.match?)}
+  end
+
   # No as-of date (empty prefix) ⇒ nothing is due, so nobody is behind.
   defp days_behind(%State{}, nil), do: 0
   defp days_behind(%State{} = core, %Date{} = as_of), do: Tenancy.days_behind(core, as_of)

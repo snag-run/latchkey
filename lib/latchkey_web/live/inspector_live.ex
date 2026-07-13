@@ -26,6 +26,7 @@ defmodule LatchkeyWeb.InspectorLive do
 
   import LatchkeyWeb.Inspector.EventLog
   import LatchkeyWeb.Inspector.Firehose
+  import LatchkeyWeb.Inspector.StatePanes
   import LatchkeyWeb.InspectorComponents
 
   alias Latchkey.Accounts
@@ -33,6 +34,7 @@ defmodule LatchkeyWeb.InspectorLive do
   alias Latchkey.EventStore
   alias Latchkey.Inspector.Broadcaster
   alias Latchkey.PropertyManagement.Arrears
+  alias Latchkey.PropertyManagement.ArrearsFold
   alias Latchkey.PropertyManagement.Tenancy.Events.TenancyCommenced
   alias Latchkey.Simulation.Directory
   alias Latchkey.Simulation.Identity
@@ -169,14 +171,61 @@ defmodule LatchkeyWeb.InspectorLive do
         |> assign(:unknown_stream_id, stream_id)
 
       context ->
+        # One store read feeds both the event-log pane and the shared fold, so the
+        # two panes can never see different histories (D1).
+        recorded = read_stream(stream_id)
+
         socket
         |> assign(:page_title, "Inspector — #{stream_id}")
         |> assign(:active_stream, stream_id)
         |> assign(:stream_found?, true)
         |> assign(:context_name, context.name)
         |> assign(:stream_kind, context.kind)
-        |> assign(:event_rows, load_event_rows(stream_id, context.kind))
+        |> assign(:event_rows, build_event_rows(stream_id, context.kind, recorded))
+        |> assign_fold_panes(stream_id, context.kind, recorded)
     end
+  end
+
+  # ── Aggregate-state + read-model panes (issue #83, spec D1/D2) ───────────────
+  # Folds the selected stream through the **shared** `ArrearsFold.fold_and_derive/1`
+  # at full history — the very code path the operational `ArrearsProjector` runs, so
+  # the panes can never drift from production (D1). In-memory only: it reads the live
+  # `Arrears` row solely to reconcile against, and never writes any read-model table.
+  # The Accounts edge folds no aggregate state (D3), so it gets no fold panes.
+  defp assign_fold_panes(socket, _stream_id, :edge, _recorded) do
+    socket
+    |> assign(:aggregate_state, nil)
+    |> assign(:read_model, nil)
+    |> assign(:consistency, nil)
+  end
+
+  defp assign_fold_panes(socket, stream_id, _deep, recorded) do
+    derived =
+      recorded
+      |> Enum.map(& &1.data)
+      |> ArrearsFold.fold_and_derive()
+
+    tenancy_id = String.replace_prefix(stream_id, "tenancy-", "")
+    live = live_arrears(tenancy_id)
+
+    consistency =
+      case live do
+        nil -> :no_live_row
+        row -> ArrearsFold.reconcile(derived, row)
+      end
+
+    socket
+    |> assign(:aggregate_state, derived.core)
+    |> assign(:read_model, derived)
+    |> assign(:consistency, consistency)
+  end
+
+  # The live, persisted read-model row for this tenancy (or nil), read to reconcile
+  # the in-memory recompute against — never written back (brief cut #4).
+  defp live_arrears(tenancy_id) do
+    Arrears
+    |> Ash.read!()
+    |> Enum.find(&(&1.tenancy_id == tenancy_id))
   end
 
   # ── Event-log pane (issue #81, spec D3/D7) ──────────────────────────────────
@@ -186,16 +235,14 @@ defmodule LatchkeyWeb.InspectorLive do
   # once off the stream's `property_ref` + `tenancy_id` (Identity.resolve/2); the
   # `accounts` edge derives identity from each payment `holder`, honestly showing
   # UNKNOWN when unresolvable (D3).
-  defp load_event_rows(stream_id, :edge) do
+  defp build_event_rows(_stream_id, :edge, recorded) do
     directory = directory_map()
-    recorded = read_stream(stream_id)
     holders = payment_holders(recorded)
 
     Enum.map(recorded, fn r -> base_row(r, accounts_identity(r.data, directory, holders)) end)
   end
 
-  defp load_event_rows(stream_id, _deep) do
-    recorded = read_stream(stream_id)
+  defp build_event_rows(stream_id, _deep, recorded) do
     identity = tenancy_identity(stream_id, recorded)
 
     Enum.map(recorded, fn r -> base_row(r, identity) end)
@@ -348,6 +395,16 @@ defmodule LatchkeyWeb.InspectorLive do
                   context_name={@context_name}
                   kind={@stream_kind}
                   rows={@event_rows}
+                  docs={@docs}
+                />
+                <%!-- The write-vs-read money-shot: what the log folds into (#83, D1/D2). --%>
+                <%!-- Deep (tenancy) streams only; the Accounts edge folds no state (D3). --%>
+                <.fold_panes
+                  :if={@stream_kind == :deep}
+                  stream_id={@active_stream}
+                  state={@aggregate_state}
+                  derived={@read_model}
+                  consistency={@consistency}
                   docs={@docs}
                 />
               <% @live_action == :stream -> %>
