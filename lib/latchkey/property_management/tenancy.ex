@@ -24,6 +24,11 @@ defmodule Latchkey.PropertyManagement.Tenancy do
 
   @arrears_gate_days 14
 
+  # The rent cadences this slice accrues (ADR 0009): a fixed 7/14-day period for weekly/
+  # fortnightly and a calendar month for monthly. `decide_commence` accepts these; any
+  # other cycle is refused rather than silently mischarged.
+  @supported_cycles [:weekly, :fortnightly, :monthly]
+
   def initial_state, do: %State{}
 
   # ── Fold (apply) ────────────────────────────────────────────────────────────
@@ -113,8 +118,12 @@ defmodule Latchkey.PropertyManagement.Tenancy do
 
   @doc """
   Lazy, **end-date-aware** catch-up (§6): the `rent_fell_due` events owed for
-  `(due_through, as_of]`. Weekly cycle only for now. Idempotent by the `due_through`
-  pointer.
+  `(due_through, as_of]`. Cadence-aware (ADR 0009): due dates are the uniform
+  index-from-anchor walk `due(n)` (weekly `+7·n`, fortnightly `+14·n`, monthly
+  `Date.shift(anchor, month: n)` from the commencement anchor — month-end clamped, never
+  stuck at 28), and each period is `[due(n), due(n+1))`, so the monthly period length is
+  naturally 28–31 with no special-casing. Idempotent by the `due_through` pointer: resume
+  advances `n` from 0 until `due(n)` is strictly past the last booked due date.
 
   Each tick's `occurred_on` is its historical due date; every tick shares the passed
   `recorded_on` (the booking date), so a swept-in tick has `recorded_on >= occurred_on`
@@ -135,17 +144,14 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   def catch_up_events(%State{status: :pending}, _as_of, _recorded_on), do: []
 
   def catch_up_events(%State{} = s, %Date{} = as_of, recorded_on) do
-    first =
-      case s.due_through do
-        nil -> s.first_due_date
-        d -> Date.add(d, 7)
-      end
-
-    first
-    |> Stream.iterate(&Date.add(&1, 7))
-    |> Enum.reduce_while([], fn period_from, acc ->
-      period_to = Date.add(period_from, 7)
-
+    # The cadence-aware period sequence `{due(n), due(n+1)}`, n = 0,1,2… from the
+    # commencement anchor. `due_through` stores the last booked due *date* (not an index),
+    # so resume drops every already-booked period (`period_from <= due_through`).
+    0
+    |> Stream.iterate(&(&1 + 1))
+    |> Stream.map(&period_bounds(s, &1))
+    |> Stream.filter(fn {period_from, _to} -> booked_after?(s.due_through, period_from) end)
+    |> Enum.reduce_while([], fn {period_from, period_to}, acc ->
       cond do
         # Not yet due — lazy accrual books nothing past `as_of`.
         Date.compare(period_from, as_of) == :gt ->
@@ -153,11 +159,12 @@ defmodule Latchkey.PropertyManagement.Tenancy do
 
         # No E yet, or a full period still fits before E — charge it whole and continue.
         whole_period_fits?(s.effective_end_date, period_to) ->
-          {:cont, [whole_period_charge(s, period_from, recorded_on) | acc]}
+          {:cont, [whole_period_charge(s, period_from, period_to, recorded_on) | acc]}
 
         # E falls inside this period — pro-rate `[period_from, E)` and stop (issue #31).
         Date.compare(period_from, s.effective_end_date) == :lt ->
-          {:halt, [boundary_charge(s, period_from, s.effective_end_date, recorded_on) | acc]}
+          {:halt,
+           [boundary_charge(s, period_from, period_to, s.effective_end_date, recorded_on) | acc]}
 
         # period_from is on/after E — post-exit span (overstay, #32): emit nothing, stop.
         true ->
@@ -167,44 +174,69 @@ defmodule Latchkey.PropertyManagement.Tenancy do
     |> Enum.reverse()
   end
 
+  # The nth rent period `{due(n), due(n+1)}` walked from the commencement anchor by the
+  # tenancy's cadence (ADR 0009 decision 2). Monthly shifts month-by-month **from the
+  # anchor**, so a short month clamps but the day-of-month "comes back" (Jan 31 → Feb 28 →
+  # Mar 31), never drifting to 28.
+  defp period_bounds(%State{first_due_date: anchor, cycle: cycle}, n) do
+    {due_date(anchor, cycle, n), due_date(anchor, cycle, n + 1)}
+  end
+
+  defp due_date(%Date{} = anchor, :weekly, n), do: Date.add(anchor, 7 * n)
+  defp due_date(%Date{} = anchor, :fortnightly, n), do: Date.add(anchor, 14 * n)
+  defp due_date(%Date{} = anchor, :monthly, n), do: Date.shift(anchor, month: n)
+
+  # Resume predicate: a period whose start is on/before the last booked due date has
+  # already been charged. With no `due_through` (never swept) every period is fresh.
+  defp booked_after?(nil, _period_from), do: true
+
+  defp booked_after?(%Date{} = due_through, period_from),
+    do: Date.compare(period_from, due_through) == :gt
+
   # A full period fits before E when its exclusive end `period_to` is on/before E. With
   # no E (active tenancy), every period is charged whole.
   defp whole_period_fits?(nil, _period_to), do: true
   defp whole_period_fits?(%Date{} = e, period_to), do: Date.compare(period_to, e) != :gt
 
-  # A whole rent period `[due, due + 7)` at the full periodic rent. `occurred_on` (the
-  # accrual/FIFO key) is the period start, which equals `period_from`.
-  defp whole_period_charge(%State{} = s, due_date, recorded_on) do
+  # A whole rent period `[due(n), due(n+1))` at the full periodic rent. `occurred_on` (the
+  # accrual/FIFO key) is the period start `period_from`; `period_to` is the cadence's next
+  # due date (7/14 days on, or the next calendar month), so the persisted span carries the
+  # real period length for the read side.
+  defp whole_period_charge(%State{} = s, period_from, period_to, recorded_on) do
     %{
       type: :rent_fell_due,
-      occurred_on: due_date,
+      occurred_on: period_from,
       recorded_on: recorded_on,
       amount_cents: s.rent_amount_cents,
-      period_from: due_date,
-      period_to: Date.add(due_date, 7)
+      period_from: period_from,
+      period_to: period_to
     }
   end
 
   # The pro-rated boundary charge: `period_rent × days_in_period_to_E ÷ period_length`,
   # rounded half-up **once** on the final amount (Money §9). `days_in_period_to_E =
-  # Date.diff(E, period_from)` (E exclusive). `period_to` is E, so E is not charged here.
-  defp boundary_charge(%State{} = s, period_from, e, recorded_on) do
+  # Date.diff(E, period_from)` (E exclusive) and `period_length = Date.diff(period_to,
+  # period_from)` — the actual length of the period E falls in (7/14/28–31, ADR 0009
+  # decision 3). The emitted `period_to` is E, so E is not charged here.
+  defp boundary_charge(%State{} = s, period_from, period_to, e, recorded_on) do
     %{
       type: :rent_fell_due,
       occurred_on: period_from,
       recorded_on: recorded_on,
-      amount_cents: daily_rate_amount(s, period_from, e),
+      amount_cents: daily_rate_amount(s, period_from, e, Date.diff(period_to, period_from)),
       period_from: period_from,
       period_to: e
     }
   end
 
   # The daily-rate pro-ration shared by the boundary (#31) and overstay (#32) charges:
-  # `period_rent × days ÷ period_length` for `days = Date.diff(to, from)` (actual/actual,
-  # weekly `period_length = 7`), rounded half-up **once** on the final amount (Money §9).
-  # One home for the money-rounding rule so the two call sites can't drift apart.
-  defp daily_rate_amount(%State{} = s, %Date{} = from, %Date{} = to) do
-    round_half_up(s.rent_amount_cents * Date.diff(to, from), 7)
+  # `period_rent × days ÷ period_length` for `days = Date.diff(to, from)`, actual/actual
+  # over the **actual** length of the period the span falls in (`period_length`, passed
+  # explicitly because the span end need not equal the period end). Rounded half-up
+  # **once** on the final amount (Money §9). One home for the money-rounding rule so the
+  # two call sites can't drift apart.
+  defp daily_rate_amount(%State{} = s, %Date{} = from, %Date{} = to, period_length) do
+    round_half_up(s.rent_amount_cents * Date.diff(to, from), period_length)
   end
 
   # Round `numerator / denominator` half-up on the single final amount (denominator > 0,
@@ -216,8 +248,8 @@ defmodule Latchkey.PropertyManagement.Tenancy do
 
   # ── Decisions (execute) — {:ok, [event]} | {:error, reason} ──────────────────
 
-  def decide_commence(%State{status: :pending}, %{cycle: :weekly, property_ref: ref} = cmd)
-      when is_binary(ref) and ref != "" do
+  def decide_commence(%State{status: :pending}, %{cycle: cycle, property_ref: ref} = cmd)
+      when cycle in @supported_cycles and is_binary(ref) and ref != "" do
     {:ok,
      [
        %{
@@ -227,7 +259,7 @@ defmodule Latchkey.PropertyManagement.Tenancy do
          # across re-lets. Does not affect accrual or the aggregate invariants, but is
          # required so every tenancy is resolvable by the inspector/Directory.
          property_ref: ref,
-         # occurrence = commencement date (the first due date in this weekly slice).
+         # occurrence = commencement date = the first due date (the accrual anchor).
          occurred_on: cmd.first_due_date,
          recorded_on: cmd.recorded_on,
          rent_amount_cents: cmd.rent_amount_cents,
@@ -237,13 +269,14 @@ defmodule Latchkey.PropertyManagement.Tenancy do
      ]}
   end
 
-  # A weekly commence must carry a non-empty `property_ref` (the non-PII identity key,
-  # ADR 0008) — refuse one without it rather than write an event the read side can't
+  # A supported-cycle commence must carry a non-empty `property_ref` (the non-PII identity
+  # key, ADR 0008) — refuse one without it rather than write an event the read side can't
   # resolve. Ordered before the cycle guard so the error names the real problem.
-  def decide_commence(%State{status: :pending}, %{cycle: :weekly}),
-    do: {:error, :missing_property_ref}
+  def decide_commence(%State{status: :pending}, %{cycle: cycle})
+      when cycle in @supported_cycles,
+      do: {:error, :missing_property_ref}
 
-  # Slice supports weekly accrual only; refuse cycles we'd silently mischarge.
+  # Refuse cadences this slice doesn't accrue (ADR 0009 defers e.g. 4-weekly/quarterly).
   def decide_commence(%State{status: :pending}, _cmd), do: {:error, :unsupported_cycle}
 
   # L2 — a tenancy commences at most once.
@@ -437,18 +470,24 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   # The overstay reckoning (issue #32): when possession is recovered *after* E (`V > E`),
   # the `[E, V)` hold-over span is one crystallised `RentFellDue` at the daily rate —
   # `round_half_up(period_rent × days ÷ period_length)`, `days = Date.diff(V, E)` (V
-  # exclusive), the same daily-rate maths as the boundary charge (#31). `period_from = E`
-  # inclusive, `period_to = V` exclusive, so V (the keys-return day, possession recovered)
-  # is not charged and E is counted once — in the overstay span, never the boundary period.
-  # `occurred_on = E` is the accrual/FIFO key. `V = E` ⇒ empty span ⇒ no event.
+  # exclusive), the same daily-rate maths as the boundary charge (#31). The denominator is
+  # the length of **the scheduled period E falls in** — the last scheduled period — applied
+  # flat across the whole span (ADR 0009 decision 3); a cross-boundary overstay is one
+  # figure, never re-pro-rated per calendar month (that piecewise split is deferred).
+  # `period_from = E` inclusive, `period_to = V` exclusive, so V (the keys-return day,
+  # possession recovered) is not charged and E is counted once — in the overstay span,
+  # never the boundary period. `occurred_on = E` is the accrual/FIFO key. `V = E` ⇒ empty
+  # span ⇒ no event.
   defp overstay_events(%State{} = s, %Date{} = e, %Date{} = v, recorded_on) do
     if Date.compare(v, e) == :gt do
+      {p_from, p_to} = scheduled_period_containing(s, e)
+
       [
         %{
           type: :rent_fell_due,
           occurred_on: e,
           recorded_on: recorded_on,
-          amount_cents: daily_rate_amount(s, e, v),
+          amount_cents: daily_rate_amount(s, e, v, Date.diff(p_to, p_from)),
           period_from: e,
           period_to: v
         }
@@ -456,5 +495,18 @@ defmodule Latchkey.PropertyManagement.Tenancy do
     else
       []
     end
+  end
+
+  # The scheduled period `{due(n), due(n+1)}` whose half-open interval contains `date`
+  # (`due(n) <= date < due(n+1)`) — for `date >= first_due_date`, the first period whose
+  # exclusive end is past `date`. Used to source the overstay's flat daily-rate
+  # denominator (the length of the period E sits in).
+  defp scheduled_period_containing(%State{} = s, %Date{} = date) do
+    0
+    |> Stream.iterate(&(&1 + 1))
+    |> Enum.find_value(fn n ->
+      {period_from, period_to} = period_bounds(s, n)
+      if Date.compare(date, period_to) == :lt, do: {period_from, period_to}
+    end)
   end
 end

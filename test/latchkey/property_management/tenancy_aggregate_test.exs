@@ -150,15 +150,40 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     end
   end
 
-  test "refuses an unsupported (non-weekly) cycle" do
+  test "refuses a cadence outside the supported set (ADR 0009 defers e.g. quarterly)" do
     assert {:error, :unsupported_cycle} =
              Agg.execute(%Agg{}, %C.CommenceTenancy{
                tenancy_id: "t1",
                property_ref: "prop-t1",
                rent_amount_cents: 250_000,
-               cycle: :monthly,
+               cycle: :quarterly,
                first_due_date: ~D[2026-01-05]
              })
+  end
+
+  for cycle <- [:weekly, :fortnightly, :monthly] do
+    test "commences a #{cycle} tenancy (cycle is meaningful, ADR 0009)" do
+      [event] =
+        Agg.execute(%Agg{}, %C.CommenceTenancy{
+          tenancy_id: "t1",
+          property_ref: "prop-t1",
+          rent_amount_cents: 250_000,
+          cycle: unquote(cycle),
+          first_due_date: ~D[2026-01-05]
+        })
+
+      assert %TenancyCommenced{cycle: unquote(cycle)} = event
+    end
+
+    test "refuses a #{cycle} commence with a missing property_ref (ADR 0008 holds for all cadences)" do
+      assert {:error, :missing_property_ref} =
+               Agg.execute(%Agg{}, %C.CommenceTenancy{
+                 tenancy_id: "t1",
+                 rent_amount_cents: 250_000,
+                 cycle: unquote(cycle),
+                 first_due_date: ~D[2026-01-05]
+               })
+    end
   end
 
   test "L2 refuses a second commence" do
@@ -932,6 +957,133 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       assert folded.core.status == :terminal
       # 6 whole weeks + one overstay week = $3,500.
       assert folded.core.final_balance_cents == 350_000
+    end
+  end
+
+  describe "payment cadences — fortnightly & monthly accrual (ADR 0009)" do
+    # An **active** tenancy built directly (no notice), sweepable from `first_due_date`.
+    defp active_state(cycle, first_due_date, rent \\ 50_000) do
+      %State{
+        status: :active,
+        tenancy_id: "t1",
+        rent_amount_cents: rent,
+        cycle: cycle,
+        first_due_date: first_due_date,
+        due_through: nil,
+        effective_end_date: nil
+      }
+    end
+
+    # An `:ending` tenancy on a given cadence with a mid-period effective end date E.
+    defp cadence_ending_state(cycle, first_due_date, e, rent) do
+      %{active_state(cycle, first_due_date, rent) | status: :ending, effective_end_date: e}
+    end
+
+    test "weekly REGRESSION — due dates step +7 and every period spans 7 days" do
+      charges =
+        Tenancy.catch_up_events(
+          active_state(:weekly, ~D[2026-01-05]),
+          ~D[2026-02-02],
+          ~D[2026-02-02]
+        )
+
+      assert Enum.map(charges, & &1.occurred_on) ==
+               [~D[2026-01-05], ~D[2026-01-12], ~D[2026-01-19], ~D[2026-01-26], ~D[2026-02-02]]
+
+      assert Enum.all?(charges, &(&1.amount_cents == 50_000))
+      assert Enum.all?(charges, &(Date.diff(&1.period_to, &1.period_from) == 7))
+    end
+
+    test "fortnightly — due dates step +14 and every period spans 14 days" do
+      charges =
+        Tenancy.catch_up_events(
+          active_state(:fortnightly, ~D[2026-01-05]),
+          ~D[2026-03-02],
+          ~D[2026-03-02]
+        )
+
+      assert Enum.map(charges, & &1.occurred_on) ==
+               [~D[2026-01-05], ~D[2026-01-19], ~D[2026-02-02], ~D[2026-02-16], ~D[2026-03-02]]
+
+      assert Enum.all?(charges, &(&1.amount_cents == 50_000))
+      assert Enum.all?(charges, &(Date.diff(&1.period_to, &1.period_from) == 14))
+    end
+
+    test "monthly — due dates advance from the anchor with a month-end clamp (Jan 31 → Feb 28 → Mar 31 → Apr 30)" do
+      charges =
+        Tenancy.catch_up_events(
+          active_state(:monthly, ~D[2026-01-31], 250_000),
+          ~D[2026-04-30],
+          ~D[2026-04-30]
+        )
+
+      # The 31st "comes back" whenever the month has it — never stuck at 28 (ADR 0009 dec 2).
+      assert Enum.map(charges, & &1.occurred_on) ==
+               [~D[2026-01-31], ~D[2026-02-28], ~D[2026-03-31], ~D[2026-04-30]]
+
+      # Each whole month carries the full monthly rent; the span is the real month length.
+      assert Enum.all?(charges, &(&1.amount_cents == 250_000))
+
+      assert Enum.map(charges, &Date.diff(&1.period_to, &1.period_from)) == [28, 31, 30, 31]
+    end
+
+    test "monthly resume via due_through books only the not-yet-charged months" do
+      # Already booked through Feb 28; sweep to Apr 30 must resume at Mar 31, not re-book Feb.
+      state = %{active_state(:monthly, ~D[2026-01-31], 250_000) | due_through: ~D[2026-02-28]}
+      charges = Tenancy.catch_up_events(state, ~D[2026-04-30], ~D[2026-04-30])
+
+      assert Enum.map(charges, & &1.occurred_on) == [~D[2026-03-31], ~D[2026-04-30]]
+    end
+
+    test "monthly boundary pro-ration divides by the ACTUAL month length — a partial Feb ÷ 28 costs more than a partial Mar ÷ 31" do
+      # Same $3,000 monthly rent, same 14-day partial span, different month → different cost.
+      {:ok, feb_events} =
+        Tenancy.decide_return_keys(
+          cadence_ending_state(:monthly, ~D[2026-02-01], ~D[2026-02-15], 300_000),
+          %{keys_on: ~D[2026-02-15], recorded_on: ~D[2026-02-15]}
+        )
+
+      {:ok, mar_events} =
+        Tenancy.decide_return_keys(
+          cadence_ending_state(:monthly, ~D[2026-03-01], ~D[2026-03-15], 300_000),
+          %{keys_on: ~D[2026-03-15], recorded_on: ~D[2026-03-15]}
+        )
+
+      feb = feb_events |> Enum.filter(&(&1.type == :rent_fell_due)) |> List.last()
+      mar = mar_events |> Enum.filter(&(&1.type == :rent_fell_due)) |> List.last()
+
+      # Feb: 300_000 × 14 ÷ 28 = 150_000 exactly. Mar: 300_000 × 14 ÷ 31 = 135_483.87 → 135_484.
+      assert feb.period_from == ~D[2026-02-01] and feb.period_to == ~D[2026-02-15]
+      assert feb.amount_cents == 150_000
+      assert mar.period_from == ~D[2026-03-01] and mar.period_to == ~D[2026-03-15]
+      assert mar.amount_cents == 135_484
+      # A February day genuinely costs more than a March day for the same monthly rent.
+      assert feb.amount_cents > mar.amount_cents
+    end
+
+    test "monthly cross-boundary overstay — a single [E, V) charge at the E-period (Feb, ÷28) rate, never re-pro-rated per month" do
+      # E = Feb 15 (mid-Feb), V = Mar 10 → the [E, V) span crosses the Feb/Mar boundary.
+      # $2,800 monthly ⇒ Feb daily rate 2800 ÷ 28 = $100/day; 23 held-over days = $2,300.
+      {:ok, events} =
+        Tenancy.decide_return_keys(
+          cadence_ending_state(:monthly, ~D[2026-02-01], ~D[2026-02-15], 280_000),
+          %{keys_on: ~D[2026-03-10], recorded_on: ~D[2026-03-10]}
+        )
+
+      charges = Enum.filter(events, &(&1.type == :rent_fell_due))
+      boundary = Enum.at(charges, -2)
+      overstay = List.last(charges)
+
+      # Boundary [Feb 1, Feb 15) pro-rated ÷28: 280_000 × 14 ÷ 28 = 140_000.
+      assert boundary.period_from == ~D[2026-02-01] and boundary.period_to == ~D[2026-02-15]
+      assert boundary.amount_cents == 140_000
+
+      # ONE overstay [Feb 15, Mar 10) = 23 days at the flat Feb daily rate (÷28): 230_000.
+      # Crosses into March but is NOT re-pro-rated at March's ÷31 (piecewise split deferred).
+      assert overstay.occurred_on == ~D[2026-02-15]
+      assert overstay.period_from == ~D[2026-02-15] and overstay.period_to == ~D[2026-03-10]
+      assert Date.diff(overstay.period_to, overstay.period_from) == 23
+      assert overstay.amount_cents == 230_000
     end
   end
 
