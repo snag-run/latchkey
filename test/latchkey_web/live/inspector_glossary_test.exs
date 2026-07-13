@@ -58,6 +58,37 @@ defmodule LatchkeyWeb.InspectorGlossaryTest do
     end
   end
 
+  describe "DDD/ES entry anchors (spec D5 a+b+c)" do
+    test "the confirmed seed-set headings render in each lens", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/inspector/glossary")
+
+      for anchor <- ~w(aggregate bounded-context anti-corruption-layer domain-event command) do
+        assert has_element?(view, "#glossary-ddd ##{anchor}")
+      end
+
+      for anchor <- ~w(event-store--stream event-vs-command fold--evolve replay immutability) do
+        assert has_element?(view, "#glossary-es ##{anchor}")
+      end
+    end
+
+    test "at least one entry links to a live inspector surface (anchor b)", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/inspector/glossary")
+
+      # The live-surface link points into the running inspector at a stable seeded
+      # stream — the anchoring payoff (concept seen live).
+      assert has_element?(
+               view,
+               "#glossary a[href*='/inspector/streams/tenancy-notice-then-paid']"
+             )
+    end
+
+    test "entries link out to their source on GitHub (anchor c)", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/inspector/glossary")
+
+      assert has_element?(view, "#glossary a[href*='github.com/snag-run/latchkey/blob/main']")
+    end
+  end
+
   describe "domain lens wired to CONTEXT.md (D1/D6)" do
     test "renders the domain framing caption", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/inspector/glossary")

@@ -22,13 +22,14 @@ defmodule LatchkeyWeb.Inspector.Glossary do
   """
 
   # This file lives at lib/latchkey_web/live/inspector/glossary.ex; the repo root is
-  # four directories up. CONTEXT.md sits at the root; the authored lenses in priv/.
+  # four directories up. CONTEXT.md sits at the root (its established home); the
+  # authored DDD/ES lenses live with the other narrative docs under docs/glossary/.
   @repo_root Path.expand("../../../..", __DIR__)
 
   @sources %{
     domain: Path.join(@repo_root, "CONTEXT.md"),
-    ddd: Path.join([@repo_root, "priv", "glossary", "ddd.md"]),
-    es: Path.join([@repo_root, "priv", "glossary", "es.md"])
+    ddd: Path.join([@repo_root, "docs", "glossary", "ddd.md"]),
+    es: Path.join([@repo_root, "docs", "glossary", "es.md"])
   }
 
   # Recompile whenever any lens source changes, so the rendered HTML never lags.
