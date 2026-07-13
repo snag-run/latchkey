@@ -35,6 +35,10 @@ defmodule LatchkeyWeb.Inspector.EventLog do
   attr :rows, :list, required: true, doc: "pre-resolved event rows in commit order"
   attr :docs, :map, required: true, doc: "canonical doc URLs for read-more links"
 
+  attr :highlight_version, :integer,
+    default: nil,
+    doc: "stream_version of the replay scrubber's current event (D4), or nil when unscrubbed"
+
   def events_pane(assigns) do
     ~H"""
     <section id="event-log" class="max-w-3xl">
@@ -85,10 +89,18 @@ defmodule LatchkeyWeb.Inspector.EventLog do
             <li
               :for={row <- @rows}
               id={"event-row-#{@stream_id}-#{row.version}"}
-              class="relative pl-5 pb-5"
+              aria-current={row.version == @highlight_version && "step"}
+              class={[
+                "relative pl-5 pb-5",
+                row.version == @highlight_version &&
+                  "-ml-px rounded-r-md border-l-2 border-accent bg-accent/5"
+              ]}
             >
               <span
-                class="absolute -left-[5px] top-1.5 size-2.5 rounded-full bg-primary"
+                class={[
+                  "absolute -left-[5px] top-1.5 size-2.5 rounded-full",
+                  if(row.version == @highlight_version, do: "bg-accent", else: "bg-primary")
+                ]}
                 aria-hidden="true"
               />
 
