@@ -173,9 +173,12 @@
   text-underline-offset: 2px;
 }
 
-/* The empty header-anchor MDEx injects (aria-hidden) must not underline. */
+/* The empty header-anchor MDEx injects (aria-hidden) carries the heading's id, so
+   it is the actual `#term` fragment target — it must not underline, and it needs
+   the same scroll offset as the heading so a deep link lands clear of the top. */
 .glossary-prose a.anchor {
   text-decoration: none;
+  scroll-margin-top: 1.5rem;
 }
 
 .glossary-prose code {

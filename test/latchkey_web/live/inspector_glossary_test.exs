@@ -48,6 +48,14 @@ defmodule LatchkeyWeb.InspectorGlossaryTest do
       assert has_element?(view, "#glossary-ddd #aggregate")
       assert has_element?(view, "#glossary-es #projection-vs-compute-on-read")
     end
+
+    test "anchor/1 output resolves to a rendered heading id (deep-link contract)", %{conn: conn} do
+      # The slug a pane read_more will point at (#129) must be a real anchor on the
+      # page — asserted against the rendered DOM, not the HTML string.
+      {:ok, view, _html} = live(conn, ~p"/inspector/glossary")
+
+      assert has_element?(view, "#" <> Glossary.anchor("Rental ledger"))
+    end
   end
 
   describe "domain lens wired to CONTEXT.md (D1/D6)" do
@@ -83,21 +91,24 @@ defmodule LatchkeyWeb.InspectorGlossaryTest do
     end
   end
 
-  describe "Glossary content module (deep-link contract)" do
+  describe "Glossary content module" do
     test "lenses/0 lists the three lenses, domain first" do
       assert Glossary.lenses() == [:domain, :ddd, :es]
     end
 
-    test "anchor/1 agrees with the rendered heading ids (#129 link target contract)" do
-      # The anchor a pane read_more will point at must equal the id the page renders.
+    test "anchor/1 produces a GitHub-style slug" do
       assert Glossary.anchor("Rental ledger") == "rental-ledger"
-      assert Glossary.html(:domain) =~ ~s(id="rental-ledger")
     end
 
-    test "html/1 renders each lens to HTML" do
+    test "each lens renders headings" do
       for lens <- Glossary.lenses() do
-        assert is_binary(Glossary.html(lens))
-        assert Glossary.html(lens) =~ "<h"
+        headings =
+          lens
+          |> Glossary.html()
+          |> LazyHTML.from_fragment()
+          |> LazyHTML.filter("h1, h2")
+
+        refute Enum.empty?(headings)
       end
     end
   end
