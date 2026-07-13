@@ -49,7 +49,7 @@ defmodule LatchkeyWeb.Inspector.StatePanes do
         <header class="mb-2 flex items-center gap-2">
           <span class="badge badge-sm badge-primary">write model</span>
           <h3 class="text-sm font-semibold">Aggregate state</h3>
-          <span class="ml-auto font-mono text-[11px] text-base-content/40">%Tenancy.State{}</span>
+          <span class="ml-auto font-mono text-[11px] text-base-content/40" phx-no-curly-interpolation>%Tenancy.State{}</span>
         </header>
 
         <.caption id="aggregate-caption" class="mb-3">

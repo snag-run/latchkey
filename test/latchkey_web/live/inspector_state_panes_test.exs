@@ -168,7 +168,7 @@ defmodule LatchkeyWeb.InspectorStatePanesTest do
     } do
       refute has_element?(view, "form")
       assert has_element?(view, "#consistency-caption", "append-only")
-      refute render(view) =~ "tamper-evident"
+      refute view |> element("#consistency-caption") |> render() =~ "tamper-evident"
     end
   end
 
