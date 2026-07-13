@@ -7,10 +7,12 @@ and no live surface are listed under [More event-sourcing concepts](#more-event-
 
 ## Event store / stream
 
-The append-only source of truth. State is not stored as rows to be updated — it is the
-*log* of events, grouped into per-aggregate **streams** (`tenancy-<slug>`, plus the
-`accounts` edge stream). Latchkey uses Commanded's Postgres EventStore; the inspector
-reads it with `stream_forward/1` and never writes.
+The append-only **write-model** source of truth. Write-model state is not stored as rows
+to be updated — it is the *log* of events, grouped into **streams**: one per Tenancy
+aggregate (`tenancy-<slug>`), plus the non-aggregate `accounts` edge stream. Derived
+**read models** (like Arrears) are stored separately and rebuilt from this log. Latchkey
+uses Commanded's Postgres EventStore; the inspector reads it with `stream_forward/1` and
+never writes.
 
 **Symbol** `Latchkey.EventStore` · **Live** [full event log →](/inspector/log) · **Source** [`event_store.ex` ↗](https://github.com/snag-run/latchkey/blob/main/lib/latchkey/event_store.ex)
 
@@ -27,7 +29,8 @@ pane because it issues none.
 ## Fold / `evolve`
 
 Turning a list of events into current state by replaying them one at a time through a
-pure reducer — `state = Enum.reduce(events, initial, &evolve/2)`. The Tenancy aggregate
+pure reducer — `Enum.reduce(events, initial, fn event, state -> evolve(state, event) end)`.
+The Tenancy aggregate
 folds its own stream this way; the inspector's scrubber re-runs the same fold over any
 *prefix* of the log, which is why dragging it reconstructs state at every past moment.
 

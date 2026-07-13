@@ -10,7 +10,8 @@ listed under [More DDD concepts](#more-ddd-concepts) as links out, never as fake
 The consistency boundary that owns a stream's invariants and decides which new events
 may be appended. Latchkey's one aggregate is the **Tenancy**: a pure core that folds a
 tenancy's own events into a `State` (`evolve/2`) and validates each command against that
-state (`decide_*/2`). Every stream is one aggregate instance, id `tenancy-<slug>`.
+state (`decide_*/2`). Every **Tenancy** stream (`tenancy-<slug>`) is one aggregate
+instance; the Accounts edge stream is *not* an aggregate — it just appends payment facts.
 
 **Symbol** `Latchkey.PropertyManagement.Tenancy` · **Live** [aggregate-state pane on a deep stream →](/inspector/streams/tenancy-notice-then-paid#aggregate-state-pane) · **Source** [`tenancy.ex` ↗](https://github.com/snag-run/latchkey/blob/main/lib/latchkey/property_management/tenancy.ex)
 
