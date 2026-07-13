@@ -139,10 +139,12 @@ pair is uniform and omitted for brevity. Envelope **direction is per-event-kind*
 **notices carry no forward-dated envelope** — `occurred_on` is the **served** date and
 equals `recorded_on` for live events; the future kick-in date (e.g. `elected_vacate_date`,
 `termination_date`, `new_vacate_date`) lives in the **payload**, not the envelope;
-**accrual catch-up ticks lag** (`recorded_on ≥ occurred_on` — the rent fell due in the
-past, the sweep just hadn't booked it: *lazy accrual, not backdating*); **true
-backdating** (`occurred_on < recorded_on` *and* correcting posted events) is rare and
-deferred (§6, §10).
+**accrual catch-up ticks book same-day** (`recorded_on == occurred_on` — a
+system-managed `RentFellDue` is auto-calculated and books on its own due date, whenever
+the sweep runs; ADR 0010, supersedes ADR 0005 §4). A `RentFellDue` with `recorded_on >
+occurred_on` means the tenancy was **imported/transferred** and its history rebuilt after
+the fact (issue #117) — the sole legitimate divergence. **True backdating** (`occurred_on
+< recorded_on` *and* correcting posted events) remains rare and deferred (§6, §10).
 
 ---
 

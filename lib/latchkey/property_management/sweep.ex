@@ -24,9 +24,10 @@ defmodule Latchkey.PropertyManagement.Sweep do
   @doc """
   The `CatchUp` command to issue for one tenancy, swept through `as_of`.
 
-  `recorded_on` is left `nil` so the aggregate books it at the edge as `Clock.today/0`
-  — a swept-in `RentFellDue` therefore carries `recorded_on >= occurred_on` (lazy
-  accrual, not backdating; ADR 0005 decision 4).
+  `recorded_on` is left `nil`: a swept-in `RentFellDue` is system-managed accrual, so
+  each tick self-stamps `recorded_on = occurred_on` — it books on its own due date, no
+  bitemporal divergence (issue #118, supersedes ADR 0005 decision 4). Divergence
+  (`recorded_on > occurred_on`) is reserved for imported/transferred tenancies (#117).
   """
   @spec catch_up_command(String.t(), Date.t()) :: CatchUp.t()
   def catch_up_command(tenancy_id, %Date{} = as_of) when is_binary(tenancy_id) do

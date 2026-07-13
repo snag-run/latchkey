@@ -1,8 +1,9 @@
 defmodule Latchkey.PropertyManagement.Tenancy.Events.RentFellDue do
   @moduledoc false
   @derive Jason.Encoder
-  # `occurred_on` is the rent's due date; `recorded_on` lags it for lazy accrual
-  # (a swept-in catch-up tick has recorded_on >= occurred_on — not backdating).
+  # `occurred_on` is the rent's due date. For system-managed accrual `recorded_on ==
+  # occurred_on` — the tick books on its own due date (issue #118). `recorded_on >
+  # occurred_on` only for an imported/transferred tenancy whose history is rebuilt (#117).
   #
   # `period_from`/`period_to` name the exact span the charge covers as a half-open
   # interval `[period_from, period_to)` (domain-model §3): `period_from` inclusive,

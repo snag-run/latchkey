@@ -117,7 +117,7 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   end
 
   @doc """
-  Lazy, **end-date-aware** catch-up (§6): the `rent_fell_due` events owed for
+  On-demand, **end-date-aware** catch-up (§6): the `rent_fell_due` events owed for
   `(due_through, as_of]`. Cadence-aware (ADR 0009): due dates are the uniform
   index-from-anchor walk `due(n)` (weekly `+7·n`, fortnightly `+14·n`, monthly
   `Date.shift(anchor, month: n)` from the commencement anchor — month-end clamped, never
@@ -125,9 +125,12 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   naturally 28–31 with no special-casing. Idempotent by the `due_through` pointer: resume
   advances `n` from 0 until `due(n)` is strictly past the last booked due date.
 
-  Each tick's `occurred_on` is its historical due date; every tick shares the passed
-  `recorded_on` (the booking date), so a swept-in tick has `recorded_on >= occurred_on`
-  (lazy accrual, not backdating).
+  Each tick's `occurred_on` is its historical due date. `recorded_on` is the booking date:
+  pass `nil` for system-managed accrual and every tick self-stamps `recorded_on =
+  occurred_on` — it books on its own due date, no bitemporal divergence (issue #118,
+  supersedes ADR 0005 decision 4). A non-nil `recorded_on` is threaded onto every tick and
+  is the sole legitimate `recorded_on > occurred_on` case: an imported/transferred tenancy
+  whose history is rebuilt after the fact (issue #117).
 
   Once the tenancy has an effective end date `E` (folded from the termination notice),
   the sweep books whole periods only until a full period no longer fits before `E`, then
@@ -153,7 +156,7 @@ defmodule Latchkey.PropertyManagement.Tenancy do
     |> Stream.filter(fn {period_from, _to} -> booked_after?(s.due_through, period_from) end)
     |> Enum.reduce_while([], fn {period_from, period_to}, acc ->
       cond do
-        # Not yet due — lazy accrual books nothing past `as_of`.
+        # Not yet due — the sweep books nothing past `as_of`.
         Date.compare(period_from, as_of) == :gt ->
           {:halt, acc}
 
@@ -201,12 +204,15 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   # A whole rent period `[due(n), due(n+1))` at the full periodic rent. `occurred_on` (the
   # accrual/FIFO key) is the period start `period_from`; `period_to` is the cadence's next
   # due date (7/14 days on, or the next calendar month), so the persisted span carries the
-  # real period length for the read side.
+  # real period length for the read side. `recorded_on` defaults to `occurred_on`
+  # (`period_from`) — a system-managed tick books on its own due date, no bitemporal
+  # divergence (issue #118). A non-nil `recorded_on` is the import/transfer rebuild date
+  # (#117), the sole legitimate `recorded_on > occurred_on` case.
   defp whole_period_charge(%State{} = s, period_from, period_to, recorded_on) do
     %{
       type: :rent_fell_due,
       occurred_on: period_from,
-      recorded_on: recorded_on,
+      recorded_on: recorded_on || period_from,
       amount_cents: s.rent_amount_cents,
       period_from: period_from,
       period_to: period_to
@@ -222,7 +228,7 @@ defmodule Latchkey.PropertyManagement.Tenancy do
     %{
       type: :rent_fell_due,
       occurred_on: period_from,
-      recorded_on: recorded_on,
+      recorded_on: recorded_on || period_from,
       amount_cents: daily_rate_amount(s, period_from, e, Date.diff(period_to, period_from)),
       period_from: period_from,
       period_to: e
@@ -295,10 +301,12 @@ defmodule Latchkey.PropertyManagement.Tenancy do
       # Accrual stays lifecycle-gated even though application isn't: a Terminal tenancy
       # books no new `RentFellDue` (L3 keeps it final), so the payment reduces the live
       # folded balance without reopening the tenancy or resuming the rent clock.
+      # Accrual ticks book same-day (`recorded_on = nil` → each tick self-stamps its
+      # occurred_on, #118); the payment event itself keeps `cmd.recorded_on` below.
       catch_up =
         if s.status == :terminal,
           do: [],
-          else: catch_up_events(s, cmd.received_on, cmd.recorded_on)
+          else: catch_up_events(s, cmd.received_on, nil)
 
       payment = %{
         type: :rent_payment_recorded,
@@ -363,15 +371,17 @@ defmodule Latchkey.PropertyManagement.Tenancy do
     end
   end
 
-  # §6 lazy sweep as a first-class no-decision op (keeps the read model warm).
+  # §6 on-demand sweep as a first-class no-decision op (keeps the read model warm).
   def decide_catch_up(%State{status: :pending}, _cmd), do: {:ok, []}
 
   # A settled tenancy is done (L3): no rent accrues after Terminal, so the daily
   # sweep (#41) must not keep emitting `RentFellDue`. No-op like the pending case.
   def decide_catch_up(%State{status: :terminal}, _cmd), do: {:ok, []}
 
-  def decide_catch_up(%State{} = s, %{as_of: as_of} = cmd),
-    do: {:ok, catch_up_events(s, as_of, cmd.recorded_on)}
+  # Organic sweep books same-day (`recorded_on = nil`, #118). An import/transfer that
+  # rebuilds history threads its real rebuild date through `catch_up_events/3` instead.
+  def decide_catch_up(%State{} = s, %{as_of: as_of}),
+    do: {:ok, catch_up_events(s, as_of, nil)}
 
   # L1/L3 — a termination notice needs a live (active) tenancy.
   def decide_termination(%State{status: status}, _cmd) when status != :active,
@@ -386,7 +396,7 @@ defmodule Latchkey.PropertyManagement.Tenancy do
     # clamp, not a gate. A future E (the usual arrears notice) is a no-op: the `as_of`
     # guard halts the sweep before it ever reaches E.
     s_at_e = %State{s | effective_end_date: cmd.termination_date}
-    catch_up = catch_up_events(s_at_e, cmd.as_of, cmd.recorded_on)
+    catch_up = catch_up_events(s_at_e, cmd.as_of, nil)
     s_now = Enum.reduce(catch_up, s, &evolve(&2, &1))
     behind = days_behind(s_now, cmd.as_of)
 
@@ -440,8 +450,8 @@ defmodule Latchkey.PropertyManagement.Tenancy do
       #    rewrites or re-pro-rates an already-booked period. `V = E` ⇒ empty span ⇒ no
       #    charge. Any credit the tenant holds is consumed first automatically under
       #    balance-as-truth (the fold nets it), so no special handling is needed.
-      catch_up = catch_up_events(s, e, cmd.recorded_on)
-      overstay = overstay_events(s, e, cmd.keys_on, cmd.recorded_on)
+      catch_up = catch_up_events(s, e, nil)
+      overstay = overstay_events(s, e, cmd.keys_on, nil)
       exit_charges = catch_up ++ overstay
       s_now = Enum.reduce(exit_charges, s, &evolve(&2, &1))
 
@@ -486,7 +496,7 @@ defmodule Latchkey.PropertyManagement.Tenancy do
         %{
           type: :rent_fell_due,
           occurred_on: e,
-          recorded_on: recorded_on,
+          recorded_on: recorded_on || e,
           amount_cents: daily_rate_amount(s, e, v, Date.diff(p_to, p_from)),
           period_from: e,
           period_to: v

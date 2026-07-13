@@ -74,10 +74,9 @@ defmodule Latchkey.PropertyManagement.TenancyIntegrationTest do
     assert Arrears.days_behind(proj, ~D[2026-02-03]) == 29
     assert Arrears.days_behind(proj, ~D[2026-03-04]) == 58
 
-    # The bitemporal envelope survives the EventStore's JSON round-trip: each
-    # swept RentFellDue carries {occurred_on, recorded_on}, and — booked live via
-    # Clock.today() while charges fell due back in January — demonstrates lazy
-    # accrual (recorded_on >= occurred_on), not backdating.
+    # The bitemporal envelope survives the EventStore's JSON round-trip: each swept
+    # RentFellDue carries {occurred_on, recorded_on}, and — being system-managed
+    # accrual — books same-day: recorded_on == occurred_on, no divergence (#118).
     ticks =
       ("tenancy-" <> tid)
       |> EventStore.stream_forward()
@@ -87,7 +86,7 @@ defmodule Latchkey.PropertyManagement.TenancyIntegrationTest do
     assert length(ticks) == 5
 
     for %RentFellDue{occurred_on: occurred, recorded_on: recorded} <- ticks do
-      assert Date.compare(to_date(recorded), to_date(occurred)) in [:gt, :eq]
+      assert to_date(recorded) == to_date(occurred)
     end
   end
 

@@ -138,8 +138,12 @@ ADR 0006):
   keys date, the settlement date. Uniform across every event kind. This is the
   timeline's primary/sort date (lay column header: "Date").
 - **`recorded_on`** — *when the fact was booked* into the record. Coincides with
-  `occurred_on` for live events; **lags** it for lazy accrual (rent due 5 Mar,
-  swept in 20 Mar). Seeder-assigned for backhistory (ADR 0005 §3).
+  `occurred_on` for system-managed accrual: a `RentFellDue` books on its **own due
+  date** (ADR 0010, supersedes ADR 0005 §4 — no lazy-accrual lag). It **lags**
+  (`recorded_on > occurred_on`) only for an **imported/transferred** tenancy whose
+  history is rebuilt after the fact (issue #117) — that is what the inspector's
+  divergence flag now means. Seeded backhistory is booked at its historical dates,
+  still distinct from the seed-run `created_at` (ADR 0005 §3).
 - **`created_at`** — the store's *physical insert* wall-clock. Provenance only;
   excluded from the #16 hash preimage.
 

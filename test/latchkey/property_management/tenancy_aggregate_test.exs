@@ -294,8 +294,12 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       assert notice.occurred_on != notice.termination_date
     end
 
-    test "a catch-up RentFellDue has recorded_on >= occurred_on (lazy accrual, not backdating)" do
-      # Booked on 03-01 but sweeping charges that fell due back in January.
+    test "a swept catch-up RentFellDue books same-day (recorded_on == occurred_on, #118)" do
+      # System-managed accrual books on its own due date: even though the sweep runs on
+      # 03-01 (and the command carries that recorded_on), each tick self-stamps
+      # recorded_on = occurred_on — no bitemporal divergence. Divergence is reserved for
+      # imported/transferred tenancies (#117); the organic sweep ignores the command's
+      # recorded_on for the accrual ticks.
       events =
         Agg.execute(commenced_agg(), %C.CatchUp{
           tenancy_id: "t1",
@@ -307,8 +311,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       assert length(ticks) == 5
 
       for %RentFellDue{occurred_on: occurred, recorded_on: recorded} <- ticks do
-        assert recorded == ~D[2026-03-01]
-        assert Date.compare(recorded, occurred) in [:gt, :eq]
+        assert recorded == occurred
       end
 
       # ticks occurred on the historical weekly due dates, well before booking
@@ -688,6 +691,10 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       assert boundary.period_from == ~D[2026-02-09]
       assert boundary.period_to == ~D[2026-02-12]
       assert boundary.amount_cents == 21_429
+
+      # #118: exit accrual books same-day — every whole-period and the boundary tick
+      # self-stamps recorded_on = occurred_on (no divergence for system-managed accrual).
+      assert Enum.all?(charges, &(&1.recorded_on == &1.occurred_on))
     end
 
     test "a tenant leaving mid-week is charged only the days within the tenancy, never the whole week" do
@@ -830,6 +837,8 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       assert overstay.period_to == ~D[2026-02-19]
       # 3 days at $500/week → round_half_up(50_000 × 3 ÷ 7) = 21_429.
       assert overstay.amount_cents == 21_429
+      # #118: the overstay tick books same-day too — recorded_on = occurred_on = E.
+      assert overstay.recorded_on == overstay.occurred_on
     end
 
     test "boundary-aligned monthly E divides the overstay by the last scheduled period (÷28), not the next month (÷31)" do

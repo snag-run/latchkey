@@ -12,8 +12,9 @@ defmodule LatchkeyWeb.Inspector.EventLog do
   Each row is **self-describing out of context** (the tribunal-evidence goal): it
   names the **property** (leading — the primary PM identifier) and **tenant**, and
   shows **both envelope dates** (`occurred_on` / `recorded_on`) with a visible
-  **divergence flag** when they differ (D7 — lazy-accrual lag or a forward-dated
-  fact). Identity is resolved upstream in `LatchkeyWeb.InspectorLive`; accounts
+  **divergence flag** when they differ (D7 — for `RentFellDue`, an imported/rebuilt
+  tenancy (#117), since organic accrual books same-day; or a forward-dated fact).
+  Identity is resolved upstream in `LatchkeyWeb.InspectorLive`; accounts
   rows honestly show an `UNKNOWN` sentinel when the payment holder is unresolvable.
 
   Presentational only. It renders the pre-built rows it is handed — it reads no
@@ -64,8 +65,9 @@ defmodule LatchkeyWeb.Inspector.EventLog do
             <.caption id="bitemporal-caption">
               Every event carries two dates — <b>occurred_on</b>
               (when the fact became true) and <b>recorded_on</b>
-              (when it was booked). When they diverge it is flagged: a lagged
-              accrual tick or a forward-dated fact.
+              (when it was booked). When they diverge it is flagged: an
+              imported/rebuilt tenancy or a forward-dated fact — organic accrual
+              books same-day.
               <.read_more href={"#{@docs.domain_model}#3-events-producers"}>
                 domain-model.md §3
               </.read_more>
