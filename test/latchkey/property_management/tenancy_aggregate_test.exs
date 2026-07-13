@@ -832,6 +832,39 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       assert overstay.amount_cents == 21_429
     end
 
+    test "boundary-aligned monthly E divides the overstay by the last scheduled period (÷28), not the next month (÷31)" do
+      # Regression pin for #104. Anchor Feb 1, monthly $2,800; E = Mar 1 lands **exactly**
+      # on a due date (due(1) = Feb 1 shifted one month). The overstay `[Mar 1, Mar 6)` = 5
+      # days must divide by the last **scheduled** period `[Feb 1, Mar 1)` = 28 days →
+      # $100/day → $500. The pre-fix bug sourced the denominator from the post-exit period
+      # `[Mar 1, Apr 1)` = 31 days → $90.32/day → $451.61, understating the charge.
+      state = %State{
+        status: :ending,
+        tenancy_id: "t1",
+        rent_amount_cents: 280_000,
+        cycle: :monthly,
+        first_due_date: ~D[2026-02-01],
+        due_through: nil,
+        payments_total_cents: 0,
+        effective_end_date: ~D[2026-03-01]
+      }
+
+      {:ok, events} =
+        Tenancy.decide_return_keys(state, %{keys_on: ~D[2026-03-06], recorded_on: ~D[2026-03-06]})
+
+      charges = Enum.filter(events, &(&1.type == :rent_fell_due))
+      overstay = List.last(charges)
+
+      # One whole month [Feb 1, Mar 1) booked to E, then exactly one overstay charge.
+      assert Enum.count(charges) == 2
+      assert overstay.occurred_on == ~D[2026-03-01]
+      assert overstay.period_from == ~D[2026-03-01]
+      assert overstay.period_to == ~D[2026-03-06]
+      # 5 days at $2,800/28 = $100/day → round_half_up(280_000 × 5 ÷ 28) = 50_000, NOT the
+      # ÷31 figure round_half_up(280_000 × 5 ÷ 31) = 45_161.
+      assert overstay.amount_cents == 50_000
+    end
+
     test "the overstay is a forward append — it never rewrites the whole periods booked to E" do
       {:ok, events} =
         Tenancy.decide_return_keys(

@@ -497,16 +497,21 @@ defmodule Latchkey.PropertyManagement.Tenancy do
     end
   end
 
-  # The scheduled period `{due(n), due(n+1)}` whose half-open interval contains `date`
-  # (`due(n) <= date < due(n+1)`) — for `date >= first_due_date`, the first period whose
-  # exclusive end is past `date`. Used to source the overstay's flat daily-rate
-  # denominator (the length of the period E sits in).
+  # The **last scheduled period** for the overstay denominator (ADR 0009 decision 3): the
+  # first period whose exclusive end is on/after `date` (`due(n) < date <= due(n+1)`). For a
+  # `date` strictly interior to a period this is the period it sits in; for a
+  # **boundary-aligned** `date == due(m)` it is the period *ending* at `date` —
+  # `[due(m-1), due(m))` — not the period *starting* at `date` (which `catch_up_events`
+  # classifies as post-exit, #30). Selecting the ending period keeps the flat daily-rate
+  # denominator on the last period actually scheduled within the tenancy (e.g. a monthly E
+  # on Mar 1 divides by Feb's 28, not the next month's 31). Weekly/fortnightly are immune:
+  # fixed period length makes ending-at-E and starting-at-E the same denominator.
   defp scheduled_period_containing(%State{} = s, %Date{} = date) do
     0
     |> Stream.iterate(&(&1 + 1))
     |> Enum.find_value(fn n ->
       {period_from, period_to} = period_bounds(s, n)
-      if Date.compare(date, period_to) == :lt, do: {period_from, period_to}
+      if Date.compare(date, period_to) != :gt, do: {period_from, period_to}
     end)
   end
 end
