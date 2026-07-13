@@ -5,6 +5,11 @@ config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
 # Don't boot Commanded in the sandboxed suite; integration tests start it explicitly.
 config :latchkey, start_commanded: false
 
+# Slow the replay scrubber's auto-advance tick right down in test so the suite
+# drives play/pause deterministically (by sending :scrubber_tick by hand) without
+# a real 1s timer firing mid-assertion (spec D4).
+config :latchkey, :inspector, scrubber_tick_ms: 60_000
+
 # Configure your database
 #
 # The MIX_TEST_PARTITION environment variable can be used

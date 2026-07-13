@@ -27,6 +27,7 @@ defmodule LatchkeyWeb.InspectorLive do
   import LatchkeyWeb.Inspector.EventLog
   import LatchkeyWeb.Inspector.Firehose
   import LatchkeyWeb.Inspector.LedgerPane
+  import LatchkeyWeb.Inspector.Scrubber
   import LatchkeyWeb.Inspector.StatePanes
   import LatchkeyWeb.InspectorComponents
 
@@ -45,6 +46,12 @@ defmodule LatchkeyWeb.InspectorLive do
   # as new ones arrive, so the stream can't balloon memory over a long-running
   # session (spec D5: "LiveView streams ... so the feed can't balloon memory").
   @firehose_limit 200
+
+  # The replay scrubber's auto-advance cadence (spec D4: "~1s per event"). The tick
+  # is a **server-side** self-scheduled message (`Process.send_after/3`), not a client
+  # timer — the fold runs server-side, so play is just repeated server steps. Made
+  # configurable so tests drive advancement by hand without racing a real 1s timer.
+  @tick_interval_ms Application.compile_env(:latchkey, [:inspector, :scrubber_tick_ms], 1000)
 
   # ── Static context map (spec D2/D3) ─────────────────────────────────────────
   # The named-only subdomains (context-map.md) — rendered as honestly-labelled
@@ -106,6 +113,15 @@ defmodule LatchkeyWeb.InspectorLive do
       |> assign(:acl_edge_label, @acl_edge_label)
       |> assign(:docs, @docs)
       |> assign(:stream_found?, false)
+      # Replay-scrubber state (spec D4). The whole thing is one integer `k`; the
+      # rest is bookkeeping. Defaulted here so every render path is safe before a
+      # deep stream is selected.
+      |> assign(:recorded, [])
+      |> assign(:scrubber_k, 0)
+      |> assign(:scrubber_n, 0)
+      |> assign(:scrubber_playing?, false)
+      |> assign(:scrubber_timer, nil)
+      |> assign(:highlight_version, nil)
       |> stream(:firehose, [])
 
     {:ok, socket}
@@ -127,6 +143,25 @@ defmodule LatchkeyWeb.InspectorLive do
     {:noreply, stream_insert(socket, :firehose, row, at: 0, limit: @firehose_limit)}
   end
 
+  # ── Auto-advance tick (spec D4: ~1s/event, server-side) ─────────────────────
+  # Guarded on `scrubber_playing?` so a stale tick left over after a pause is inert.
+  # Advances one event; on reaching the head it halts (auto-pauses), otherwise it
+  # schedules the next tick.
+  def handle_info(:scrubber_tick, %{assigns: %{scrubber_playing?: true}} = socket) do
+    next = socket.assigns.scrubber_k + 1
+
+    socket =
+      if next >= socket.assigns.scrubber_n do
+        socket |> assign_prefix(socket.assigns.scrubber_n) |> assign(:scrubber_playing?, false)
+      else
+        socket |> assign_prefix(next) |> schedule_tick()
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_info(:scrubber_tick, socket), do: {:noreply, socket}
+
   # Structural click-to-scrub only (spec D5 / issue #82 scope): the row already
   # carries its {stream_id, position}, but there is no stream-detail view to
   # navigate into yet — that lands at issue #86, once it exists. Never use a
@@ -140,6 +175,47 @@ defmodule LatchkeyWeb.InspectorLive do
     # Deferred to #86: navigate to the stream-detail view, scrubbed to this
     # {stream_id, position}. (Not spelled as a TODO tag — this repo's credo
     # config fails the gate on Credo.Check.Design.TagTODO.)
+    {:noreply, socket}
+  end
+
+  # ── Replay-scrubber controls (spec D4) ──────────────────────────────────────
+  # Every control is server-side: it moves the single integer `k` and re-folds the
+  # prefix. Manual controls pause any running auto-advance so the two never fight.
+
+  # Slider drag: a bare `<input type="range" name="k">` posts its value. Parse and
+  # clamp defensively; `assign_prefix/2` re-clamps, so a bogus value is harmless.
+  @impl true
+  def handle_event("scrub", %{"k" => k}, socket) do
+    {:noreply, socket |> cancel_play() |> assign_prefix(to_int(k, socket.assigns.scrubber_k))}
+  end
+
+  def handle_event("step_back", _params, socket) do
+    {:noreply, socket |> cancel_play() |> assign_prefix(socket.assigns.scrubber_k - 1)}
+  end
+
+  def handle_event("step_forward", _params, socket) do
+    {:noreply, socket |> cancel_play() |> assign_prefix(socket.assigns.scrubber_k + 1)}
+  end
+
+  # Play/pause. Pausing cancels the tick. Playing schedules the first tick; if we are
+  # already parked at the head there is nothing to fold forward, so a play there
+  # rewinds to the empty prefix first, giving a satisfying full replay.
+  def handle_event("toggle_play", _params, socket) do
+    socket =
+      if socket.assigns.scrubber_playing? do
+        cancel_play(socket)
+      else
+        start_position =
+          if socket.assigns.scrubber_k >= socket.assigns.scrubber_n,
+            do: 0,
+            else: socket.assigns.scrubber_k
+
+        socket
+        |> assign_prefix(start_position)
+        |> assign(:scrubber_playing?, true)
+        |> schedule_tick()
+      end
+
     {:noreply, socket}
   end
 
@@ -157,11 +233,15 @@ defmodule LatchkeyWeb.InspectorLive do
 
   defp apply_action(socket, :landing, _params) do
     socket
+    |> cancel_play()
     |> assign(:page_title, "Inspector — orientation")
     |> assign(:active_stream, nil)
   end
 
   defp apply_action(socket, :stream, %{"stream_id" => stream_id}) do
+    # Navigating away from a stream stops any in-flight auto-advance (spec D4).
+    socket = cancel_play(socket)
+
     # Validate against the streams enumerable at mount, so a typo'd or stale URL
     # surfaces as "unknown" instead of masquerading as a valid Tenancy stream.
     case owning_context(socket.assigns.contexts, stream_id) do
@@ -174,7 +254,8 @@ defmodule LatchkeyWeb.InspectorLive do
 
       context ->
         # One store read feeds both the event-log pane and the shared fold, so the
-        # two panes can never see different histories (D1).
+        # two panes can never see different histories (D1). It is held in assigns so
+        # the scrubber can re-fold arbitrary prefixes of it without re-reading (D4).
         recorded = read_stream(stream_id)
 
         socket
@@ -183,32 +264,77 @@ defmodule LatchkeyWeb.InspectorLive do
         |> assign(:stream_found?, true)
         |> assign(:context_name, context.name)
         |> assign(:stream_kind, context.kind)
+        |> assign(:recorded, recorded)
         |> assign(:event_rows, build_event_rows(stream_id, context.kind, recorded))
-        |> assign_fold_panes(stream_id, context.kind, recorded)
+        |> init_scrubber(context.kind, recorded)
     end
   end
 
-  # ── Aggregate-state + read-model panes (issue #83, spec D1/D2) ───────────────
-  # Folds the selected stream through the **shared** `ArrearsFold.fold_and_derive/1`
-  # at full history — the very code path the operational `ArrearsProjector` runs, so
-  # the panes can never drift from production (D1). In-memory only: it reads the live
-  # `Arrears` row solely to reconcile against, and never writes any read-model table.
-  # The Accounts edge folds no aggregate state (D3), so it gets no fold panes.
-  defp assign_fold_panes(socket, _stream_id, :edge, _recorded) do
+  # ── Replay scrubber (issue #85, spec D4) ────────────────────────────────────
+  # The scrubber's whole state is one integer `k` (prefix length over 0..N). Each
+  # control moves `k`; `assign_prefix/2` then re-folds the first `k` events through
+  # the **same shared fold** (`ArrearsFold` / `Timeline.fold`) the operational
+  # projector runs (D1) — entirely server-side, no JS fold (D4). The Accounts edge
+  # folds no state (D3), so it gets no scrubber and no fold panes.
+  defp init_scrubber(socket, :edge, _recorded) do
     socket
+    |> assign(:scrubber_n, 0)
+    |> assign(:scrubber_k, 0)
+    |> assign(:scrubber_playing?, false)
+    |> assign(:highlight_version, nil)
     |> assign(:aggregate_state, nil)
     |> assign(:read_model, nil)
     |> assign(:consistency, nil)
     |> assign(:ledger_entries, nil)
   end
 
-  defp assign_fold_panes(socket, stream_id, _deep, recorded) do
+  # Deep (tenancy) streams open at the head (k = N), so the default view is the full
+  # history — the same panes prior slices showed — now with the head event highlighted.
+  defp init_scrubber(socket, _deep, recorded) do
+    n = length(recorded)
+
+    socket
+    |> assign(:scrubber_n, n)
+    |> assign(:scrubber_playing?, false)
+    |> assign_prefix(n)
+  end
+
+  # Recompute every deep pane as-of the first `k` events. `k` is clamped to 0..N so
+  # a bogus slider value can never fold past the head or before the empty prefix.
+  # The highlighted event is the prefix's last one (stream_version = k, since commit
+  # order is 1-based); an empty prefix highlights nothing (spec D4).
+  defp assign_prefix(socket, k) do
+    recorded = socket.assigns.recorded
+    n = length(recorded)
+    k = k |> max(0) |> min(n)
+    prefix = Enum.take(recorded, k)
+
+    highlight_version =
+      case k do
+        0 -> nil
+        _ -> Enum.at(recorded, k - 1).stream_version
+      end
+
+    socket
+    |> assign(:scrubber_k, k)
+    |> assign(:highlight_version, highlight_version)
+    |> assign_fold_panes(prefix)
+  end
+
+  # ── Aggregate-state + read-model + ledger panes (issue #83/#84, spec D1/D2) ──
+  # Folds a **prefix** through the **shared** `ArrearsFold.fold_and_derive/1` — the
+  # very code path the operational `ArrearsProjector` runs at full history, so the
+  # panes can never drift from production (D1). `days_behind` is reckoned as-at the
+  # prefix's last event `occurred_on` (D1/D4), so arrears climb and fall on the scrub.
+  # In-memory only: it reads the live `Arrears` row solely to reconcile against (at the
+  # head), and never writes any read-model table (brief cut #4).
+  defp assign_fold_panes(socket, prefix) do
     derived =
-      recorded
+      prefix
       |> Enum.map(& &1.data)
       |> ArrearsFold.fold_and_derive()
 
-    tenancy_id = String.replace_prefix(stream_id, "tenancy-", "")
+    tenancy_id = String.replace_prefix(socket.assigns.active_stream, "tenancy-", "")
     live = live_arrears(tenancy_id)
 
     consistency =
@@ -221,7 +347,7 @@ defmodule LatchkeyWeb.InspectorLive do
     |> assign(:aggregate_state, derived.core)
     |> assign(:read_model, derived)
     |> assign(:consistency, consistency)
-    |> assign(:ledger_entries, ledger_entries(recorded))
+    |> assign(:ledger_entries, ledger_entries(prefix))
   end
 
   # ── Ledger pane (issue #84, spec D1, ADR 0006) ──────────────────────────────
@@ -235,6 +361,38 @@ defmodule LatchkeyWeb.InspectorLive do
     |> Enum.map(fn r -> {r.stream_version, r.data} end)
     |> Timeline.fold()
   end
+
+  # Schedule the next auto-advance tick (server-side, spec D4). The returned timer
+  # ref is held so a pause can cancel a not-yet-fired tick.
+  defp schedule_tick(socket) do
+    ref = Process.send_after(self(), :scrubber_tick, @tick_interval_ms)
+    assign(socket, :scrubber_timer, ref)
+  end
+
+  # Stop auto-advance: cancel any pending tick and clear the playing flag. Safe to
+  # call unconditionally (idempotent) — used on pause and on any manual control.
+  defp cancel_play(socket) do
+    case socket.assigns[:scrubber_timer] do
+      ref when is_reference(ref) -> Process.cancel_timer(ref)
+      _ -> :ok
+    end
+
+    socket
+    |> assign(:scrubber_timer, nil)
+    |> assign(:scrubber_playing?, false)
+  end
+
+  # Parse the slider's string value; fall back to the current position on garbage.
+  defp to_int(value, _default) when is_integer(value), do: value
+
+  defp to_int(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, _rest} -> int
+      :error -> default
+    end
+  end
+
+  defp to_int(_value, default), do: default
 
   # The live, persisted read-model row for this tenancy (or nil), read to reconcile
   # the in-memory recompute against — never written back (brief cut #4).
@@ -411,6 +569,16 @@ defmodule LatchkeyWeb.InspectorLive do
                   context_name={@context_name}
                   kind={@stream_kind}
                   rows={@event_rows}
+                  docs={@docs}
+                  highlight_version={@highlight_version}
+                />
+                <%!-- The server-side replay scrubber: fold the log event-by-event (#85, D4). --%>
+                <%!-- Deep (tenancy) streams only; the Accounts edge folds no state (D3/D4). --%>
+                <.scrubber
+                  :if={@stream_kind == :deep}
+                  k={@scrubber_k}
+                  n={@scrubber_n}
+                  playing?={@scrubber_playing?}
                   docs={@docs}
                 />
                 <%!-- The write-vs-read money-shot: what the log folds into (#83, D1/D2). --%>
