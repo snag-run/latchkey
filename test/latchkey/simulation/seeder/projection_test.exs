@@ -178,4 +178,46 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
       assert dates == Enum.sort(dates, Date)
     end
   end
+
+  describe "dated_timeline/2" do
+    test "pairs each step with its own ordering date, oldest first, matching timeline/2" do
+      scenario = %Scenario{
+        label: "dated",
+        tenancy_id: "dated",
+        property_ref: "prop-dated",
+        rent_amount_cents: 50_000,
+        first_due_date: Date.add(@today, -70),
+        profile: Profile.reliable(),
+        schedule_count: 2,
+        notice: %{
+          given_on: Date.add(@today, -40),
+          as_of: Date.add(@today, -40),
+          termination_date: Date.add(@today, -12)
+        },
+        exit: %{keys_on: Date.add(@today, -12)}
+      }
+
+      dated = Projection.dated_timeline(scenario, scenario.tenancy_id)
+
+      # Same steps, same order as timeline/2 — just carrying the sort date.
+      assert Enum.map(dated, fn {_date, step} -> step end) ==
+               Projection.timeline(scenario, scenario.tenancy_id)
+
+      # The paired date is exactly the step's own real-world date.
+      for {date, step} <- dated do
+        own_date =
+          case step do
+            {:payment, %PaymentReceived{occurred_on: on}} -> on
+            {:notice, %{given_on: on}} -> on
+            {:exit, %{keys_on: on}} -> on
+          end
+
+        assert date == own_date
+      end
+
+      # Oldest first.
+      dates = Enum.map(dated, fn {date, _step} -> date end)
+      assert dates == Enum.sort(dates, Date)
+    end
+  end
 end

@@ -33,14 +33,30 @@ defmodule Latchkey.Simulation.Seeder do
   double-seeding a healthy board, **not** a resumable checkpoint. Recovery from a
   failed seed is drop-and-recreate, not in-place repair.
 
-  ## Await, then reveal
+  ## Interleave, await, then reveal
 
-  Payments cross ACL-1 **asynchronously**, so each scenario subscribes to its tenancy
-  stream and waits for the `RentPaymentRecorded` before advancing — guaranteeing a
-  later planted notice (or the final sweep) folds over the payments that precede it.
-  The closing `CatchUp` (as of today) is dispatched with `consistency: :strong`, so on
-  return the `Arrears` read model reflects the whole catalogue. Scenarios seed
-  concurrently (each on its own stream), bounded by `:max_concurrency`.
+  Seeding runs in three passes:
+
+    1. **Commence** every tenancy (concurrent, bounded by `:max_concurrency`) and fill
+       its `Directory` identity, capturing each scenario's dated timeline.
+    2. **Replay** every tenancy's payments / notice / keys-return in a **single
+       chronological pass** — the per-tenancy timelines merged and ordered by each
+       step's real-world date — so the shared Accounts stream **interleaves** tenancies
+       the way a live payments book arrives (issue #115), rather than clustered per
+       tenancy. The merge is a total, stable order — `{date, tenancy_id, intra-stream
+       position}` — so a reseed reproduces the same interleaving (ADR 0005) and no
+       tenancy's own stream ever reorders (its steps share a `tenancy_id` and keep their
+       timeline sequence).
+    3. **Reveal** arrears: sweep each tenancy (concurrent) as of today.
+
+  Payments cross ACL-1 **asynchronously**, so the replay subscribes to each tenancy
+  stream (filtered to `RentPaymentRecorded`) and, after appending each payment, waits
+  for that booking before advancing — guaranteeing a later planted notice (or the
+  closing sweep) folds over the payments that precede it. The pass is sequential with
+  one payment in flight at a time, so awaiting every payment leaves all bookings applied
+  before any sweep runs. The closing `CatchUp` (as of today) is dispatched with
+  `consistency: :strong`, so on return the `Arrears` read model reflects the whole
+  catalogue.
   """
 
   require Logger
@@ -103,28 +119,38 @@ defmodule Latchkey.Simulation.Seeder do
     await_ms = Keyword.get(opts, :await_ms, @default_await_ms)
     max_concurrency = Keyword.get(opts, :max_concurrency, @default_max_concurrency)
 
+    contexts = commence_all(scenarios, prefix, max_concurrency)
+    replay_interleaved(contexts, accounts_stream, await_ms)
+    reveal_arrears(contexts, today, max_concurrency)
+
+    Enum.map(contexts, &Map.take(&1, [:scenario, :tenancy_id, :status]))
+  end
+
+  # ── pass 1: commence + identity (concurrent) ──────────────────────────────────
+
+  # Commence every tenancy and fill its Directory identity, capturing the scenario's
+  # dated timeline for the interleaved replay. Independent per tenancy, so concurrent.
+  defp commence_all(scenarios, prefix, max_concurrency) do
     scenarios
-    |> Task.async_stream(
-      &seed_scenario(&1, today, prefix, accounts_stream, await_ms),
+    |> Task.async_stream(&commence_scenario(&1, prefix),
       max_concurrency: max_concurrency,
       ordered: true,
       timeout: :infinity
     )
-    |> Enum.map(fn {:ok, result} -> result end)
+    |> Enum.map(fn {:ok, context} -> context end)
   end
 
-  defp seed_scenario(%Scenario{} = scenario, today, prefix, accounts_stream, await_ms) do
+  defp commence_scenario(%Scenario{} = scenario, prefix) do
     tenancy_id = prefix <> scenario.tenancy_id
 
-    status =
+    {status, steps} =
       case commence(scenario, tenancy_id) do
         :ok ->
-          replay(scenario, tenancy_id, today, accounts_stream, await_ms)
-          :seeded
+          {:seeded, Projection.dated_timeline(scenario, tenancy_id)}
 
         :already_commenced ->
           Logger.info("Seeder skipped #{inspect(tenancy_id)}: already commenced")
-          :skipped
+          {:skipped, []}
       end
 
     # Populate the disposable Directory (ADR 0008) with the tenancy's display identity
@@ -132,7 +158,7 @@ defmodule Latchkey.Simulation.Seeder do
     # alike so a re-seed still refreshes identity for an already-commenced board.
     upsert_directory(scenario, tenancy_id)
 
-    %{scenario: scenario, tenancy_id: tenancy_id, status: status}
+    %{scenario: scenario, tenancy_id: tenancy_id, status: status, steps: steps}
   end
 
   # Resolve deterministic identity (name off tenancy_id, address off property_ref) and
@@ -172,25 +198,74 @@ defmodule Latchkey.Simulation.Seeder do
     end
   end
 
-  # Replay the tenant's payments + any planted notice/exit in chronological order, then
-  # reveal arrears with a closing sweep as of today.
-  defp replay(%Scenario{} = scenario, tenancy_id, today, accounts_stream, await_ms) do
-    stream = "tenancy-" <> tenancy_id
+  # ── pass 2: interleaved replay (single chronological pass) ────────────────────
 
-    # Transient subscription filtered to ACL-1's output (RentPaymentRecorded) — the
-    # deterministic checkpoint we await after appending each payment, so no sleeping.
+  # Replay every seeded tenancy's payments / notice / keys-return in ONE pass, ordered
+  # by real-world date across streams, so the shared Accounts stream interleaves
+  # tenancies the way a live payments book arrives (issue #115).
+  defp replay_interleaved(contexts, accounts_stream, await_ms) do
+    seeded = Enum.filter(contexts, &(&1.status == :seeded))
+
+    # Subscribe to every tenancy stream up front — before any payment is appended — so
+    # no ACL-1 booking is missed once the pass starts appending.
+    Enum.each(seeded, &subscribe_to_bookings/1)
+
+    seeded
+    |> interleaved_steps()
+    |> Enum.each(fn {tenancy_id, step} ->
+      run_step(step, tenancy_id, accounts_stream, await_ms)
+    end)
+  end
+
+  # A transient subscription filtered to ACL-1's output (RentPaymentRecorded) — the
+  # deterministic checkpoint the pass awaits after appending each payment, so no
+  # sleeping. Per stream, so `await_payment/2` only ever sees our own bookings.
+  defp subscribe_to_bookings(%{tenancy_id: tenancy_id}) do
     :ok =
-      EventStore.subscribe(stream,
+      EventStore.subscribe("tenancy-" <> tenancy_id,
         selector: fn %{data: data} -> match?(%RentPaymentRecorded{}, data) end
       )
+  end
 
-    scenario
-    |> Projection.timeline(tenancy_id)
-    |> Enum.each(&run_step(&1, tenancy_id, accounts_stream, await_ms))
+  # Merge the seeded tenancies' dated timelines into one totally-ordered pass. The key
+  # is `{date, tenancy_id, intra-stream position}`: `date` drives the cross-tenancy
+  # interleaving; `tenancy_id` then position are a deterministic, stable tie-break (ADR
+  # 0005) — a reseed reproduces the same order, and because a tenancy's own steps share
+  # its id and keep their timeline position, its intra-stream order never changes.
+  defp interleaved_steps(seeded) do
+    seeded
+    |> Enum.flat_map(fn %{tenancy_id: tenancy_id, steps: steps} ->
+      steps
+      |> Enum.with_index()
+      |> Enum.map(fn {{date, step}, position} ->
+        {{Date.to_erl(date), tenancy_id, position}, tenancy_id, step}
+      end)
+    end)
+    |> Enum.sort_by(fn {sort_key, _tenancy_id, _step} -> sort_key end)
+    |> Enum.map(fn {_sort_key, tenancy_id, step} -> {tenancy_id, step} end)
+  end
 
-    # The visibility backstop: book the RentFellDues owed through today for non-payers.
-    # Strong consistency so the Arrears read model reflects the whole catalogue on return.
-    :ok = CommandedApp.dispatch(Sweep.catch_up_command(tenancy_id, today), consistency: :strong)
+  # ── pass 3: reveal arrears (concurrent sweeps) ────────────────────────────────
+
+  # The visibility backstop: once every payment is booked, sweep each seeded tenancy —
+  # booking the RentFellDues owed through today for non-payers. Strong consistency so
+  # the Arrears read model reflects the whole catalogue on return. Independent per
+  # tenancy, so swept concurrently.
+  defp reveal_arrears(contexts, today, max_concurrency) do
+    contexts
+    |> Enum.filter(&(&1.status == :seeded))
+    |> Task.async_stream(
+      fn %{tenancy_id: tenancy_id} ->
+        :ok =
+          CommandedApp.dispatch(Sweep.catch_up_command(tenancy_id, today),
+            consistency: :strong
+          )
+      end,
+      max_concurrency: max_concurrency,
+      ordered: false,
+      timeout: :infinity
+    )
+    |> Stream.run()
   end
 
   defp run_step({:payment, %PaymentReceived{} = payment}, _tenancy_id, accounts_stream, await_ms) do
