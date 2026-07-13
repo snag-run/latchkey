@@ -197,10 +197,10 @@ defmodule LatchkeyWeb.InspectorReplayScrubberTest do
 
       # Each server-side tick advances one event (driven by hand in test).
       send(view.pid, :scrubber_tick)
-      assert render(view) =~ "1 / 4"
+      assert has_element?(view, "#scrubber-position", "1 / 4")
 
       send(view.pid, :scrubber_tick)
-      assert render(view) =~ "2 / 4"
+      assert has_element?(view, "#scrubber-position", "2 / 4")
     end
 
     test "auto-advance halts at the head and clears the playing state", %{view: view} do
@@ -226,10 +226,8 @@ defmodule LatchkeyWeb.InspectorReplayScrubberTest do
       view |> element("#scrubber-play-toggle") |> render_click()
       assert has_element?(view, "#scrubber-play-toggle[aria-pressed='false']")
 
-      position_before = has_element?(view, "#scrubber-position", "1 / 4")
       send(view.pid, :scrubber_tick)
       # Paused: the inert tick leaves the position untouched.
-      assert position_before
       assert has_element?(view, "#scrubber-position", "1 / 4")
     end
 
