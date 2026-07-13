@@ -125,6 +125,10 @@ defmodule Latchkey.MixProject do
       ],
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
+      # Full dev reset. Unlike `ecto.reset`, this reprovisions Commanded's
+      # EventStore schema too (via db.setup -> event_store.init); a plain
+      # ecto.reset would leave the event store behind.
+      reset: ["ecto.drop", "db.setup", "run priv/repo/seeds.exs"],
       test: ["db.setup.quiet", "test"],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
       "assets.build": ["compile", "tailwind latchkey", "esbuild latchkey"],
