@@ -69,8 +69,10 @@ detail; content is trusted first-party markdown, so sanitisation is not a driver
 
 ### D3 — Placement: a dedicated `/inspector/glossary` route, advertised from the landing
 
-A dedicated **`/inspector/glossary`** route (a `:glossary` live action on
-`InspectorLive`) renders the three lens-sections on one scannable page — domain
+A dedicated **`/inspector/glossary`** route — a `:glossary` live action on
+`InspectorLive`, added **inside the existing `live_session :inspector`** (not a
+standalone route, so the inspector's session contract is preserved) — renders the
+three lens-sections on one scannable page — domain
 (from `CONTEXT.md`), DDD, ES — each **term a heading with a fragment anchor** for
 deep-linking. The **orientation landing advertises it** with a small entry-point
 link ("Reference / Glossary"). Rejected: folding the glossary into the landing —
@@ -87,7 +89,8 @@ index share one in-app destination.
 
 ### D5 — Anchor mechanics for DDD/ES entries (a + b + c)
 
-Every authored DDD/ES entry carries all three anchor targets:
+Every authored DDD/ES entry carries **each applicable anchor**, and always at
+least one of (a) or (b) — most carry all three:
 
 - **(a) Symbol name** — e.g. aggregate → `Tenancy`, projection → `ArrearsProjector`,
   ACL → `PaymentACL`. The floor; mirrors the existing captions.
@@ -97,6 +100,8 @@ Every authored DDD/ES entry carries all three anchor targets:
   live, which docs can't fake.
 - **(c) Source on GitHub** — an octocat badge linking the symbol to its source.
   Leaving-the-app for *source* is acceptable in a way it wasn't for definitions.
+  Optional: omitted when no single source symbol exists (e.g. cross-cutting
+  concepts like idempotency).
 
 **Tripwire made checkable (from the brief):** an entry with neither (a) nor (b)
 does not ship. A few concepts have no dedicated live pane (command — read-only,
