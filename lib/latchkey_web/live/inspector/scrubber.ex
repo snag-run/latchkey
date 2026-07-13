@@ -37,6 +37,11 @@ defmodule LatchkeyWeb.Inspector.Scrubber do
   attr :k, :integer, required: true, doc: "current prefix length (0..n)"
   attr :n, :integer, required: true, doc: "event count (head position)"
   attr :playing?, :boolean, required: true, doc: "server-side auto-advance running?"
+
+  attr :new_events_available?, :boolean,
+    default: false,
+    doc: "live events landed while parked mid-history (D5) — shows the jump-to-head nudge"
+
   attr :docs, :map, required: true, doc: "canonical doc URLs for read-more links"
 
   def scrubber(assigns) do
@@ -52,6 +57,27 @@ defmodule LatchkeyWeb.Inspector.Scrubber do
           {@k} / {@n}
         </span>
       </header>
+
+      <%!-- Follow-at-head / pin-when-parked (spec D5, issue #86). Parked mid-history --%>
+      <%!-- while new events land live, the position holds and this nudge offers a jump --%>
+      <%!-- to the head, which folds them in and resumes following. --%>
+      <div
+        :if={@new_events_available?}
+        id="scrubber-nudge"
+        role="status"
+        class="mb-3 flex items-center gap-2 rounded-lg border border-info/40 bg-info/10 px-3 py-2 text-xs"
+      >
+        <.icon name="hero-arrow-down-circle" class="size-4 shrink-0 text-info" />
+        <span>New events landed on this stream while you're parked mid-history.</span>
+        <button
+          id="scrubber-jump-to-head"
+          type="button"
+          phx-click="jump_to_head"
+          class="btn btn-xs btn-info ml-auto gap-1 transition-transform hover:scale-105"
+        >
+          Jump to head <.icon name="hero-arrow-right" class="size-3" />
+        </button>
+      </div>
 
       <.caption id="scrubber-caption" class="mb-3">
         Press <b>play</b>
