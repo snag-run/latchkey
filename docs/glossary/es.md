@@ -87,7 +87,7 @@ twice — ACL-1 guards against that with the payment's `source_payment_id`, so a
 reduces the arrears a second time. This is a cross-cutting safeguard rather than a screen,
 so it points to the code rather than a live pane.
 
-**Symbol** `Latchkey.PropertyManagement.PaymentAcl` (`source_payment_id` guard) · **Source** [`payment_acl.ex` ↗](https://github.com/snag-run/latchkey/blob/main/lib/latchkey/property_management/payment_acl.ex)
+**Symbol** `Latchkey.PropertyManagement.PaymentAcl` (`source_payment_id` guard) · **Live** none — cross-cutting guard, no dedicated pane · **Source** [`payment_acl.ex` ↗](https://github.com/snag-run/latchkey/blob/main/lib/latchkey/property_management/payment_acl.ex)
 
 ## More event-sourcing concepts
 

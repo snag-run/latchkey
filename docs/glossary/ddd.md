@@ -59,7 +59,7 @@ it is never stored (compare *event vs command* in the ES lens). The inspector is
 and issues no commands, so there's no live pane for this one — it points straight to the
 code instead.
 
-**Symbol** `Latchkey.PropertyManagement.Tenancy.Commands.*` · **Source** [`tenancy/commands/` ↗](https://github.com/snag-run/latchkey/tree/main/lib/latchkey/property_management/tenancy/commands)
+**Symbol** `Latchkey.PropertyManagement.Tenancy.Commands.*` · **Live** none — the inspector is read-only and issues no commands · **Source** [`tenancy/commands/` ↗](https://github.com/snag-run/latchkey/tree/main/lib/latchkey/property_management/tenancy/commands)
 
 ## Ubiquitous language
 
