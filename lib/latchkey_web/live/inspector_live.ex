@@ -122,6 +122,12 @@ defmodule LatchkeyWeb.InspectorLive do
       |> assign(:scrubber_playing?, false)
       |> assign(:scrubber_timer, nil)
       |> assign(:highlight_version, nil)
+      # Per-stream live updates (spec D5, issue #86): whether live events have
+      # landed while parked mid-history (drives the "new events available" nudge),
+      # and the `dev:stream:<id>` topic this socket is currently subscribed to (so
+      # navigating between streams unsubscribes the old one before subscribing).
+      |> assign(:new_events_available?, false)
+      |> assign(:subscribed_stream_topic, nil)
       |> stream(:firehose, [])
 
     {:ok, socket}
@@ -132,15 +138,26 @@ defmodule LatchkeyWeb.InspectorLive do
     {:noreply, apply_action(socket, socket.assigns.live_action, params)}
   end
 
-  # ── Live firehose (spec D5) ─────────────────────────────────────────────────
-  # Every event Latchkey.Inspector.Broadcaster re-broadcasts lands here. This is
-  # the "follow at head" half of D5 — the pinned-when-parked scrub interaction
-  # is owned by the (not-yet-built) stream-detail view.
+  # ── Live updates (spec D5) ──────────────────────────────────────────────────
+  # Every event Latchkey.Inspector.Broadcaster re-broadcasts lands here, from two
+  # subscriptions: the global `dev:events` firehose (mount) and — when a stream is
+  # open — its own `dev:stream:<id>` topic (issue #86). One clause serves both:
+  #   • the global firehose feed always appends the row;
+  #   • if the event belongs to the *open* deep stream, it also folds into the
+  #     stream-detail panes (follow-at-head) or raises the nudge (pin-when-parked).
+  # The active stream is delivered on both topics, so this fires twice for it; both
+  # steps are idempotent (`stream_insert` keys by id; `live_advance/1` no-ops once
+  # the store read shows nothing new), so the duplicate is harmless.
   @impl true
   def handle_info({:dev_event, event, metadata}, socket) do
     row = to_firehose_row(event, metadata)
 
-    {:noreply, stream_insert(socket, :firehose, row, at: 0, limit: @firehose_limit)}
+    socket =
+      socket
+      |> stream_insert(:firehose, row, at: 0, limit: @firehose_limit)
+      |> maybe_live_advance(metadata)
+
+    {:noreply, socket}
   end
 
   # ── Auto-advance tick (spec D4: ~1s/event, server-side) ─────────────────────
@@ -219,6 +236,13 @@ defmodule LatchkeyWeb.InspectorLive do
     {:noreply, socket}
   end
 
+  # Nudge action (spec D5, issue #86): parked mid-history with newer events landed,
+  # the user jumps to the head — fold the whole live history in and resume following
+  # (at k = N, the next live event follows automatically). Cancels any auto-advance.
+  def handle_event("jump_to_head", _params, socket) do
+    {:noreply, socket |> cancel_play() |> assign_prefix(socket.assigns.scrubber_n)}
+  end
+
   defp to_firehose_row(event, %{event_number: event_number, stream_id: stream_id} = metadata) do
     %{
       id: event_number,
@@ -231,9 +255,77 @@ defmodule LatchkeyWeb.InspectorLive do
 
   defp event_type(%module{}), do: module |> Module.split() |> List.last()
 
+  # ── Per-stream live updates (spec D5, issue #86) ────────────────────────────
+  # A live event that belongs to the *open* deep stream folds into the stream-detail
+  # panes. Only deep (tenancy) streams fold state; the Accounts edge (D3) and any
+  # other stream's events are ignored here (the firehose already carries them).
+  defp maybe_live_advance(socket, %{stream_id: stream_id}) do
+    if socket.assigns[:active_stream] == stream_id and socket.assigns[:stream_kind] == :deep do
+      live_advance(socket)
+    else
+      socket
+    end
+  end
+
+  # Fold the newly-appended event(s) into the in-memory view — strictly read-only:
+  # re-read the store (the broadcaster's event is already persisted, D5) and refresh
+  # the recorded log. The read is idempotent, so the active stream's duplicate
+  # delivery (global + per-stream topic) no-ops here once nothing new remains.
+  #
+  #   • at head (`k = N`): follow — advance to `N+1` and re-fold all panes live.
+  #   • parked (`k < N`): hold `k`; raise the "new events available" nudge.
+  defp live_advance(socket) do
+    stream_id = socket.assigns.active_stream
+    recorded = read_stream(stream_id)
+    new_n = length(recorded)
+    old_n = socket.assigns.scrubber_n
+
+    if new_n <= old_n do
+      socket
+    else
+      at_head? = socket.assigns.scrubber_k >= old_n
+
+      socket =
+        socket
+        |> assign(:recorded, recorded)
+        |> assign(:event_rows, build_event_rows(stream_id, :deep, recorded))
+        |> assign(:scrubber_n, new_n)
+
+      if at_head? do
+        assign_prefix(socket, new_n)
+      else
+        assign(socket, :new_events_available?, true)
+      end
+    end
+  end
+
+  # Move the per-stream live subscription to `topic` (or drop it when `nil`), only on
+  # a connected socket (spec D5: subscribe on connected mount only). Unsubscribes the
+  # previously-open stream's topic first so a socket is never subscribed to two.
+  defp resubscribe_stream(socket, topic) do
+    cond do
+      not connected?(socket) -> socket
+      socket.assigns[:subscribed_stream_topic] == topic -> socket
+      true -> switch_stream_subscription(socket, topic)
+    end
+  end
+
+  defp switch_stream_subscription(socket, topic) do
+    if previous = socket.assigns[:subscribed_stream_topic] do
+      Phoenix.PubSub.unsubscribe(Latchkey.PubSub, previous)
+    end
+
+    if topic, do: Phoenix.PubSub.subscribe(Latchkey.PubSub, topic)
+
+    assign(socket, :subscribed_stream_topic, topic)
+  end
+
   defp apply_action(socket, :landing, _params) do
     socket
     |> cancel_play()
+    # Leaving all streams: drop the per-stream live subscription and any nudge.
+    |> resubscribe_stream(nil)
+    |> assign(:new_events_available?, false)
     |> assign(:page_title, "Inspector — orientation")
     |> assign(:active_stream, nil)
   end
@@ -247,6 +339,8 @@ defmodule LatchkeyWeb.InspectorLive do
     case owning_context(socket.assigns.contexts, stream_id) do
       nil ->
         socket
+        |> resubscribe_stream(nil)
+        |> assign(:new_events_available?, false)
         |> assign(:page_title, "Inspector — unknown stream")
         |> assign(:active_stream, nil)
         |> assign(:stream_found?, false)
@@ -258,7 +352,16 @@ defmodule LatchkeyWeb.InspectorLive do
         # the scrubber can re-fold arbitrary prefixes of it without re-reading (D4).
         recorded = read_stream(stream_id)
 
+        # Only deep (tenancy) streams fold live (spec D5); the Accounts edge folds no
+        # state, so it gets no per-stream subscription (its messages would be discarded
+        # and its firehose row double-delivered). `resubscribe_stream(_, nil)` no-ops.
+        topic = if context.kind == :deep, do: Broadcaster.stream_topic(stream_id)
+
         socket
+        # Subscribe to this stream's live topic (spec D5, issue #86); a fresh open
+        # starts at the head, so no nudge is pending.
+        |> resubscribe_stream(topic)
+        |> assign(:new_events_available?, false)
         |> assign(:page_title, "Inspector — #{stream_id}")
         |> assign(:active_stream, stream_id)
         |> assign(:stream_found?, true)
@@ -318,8 +421,16 @@ defmodule LatchkeyWeb.InspectorLive do
     socket
     |> assign(:scrubber_k, k)
     |> assign(:highlight_version, highlight_version)
+    # Reaching the head clears the nudge (spec D5): parked events are now folded in,
+    # and at `k = N` we are following again.
+    |> maybe_clear_nudge(k, n)
     |> assign_fold_panes(prefix)
   end
+
+  defp maybe_clear_nudge(socket, k, n) when k >= n,
+    do: assign(socket, :new_events_available?, false)
+
+  defp maybe_clear_nudge(socket, _k, _n), do: socket
 
   # ── Aggregate-state + read-model + ledger panes (issue #83/#84, spec D1/D2) ──
   # Folds a **prefix** through the **shared** `ArrearsFold.fold_and_derive/1` — the
@@ -579,6 +690,7 @@ defmodule LatchkeyWeb.InspectorLive do
                   k={@scrubber_k}
                   n={@scrubber_n}
                   playing?={@scrubber_playing?}
+                  new_events_available?={@new_events_available?}
                   docs={@docs}
                 />
                 <%!-- The write-vs-read money-shot: what the log folds into (#83, D1/D2). --%>
