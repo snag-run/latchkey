@@ -258,6 +258,36 @@ asymmetry rather than force-fitting:
   recorded-date R" vs "the world as-of occurred-date O") is **DEFERRED** — see the
   ledger.
 
+### D8 — Full paginated log: keyset over `$all`, newest-first, complements the firehose (DECIDED)
+
+- **The firehose (D5) is a live *tail*** — it only shows events that arrive while
+  watching and is capped at ~200 retained rows (memory bound). A separate read-only
+  route (`/inspector/log`, issue #114) pages the **entire recorded history** across
+  every stream — every event ever, oldest to newest. It **complements, never
+  replaces**, the firehose (the firehose still runs on the right rail of the log
+  page).
+- **Keyset pagination over the global event number, not offset.** A page is one
+  boundary integer over the `$all` stream's monotonic position: `nil` (head),
+  `{:before, n}` (older), `{:after, n}` (newer), ~50/page, newest-first. Keyset is
+  O(page) and stable under concurrent appends — a new head event never shifts an
+  older page's contents, unlike a SQL `OFFSET`. The cursor lives in the URL
+  (`?before=`/`?after=`), so pages are bookmarkable and the back button works; rows
+  are a LiveView stream, so the page can't balloon memory.
+- **Cross-stream identity via the Directory, not per-stream `property_ref`.** The
+  per-stream event-log pane (#81) re-resolves a tenancy's identity from the
+  commencement event's `property_ref` (it has the whole stream in hand). A single
+  historical event out of stream context carries no `property_ref`, so the paginated
+  log resolves identity from the disposable `Simulation.Directory` keyed by
+  `tenancy_id` (ADR 0008). Because the Directory is seeded from the *same*
+  `Identity.resolve/2`, displayed values are identical for seeded tenancies;
+  unseeded refs render the honest `UNKNOWN` sentinel (consistent with D3). Both
+  views share one resolver (`Latchkey.Inspector.Resolver`) so they cannot drift.
+- **Rows link through to the stream detail, scrubbed to the event's position.** A
+  deep (tenancy) row links to `/inspector/streams/:id?at=<stream_version>`, opening
+  the D4 scrubber parked on that event; the Accounts edge folds no state (no
+  scrubber), so it links plainly. Strictly read-only — a historical browser, never
+  an editor (D6, brief cut #3).
+
 ## Testing Decisions
 
 - The shared fold-and-derive function is **pure and unit-testable over
@@ -297,7 +327,10 @@ asymmetry rather than force-fitting:
   live producer cadence cross-referenced to the sim spec, not gating v1 · **D6** —
   public read-only `/inspector` in all envs, no auth for v1, domain-data-only,
   immutability universal; admin-write is a follow-on slice · **D7** — minimal
-  two-date (bitemporal) display + divergence flag in v1.
+  two-date (bitemporal) display + divergence flag in v1 · **D8** — full paginated
+  log (`/inspector/log`): keyset over the `$all` stream, newest-first, ~50/page,
+  complements the firehose; cross-stream identity via the Directory; rows deep-link
+  scrubbed to position.
 - **OPEN**: none — all branches resolved.
 - **DEFERRED**:
   - **deep cross-stream ACL-1 seam tracer** (click a payment in the `accounts`

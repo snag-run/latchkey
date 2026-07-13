@@ -95,6 +95,13 @@ defmodule LatchkeyWeb.Layouts do
       <header class="flex items-center gap-3 h-12 shrink-0 px-4 border-b border-base-300 bg-base-200">
         <a href={~p"/inspector"} class="font-semibold tracking-tight">/inspector</a>
         <span class="text-base-content/50 text-sm">workbench</span>
+        <.link
+          navigate={~p"/inspector/log"}
+          id="inspector-full-log-link"
+          class="text-sm text-base-content/60 hover:text-base-content"
+        >
+          full log
+        </.link>
         <span class="ml-auto">
           <.theme_toggle />
         </span>
