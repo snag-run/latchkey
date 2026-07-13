@@ -352,10 +352,15 @@ defmodule LatchkeyWeb.InspectorLive do
         # the scrubber can re-fold arbitrary prefixes of it without re-reading (D4).
         recorded = read_stream(stream_id)
 
+        # Only deep (tenancy) streams fold live (spec D5); the Accounts edge folds no
+        # state, so it gets no per-stream subscription (its messages would be discarded
+        # and its firehose row double-delivered). `resubscribe_stream(_, nil)` no-ops.
+        topic = if context.kind == :deep, do: Broadcaster.stream_topic(stream_id)
+
         socket
         # Subscribe to this stream's live topic (spec D5, issue #86); a fresh open
         # starts at the head, so no nudge is pending.
-        |> resubscribe_stream(Broadcaster.stream_topic(stream_id))
+        |> resubscribe_stream(topic)
         |> assign(:new_events_available?, false)
         |> assign(:page_title, "Inspector — #{stream_id}")
         |> assign(:active_stream, stream_id)

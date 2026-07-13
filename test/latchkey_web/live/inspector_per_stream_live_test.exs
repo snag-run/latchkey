@@ -178,4 +178,22 @@ defmodule LatchkeyWeb.InspectorPerStreamLiveTest do
       refute has_element?(view, "#scrubber-nudge")
     end
   end
+
+  describe "accounts edge stream — no per-stream subscription (D3/D5)" do
+    test "the events-only edge view does not subscribe to its per-stream topic", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/inspector/streams/accounts")
+
+      # Broadcast only to the accounts *per-stream* topic (not the global firehose).
+      # The edge folds no state, so it never subscribes here — the message reaches
+      # nothing and no firehose row is inserted. (A subscribed view would have.)
+      Phoenix.PubSub.broadcast(
+        Latchkey.PubSub,
+        Broadcaster.stream_topic("accounts"),
+        {:dev_event, %TenancyCommenced{tenancy_id: "x"}, meta("accounts", 1)}
+      )
+
+      assert has_element?(view, "#event-log")
+      refute has_element?(view, "#firehose-1")
+    end
+  end
 end
