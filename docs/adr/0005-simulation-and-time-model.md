@@ -7,8 +7,12 @@ simulated vs. driven by the human user. Supersedes part of
 **Envelope direction (decision 4) superseded by
 [ADR 0006](0006-tenancy-timeline-read-model.md)** — `effective_date` is renamed
 `occurred_on` (occurrence, uniform) and kick-in dates are payload. **`recorded_on`
-(decision 3) is retained unchanged** — no `recorded_on` rename is implied. This
-body is left unchanged; only this Status pointer is added.
+(decision 3) is retained unchanged** — no `recorded_on` rename is implied. **The
+accrual-lag framing of decision 4** (a swept `RentFellDue` lags its due date,
+`recorded ≥ effective`) **is superseded by
+[ADR 0010](0010-rentfelldue-books-same-day.md)** — a system-managed `RentFellDue` now
+books same-day (`recorded_on == occurred_on`); the lag is reserved for imported
+tenancies (#117). This body is left unchanged; only these Status pointers are added.
 
 ## Context
 

@@ -89,7 +89,7 @@ defmodule LatchkeyWeb.InspectorEventLogTest do
           cycle: :weekly,
           first_due_date: ~D[2026-01-08]
         },
-        # A lazy-accrual tick: recorded_on lags occurred_on → divergent.
+        # An imported tick (#117): recorded_on lags occurred_on → divergent.
         %RentFellDue{
           tenancy_id: tid,
           occurred_on: ~D[2026-01-08],

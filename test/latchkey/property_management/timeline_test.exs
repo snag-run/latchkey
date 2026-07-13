@@ -250,8 +250,9 @@ defmodule Latchkey.PropertyManagement.TimelineTest do
     assert last.days_behind > 0
   end
 
-  test "a late-booked (lazy accrual) tick sorts at its occurred_on, recorded_on shown" do
-    # rent fell due 01-12 but was swept/booked on 02-01 (recorded lags occurred).
+  test "an imported tick (recorded lags occurred) sorts at its occurred_on, recorded_on shown" do
+    # An imported/rebuilt tenancy (#117): rent fell due 01-12 but the history was
+    # rebuilt on 02-01, so recorded lags occurred — the sole legitimate divergence.
     events = [
       {0, commenced(~D[2026-01-05])},
       {1, rent(~D[2026-01-05], 50_000, ~D[2026-01-05])},

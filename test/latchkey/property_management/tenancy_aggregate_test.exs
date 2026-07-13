@@ -294,8 +294,12 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       assert notice.occurred_on != notice.termination_date
     end
 
-    test "a catch-up RentFellDue has recorded_on >= occurred_on (lazy accrual, not backdating)" do
-      # Booked on 03-01 but sweeping charges that fell due back in January.
+    test "a swept catch-up RentFellDue books same-day (recorded_on == occurred_on, #118)" do
+      # System-managed accrual books on its own due date: even though the sweep runs on
+      # 03-01 (and the command carries that recorded_on), each tick self-stamps
+      # recorded_on = occurred_on — no bitemporal divergence. Divergence is reserved for
+      # imported/transferred tenancies (#117); the organic sweep ignores the command's
+      # recorded_on for the accrual ticks.
       events =
         Agg.execute(commenced_agg(), %C.CatchUp{
           tenancy_id: "t1",
@@ -307,8 +311,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       assert length(ticks) == 5
 
       for %RentFellDue{occurred_on: occurred, recorded_on: recorded} <- ticks do
-        assert recorded == ~D[2026-03-01]
-        assert Date.compare(recorded, occurred) in [:gt, :eq]
+        assert recorded == occurred
       end
 
       # ticks occurred on the historical weekly due dates, well before booking
