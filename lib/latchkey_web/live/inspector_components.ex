@@ -14,6 +14,86 @@ defmodule LatchkeyWeb.InspectorComponents do
   """
   use LatchkeyWeb, :html
 
+  alias LatchkeyWeb.Inspector.Glossary
+
+  @doc """
+  The in-app **glossary** page (spec glossary.md, D1/D2/D3/D6): three lens-sections
+  — domain (rendered verbatim from `CONTEXT.md`), DDD, and ES — each rendering
+  anchored markdown so per-term headings are deep-link targets. The domain lens
+  carries a framing caption (D6). Content is compiled by `Glossary`; the rendered
+  HTML is trusted first-party markdown, emitted with `raw/1`.
+  """
+  def glossary_page(assigns) do
+    assigns =
+      assign(assigns,
+        domain_html: Glossary.html(:domain),
+        ddd_html: Glossary.html(:ddd),
+        es_html: Glossary.html(:es)
+      )
+
+    ~H"""
+    <section id="glossary" class="max-w-3xl mx-auto">
+      <header class="mb-10">
+        <p class="text-[11px] font-semibold uppercase tracking-widest text-base-content/50">
+          Reference · living documentation
+        </p>
+        <h1 class="mt-1.5 text-2xl font-semibold tracking-tight text-balance">
+          A glossary that points back at the running system.
+        </h1>
+        <.caption class="mt-2 max-w-[66ch]">
+          Three lenses on Latchkey: the <b>domain</b>
+          it models, and the <b>domain-driven design</b>
+          and <b>event-sourcing</b>
+          patterns the code uses.
+          Each term names the code it maps to and, where it runs, links to the live
+          inspector surface.
+        </.caption>
+        <nav class="mt-4 flex flex-wrap gap-2" aria-label="Glossary lenses">
+          <a
+            :for={
+              {id, label} <- [
+                {"glossary-domain", "Domain"},
+                {"glossary-ddd", "DDD"},
+                {"glossary-es", "Event sourcing"}
+              ]
+            }
+            href={"##{id}"}
+            class="px-2.5 py-1 rounded-full bg-base-200 hover:bg-base-300 text-xs font-medium transition-colors"
+          >
+            {label}
+          </a>
+        </nav>
+      </header>
+
+      <section id="glossary-domain" class="mb-14">
+        <div
+          id="glossary-domain-framing"
+          class="mb-5 rounded-lg border border-base-300 bg-base-200/50 px-4 py-3"
+        >
+          <p class="text-[11px] font-semibold uppercase tracking-widest text-base-content/50">
+            Domain lens
+          </p>
+          <.caption class="mt-1">
+            Latchkey's ubiquitous language, rendered verbatim from
+            <code class="font-mono text-base-content/80">CONTEXT.md</code>
+            — a single source of truth, so it can't drift. Inward cross-references
+            (“ADR 0008”, “domain-model.md §7”) point to the ADRs and the domain model.
+          </.caption>
+        </div>
+        <div class="glossary-prose">{raw(@domain_html)}</div>
+      </section>
+
+      <section id="glossary-ddd" class="mb-14">
+        <div class="glossary-prose">{raw(@ddd_html)}</div>
+      </section>
+
+      <section id="glossary-es" class="mb-14">
+        <div class="glossary-prose">{raw(@es_html)}</div>
+      </section>
+    </section>
+    """
+  end
+
   @doc """
   Left nav rail: contexts (deep + edge) with their aggregate and streams, then
   the named-only contexts rendered as honestly-labelled, non-navigable entries.
@@ -223,6 +303,13 @@ defmodule LatchkeyWeb.InspectorComponents do
           that is the point.
           <.read_more href={@docs.context_map}>context-map.md</.read_more>
         </.caption>
+        <.link
+          id="orientation-glossary-link"
+          navigate={~p"/inspector/glossary"}
+          class="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary"
+        >
+          Reference / Glossary <span aria-hidden="true">→</span>
+        </.link>
       </header>
 
       <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-4 mb-8">
