@@ -26,6 +26,7 @@ defmodule LatchkeyWeb.InspectorLive do
 
   import LatchkeyWeb.Inspector.EventLog
   import LatchkeyWeb.Inspector.Firehose
+  import LatchkeyWeb.Inspector.LedgerPane
   import LatchkeyWeb.Inspector.StatePanes
   import LatchkeyWeb.InspectorComponents
 
@@ -36,6 +37,7 @@ defmodule LatchkeyWeb.InspectorLive do
   alias Latchkey.PropertyManagement.Arrears
   alias Latchkey.PropertyManagement.ArrearsFold
   alias Latchkey.PropertyManagement.Tenancy.Events.TenancyCommenced
+  alias Latchkey.PropertyManagement.Timeline
   alias Latchkey.Simulation.Directory
   alias Latchkey.Simulation.Identity
 
@@ -197,6 +199,7 @@ defmodule LatchkeyWeb.InspectorLive do
     |> assign(:aggregate_state, nil)
     |> assign(:read_model, nil)
     |> assign(:consistency, nil)
+    |> assign(:ledger_entries, nil)
   end
 
   defp assign_fold_panes(socket, stream_id, _deep, recorded) do
@@ -218,6 +221,19 @@ defmodule LatchkeyWeb.InspectorLive do
     |> assign(:aggregate_state, derived.core)
     |> assign(:read_model, derived)
     |> assign(:consistency, consistency)
+    |> assign(:ledger_entries, ledger_entries(recorded))
+  end
+
+  # ── Ledger pane (issue #84, spec D1, ADR 0006) ──────────────────────────────
+  # The double-entry accounting lens on the same stream, via `Timeline.fold/1` —
+  # the pure, compute-on-read prefix fold (never a parallel reimplementation). The
+  # same `recorded` events feed the event-log, fold and ledger panes, so all three
+  # see one history. Pairs each event with its per-stream `stream_version` (the
+  # ledger's same-day tie-breaker), and reads no store, writes nothing (in-memory).
+  defp ledger_entries(recorded) do
+    recorded
+    |> Enum.map(fn r -> {r.stream_version, r.data} end)
+    |> Timeline.fold()
   end
 
   # The live, persisted read-model row for this tenancy (or nil), read to reconcile
@@ -405,6 +421,15 @@ defmodule LatchkeyWeb.InspectorLive do
                   state={@aggregate_state}
                   derived={@read_model}
                   consistency={@consistency}
+                  docs={@docs}
+                />
+                <%!-- The double-entry accounting lens on the same fold (#84, D1). --%>
+                <%!-- Deep (tenancy) streams only; the Accounts edge folds no state (D3). --%>
+                <.ledger_pane
+                  :if={@stream_kind == :deep}
+                  stream_id={@active_stream}
+                  entries={@ledger_entries}
+                  read_model_balance_cents={@read_model.balance_cents}
                   docs={@docs}
                 />
               <% @live_action == :stream -> %>
