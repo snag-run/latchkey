@@ -250,5 +250,7 @@ defmodule Latchkey.PropertyManagement.Tenancy.Aggregate do
   # Decode the fixed vocabularies explicitly — no dynamic atom conversion of
   # persisted strings. Unknown values crash the replay loudly rather than silently.
   defp decode_cycle(c) when c in [:weekly, "weekly"], do: :weekly
+  defp decode_cycle(c) when c in [:fortnightly, "fortnightly"], do: :fortnightly
+  defp decode_cycle(c) when c in [:monthly, "monthly"], do: :monthly
   defp decode_grounds(g) when g in [:arrears, "arrears"], do: :arrears
 end
