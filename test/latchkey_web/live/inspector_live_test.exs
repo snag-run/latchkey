@@ -148,9 +148,9 @@ defmodule LatchkeyWeb.InspectorLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/inspector")
 
-      html = view |> element("#nav-filter") |> render_keyup(%{"value" => "zzz-nope"})
+      view |> element("#nav-filter") |> render_keyup(%{"value" => "zzz-nope"})
 
-      assert html =~ "no streams match"
+      assert has_element?(view, "#nav-no-match-tenancy", "no streams match")
     end
   end
 

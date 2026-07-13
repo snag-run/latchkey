@@ -81,6 +81,8 @@ defmodule LatchkeyWeb.InspectorComponents do
           <div :for={group <- ctx.groups} id={"nav-group-#{group.key}"} class="mb-1">
             <button
               type="button"
+              id={"nav-toggle-#{group.key}"}
+              aria-expanded={to_string(group_open?(group, @nav_filter, @nav_expanded))}
               phx-click="nav_toggle"
               phx-value-category={group.key}
               class="w-full flex items-center gap-2 pl-4 pr-2 py-1 rounded-md hover:bg-base-200 text-xs font-medium text-base-content/70"
@@ -112,6 +114,7 @@ defmodule LatchkeyWeb.InspectorComponents do
 
           <p
             :if={@nav_filter != "" and no_matches?(ctx.groups, @nav_filter)}
+            id={"nav-no-match-#{ctx.id}"}
             class="pl-6 py-1 text-xs italic text-base-content/45"
           >
             no streams match “{@nav_filter}”
@@ -293,6 +296,8 @@ defmodule LatchkeyWeb.InspectorComponents do
         <div :for={group <- @context.groups} id={"map-group-#{group.key}"} class="mb-0.5">
           <button
             type="button"
+            id={"map-toggle-#{group.key}"}
+            aria-expanded={to_string(group_open?(group, "", @nav_expanded))}
             phx-click="nav_toggle"
             phx-value-category={group.key}
             class="w-full flex items-center gap-2 px-1 py-1 rounded-md hover:bg-base-200 text-xs font-medium text-base-content/70"

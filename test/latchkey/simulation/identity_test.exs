@@ -40,6 +40,13 @@ defmodule Latchkey.Simulation.IdentityTest do
       assert prior.tenant_name != current.tenant_name
     end
 
+    test "address is NSW-formatted: '<number> <street>, <suburb> NSW <2xxx>'" do
+      %{property_address: address} = Identity.resolve("arrears-07", "prop-arrears-07")
+
+      # A street line, a suburb, the literal state, and a four-digit NSW (2xxx) postcode.
+      assert address =~ ~r/^\d+ .+, .+ NSW 2\d{3}$/
+    end
+
     test "address tracks property_ref, name tracks tenancy_id (independent keys)" do
       # Same tenancy_id, different property_ref → same name, different address.
       one = Identity.resolve("t-1", "prop-a")
