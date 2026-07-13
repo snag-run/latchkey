@@ -226,6 +226,68 @@ defmodule Latchkey.PropertyManagement.PaymentAclIntegrationTest do
     assert recorded_count(tenancy_stream) == 1
   end
 
+  test "skips a reversal whose original payment is absent from the source stream (not-found)",
+       %{tid: tid, tenancy_stream: tenancy_stream, accounts_stream: accounts_stream} do
+    # A reversal whose `reverses` points at a payment_id never written to the source
+    # stream: ACL-1 cannot recover a holder to route it, so it is logged and skipped
+    # (not retried forever), booking nothing.
+    reversal =
+      Accounts.payment_reversed(%{
+        payment_id: "acl-orphan-rev",
+        reverses: "acl-never-written",
+        amount_cents: -50_000,
+        reversed_on: ~D[2026-01-10],
+        reason: "dishonoured"
+      })
+
+    assert :ok = Accounts.append(reversal, stream: accounts_stream)
+
+    # Sync on a known-good receipt appended AFTER the orphan reversal; once its
+    # RentPaymentRecorded is acked, the reversal has definitively been processed (and,
+    # being un-routable, booked nothing).
+    sentinel = tenancy_receipt(tid, "acl-orphan-sentinel", 10_000)
+    assert :ok = Accounts.append(sentinel, stream: accounts_stream)
+    assert %RentPaymentRecorded{} = await_source("acl-orphan-sentinel")
+
+    # Only the sentinel landed — the orphan reversal never crossed the seam.
+    assert recorded_count(tenancy_stream) == 1
+  end
+
+  test "skips a reversal whose original payment was UNKNOWN-held (suspense never crosses)",
+       %{tid: tid, tenancy_stream: tenancy_stream, accounts_stream: accounts_stream} do
+    # The original receipt was suspense money (UNKNOWN holder) PM never recorded; its
+    # reversal must likewise never cross the seam — ACL-1 recovers the UNKNOWN holder
+    # from the source stream, sees it is not a known holder, and skips.
+    assert :ok =
+             Accounts.append(
+               Accounts.payment_received(%{
+                 payment_id: "acl-susp-pay",
+                 amount_cents: 40_000,
+                 received_on: ~D[2026-01-05],
+                 holder: Accounts.unknown_holder()
+               }),
+               stream: accounts_stream
+             )
+
+    reversal =
+      Accounts.payment_reversed(%{
+        payment_id: "acl-susp-rev",
+        reverses: "acl-susp-pay",
+        amount_cents: -40_000,
+        reversed_on: ~D[2026-01-10],
+        reason: "dishonoured"
+      })
+
+    assert :ok = Accounts.append(reversal, stream: accounts_stream)
+
+    sentinel = tenancy_receipt(tid, "acl-susp-sentinel", 10_000)
+    assert :ok = Accounts.append(sentinel, stream: accounts_stream)
+    assert %RentPaymentRecorded{} = await_source("acl-susp-sentinel")
+
+    # Only the sentinel landed — neither the suspense receipt nor its reversal crossed.
+    assert recorded_count(tenancy_stream) == 1
+  end
+
   # A known-good, tenancy-attributed receipt — used as a positive checkpoint the async
   # handler must observably reach, so earlier events are provably processed-or-skipped.
   defp tenancy_receipt(tid, payment_id, amount_cents) do
