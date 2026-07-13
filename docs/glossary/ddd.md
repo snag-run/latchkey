@@ -1,83 +1,93 @@
 # Domain-Driven Design patterns
 
-The strategic and tactical DDD patterns Latchkey uses. Each entry names the concept,
-the **code symbol** it maps to, the **live** inspector surface where you can watch it
-run, and a link to its **source**. Concepts with no code symbol and no live surface are
-listed under [More DDD concepts](#more-ddd-concepts) as links out, never as faked entries.
+New to domain-driven design? Start here. DDD just means building the software around the
+real-world domain — here, residential tenancies — and around the exact words people use
+to talk about it. Each entry below explains one idea in plain terms first, then points at
+the **code symbol** it maps to, the **live** inspector surface where you can watch it run,
+and its **source**. A few ideas have no code of their own; those are listed under
+[More DDD concepts](#more-ddd-concepts) as links out, never dressed up as fake entries.
 
 ## Aggregate
 
-The consistency boundary that owns a stream's invariants and decides which new events
-may be appended. Latchkey's one aggregate is the **Tenancy**: a pure core that folds a
-tenancy's own events into a `State` (`evolve/2`) and validates each command against that
-state (`decide_*/2`). Every **Tenancy** stream (`tenancy-<slug>`) is one aggregate
-instance; the Accounts edge stream is *not* an aggregate — it just appends payment facts.
+An **aggregate** is the one object put in charge of a single thing's rules — nothing
+changes that thing except by going through it. In Latchkey that thing is a **Tenancy**. To
+record a payment or give notice you *ask* the Tenancy, and it decides yes or no; it is the
+only door in, so the rules can't be side-stepped. It works out its answer by replaying its
+own past events in order (a *fold* — see the ES lens), and each Tenancy's history is its
+own stream, `tenancy-<slug>`. (The Accounts stream is *not* an aggregate — it only appends
+payment facts.)
 
 **Symbol** `Latchkey.PropertyManagement.Tenancy` · **Live** [aggregate-state pane on a deep stream →](/inspector/streams/tenancy-notice-then-paid#aggregate-state-pane) · **Source** [`tenancy.ex` ↗](https://github.com/snag-run/latchkey/blob/main/lib/latchkey/property_management/tenancy.ex)
 
 ## Bounded context
 
-A boundary inside which a model and its language are consistent. Latchkey has two
-modelled contexts: the **deep** Tenancy & Arrears context (a full write model, read
-model and ledger) and the **edge** Accounts context (append-only payment facts, no
-aggregate). The orientation map draws both, plus the named-only contexts that are
-deliberately *not* modelled.
+A **bounded context** is a walled-off part of the model where every word means exactly one
+thing. Latchkey has two that are actually built: a **deep** one — Tenancy & Arrears, which
+does the real work (a write model, a read model, and a ledger) — and a thin **edge** one —
+Accounts, which only records that money arrived. Keeping them apart lets "payment" mean one
+thing to Accounts and another to Tenancy without the two colliding. The orientation map
+draws both, alongside the contexts we name but deliberately don't model.
 
 **Symbol** `Latchkey.PropertyManagement` (deep) · `Latchkey.Accounts` (edge) · **Live** [orientation map →](/inspector) · **Source** [`property_management/` ↗](https://github.com/snag-run/latchkey/tree/main/lib/latchkey/property_management)
 
 ## Anti-corruption layer
 
-A seam that translates one context's language into another's so an upstream model can't
-leak into a downstream one. Latchkey's **ACL-1** turns an Accounts `PaymentReceived`
-(edge fact) into a Tenancy `RentPaymentRecorded` (an arrears-reducing PM event) —
-idempotently, keyed on `source_payment_id`. It is the arrow on the map labelled
-"payment → arrears reduction".
+An **anti-corruption layer** is a translator sitting between two contexts, so one side's
+way of naming things can't leak into the other. Latchkey's is **ACL-1**: when Accounts
+says "a payment arrived" (`PaymentReceived`), ACL-1 restates it in Tenancy's language as
+"rent was paid — reduce the arrears" (`RentPaymentRecorded`). It also ignores duplicates,
+so the same payment arriving twice still only counts once (keyed on `source_payment_id`).
+On the map it's the arrow labelled "payment → arrears reduction".
 
 **Symbol** `Latchkey.PropertyManagement.PaymentAcl` · **Live** [ACL-1 seam on the map →](/inspector) · [the Accounts edge stream →](/inspector/streams/accounts) · **Source** [`payment_acl.ex` ↗](https://github.com/snag-run/latchkey/blob/main/lib/latchkey/property_management/payment_acl.ex)
 
 ## Domain event
 
-A named fact that already happened, recorded in the past tense and never mutated. These
-*are* the write model — `TenancyCommenced`, `RentFellDue`, `RentPaymentRecorded`,
-`TerminationNoticeGiven`, `KeysReturned`, `TenancySettled`. Every PM event carries the
-bitemporal envelope (`occurred_on` / `recorded_on`).
+A **domain event** is a plain record that something happened, written in the past tense and
+never changed afterwards — `TenancyCommenced`, `RentFellDue`, `RentPaymentRecorded`, and so
+on. In an event-sourced system these records *are* the source of truth: every other view is
+worked out from them. Each one carries two dates — when it happened and when the system was
+told (see *bitemporality* in the ES lens).
 
 **Symbol** `Latchkey.PropertyManagement.Tenancy.Events.*` · **Live** [event-log pane on a deep stream →](/inspector/streams/tenancy-notice-then-paid#event-log) · **Source** [`tenancy/events/` ↗](https://github.com/snag-run/latchkey/tree/main/lib/latchkey/property_management/tenancy/events)
 
 ## Command
 
-A *request* to change state — an intent, not a fact. Commands (`CommenceTenancy`,
-`RecordPayment`, `GiveTerminationNotice`, …) are validated by the aggregate, which may
-reject them or emit events; unlike events they are never stored. The inspector is
-strictly read-only, so it issues no commands and has no command pane — this concept
-degrades to symbol + source (per the spec's anchor tripwire).
+A **command** is a *request* to do something — "commence this tenancy", "record this
+payment". It's only an intent: the aggregate checks it and may refuse, and unlike an event
+it is never stored (compare *event vs command* in the ES lens). The inspector is read-only
+and issues no commands, so there's no live pane for this one — it points straight to the
+code instead.
 
 **Symbol** `Latchkey.PropertyManagement.Tenancy.Commands.*` · **Source** [`tenancy/commands/` ↗](https://github.com/snag-run/latchkey/tree/main/lib/latchkey/property_management/tenancy/commands)
 
 ## Ubiquitous language
 
-The shared, precise vocabulary the code, docs and this glossary all speak — "rental
-ledger", "vacant possession", "days behind". It lives in one file, `CONTEXT.md`, which
-the glossary's domain lens renders verbatim so the two can never drift.
+**Ubiquitous language** is the agreement that everyone — the code, the docs, this glossary,
+and you — uses the *same* word for the same thing: "rental ledger", "vacant possession",
+"days behind". Latchkey keeps that vocabulary in one file, `CONTEXT.md`, and the glossary's
+domain lens shows it as-is — so the words on screen and the words in the code can never
+drift apart.
 
 **Symbol** `CONTEXT.md` · **Live** [domain lens →](/inspector/glossary#glossary-domain) · **Source** [`CONTEXT.md` ↗](https://github.com/snag-run/latchkey/blob/main/CONTEXT.md)
 
 ## Upstream / downstream
 
-The direction of a dependency between contexts: the **upstream** model shapes the
-**downstream** one, never the reverse. Accounts is upstream of Tenancy — payments
-originate there and flow down through ACL-1 into arrears — and the ACL exists precisely
-so that upstream shape doesn't dictate the downstream Tenancy model.
+When two contexts depend on each other, the **upstream** one sets the terms and the
+**downstream** one has to adapt — never the reverse. In Latchkey, Accounts is upstream of
+Tenancy: payments start life in Accounts and flow *down* into arrears. The anti-corruption
+layer sits on that boundary precisely so Accounts' shape doesn't get to dictate how Tenancy
+models rent.
 
 **Symbol** `Latchkey.PropertyManagement.PaymentAcl` (the directional seam) · **Live** [the ACL-1 arrow on the map →](/inspector) · **Source** [`payment_acl.ex` ↗](https://github.com/snag-run/latchkey/blob/main/lib/latchkey/property_management/payment_acl.ex)
 
 ## Invariant
 
-A rule that must hold for every state the aggregate reaches — e.g. you can't record a
-payment against a tenancy that never commenced, or settle one twice. The Tenancy's
-`decide_*/2` clauses enforce these before any event is appended; the inspector's
-consistency check reconciles the folded state against the live read model to show they
-agree.
+An **invariant** is a rule that has to stay true no matter what — you can't record a payment
+against a tenancy that never started, and you can't settle the same tenancy twice. The
+Tenancy aggregate enforces these in its `decide_*/2` checks before it ever appends an event.
+The inspector's consistency check is a live proof of it: it folds the events itself and
+confirms the answer matches the stored read model.
 
 **Symbol** `Latchkey.PropertyManagement.Tenancy` `decide_*/2` · **Live** [consistency check on a deep stream →](/inspector/streams/tenancy-notice-then-paid#consistency-check) · **Source** [`tenancy.ex` ↗](https://github.com/snag-run/latchkey/blob/main/lib/latchkey/property_management/tenancy.ex)
 
