@@ -185,6 +185,65 @@ defmodule Latchkey.PropertyManagement.ArrearsFoldTest do
     end
   end
 
+  describe "reconcile/2 — D1 consistency check against the live Arrears row" do
+    # A minimal stand-in for the persisted read-model row: only the fields the
+    # check compares (a plain map suffices — reconcile reads fields, never types).
+    defp live_row(attrs), do: Enum.into(attrs, %{})
+
+    test "consistent when every persisted field matches the recompute" do
+      derived = ArrearsFold.fold_and_derive(prefix(4))
+
+      live =
+        live_row(
+          status: derived.status,
+          balance_cents: derived.balance_cents,
+          oldest_unpaid_due_date: derived.oldest_unpaid_due_date,
+          final_balance_cents: derived.final_balance_cents
+        )
+
+      result = ArrearsFold.reconcile(derived, live)
+
+      assert result.consistent?
+      assert Enum.all?(result.fields, & &1.match?)
+
+      assert Enum.map(result.fields, & &1.field) == [
+               :status,
+               :balance_cents,
+               :oldest_unpaid_due_date,
+               :final_balance_cents
+             ]
+    end
+
+    test "flags the drifting field when the live row disagrees" do
+      derived = ArrearsFold.fold_and_derive(prefix(4))
+
+      live =
+        live_row(
+          status: derived.status,
+          balance_cents: derived.balance_cents + 1,
+          oldest_unpaid_due_date: derived.oldest_unpaid_due_date,
+          final_balance_cents: derived.final_balance_cents
+        )
+
+      result = ArrearsFold.reconcile(derived, live)
+
+      refute result.consistent?
+      balance = Enum.find(result.fields, &(&1.field == :balance_cents))
+      refute balance.match?
+      assert balance.recomputed == derived.balance_cents
+      assert balance.live == derived.balance_cents + 1
+    end
+
+    test "days_behind is not part of the persisted equality (computed on read)" do
+      derived = ArrearsFold.fold_and_derive(prefix(4))
+
+      refute :days_behind in Enum.map(
+               ArrearsFold.reconcile(derived, live_row([])).fields,
+               & &1.field
+             )
+    end
+  end
+
   describe "JSON-rehydrated dates (replay path)" do
     test "ISO-string occurred_on is coerced — fold and the as-of default both cope" do
       events = [
