@@ -15,6 +15,7 @@ defmodule Latchkey.PropertyManagement.PaymentAclIntegrationTest do
   alias Latchkey.Accounts
   alias Latchkey.CommandedApp
   alias Latchkey.EventStore
+  alias Latchkey.PropertyManagement.PaymentAcl
   alias Latchkey.PropertyManagement.Tenancy.Commands.CommenceTenancy
   alias Latchkey.PropertyManagement.Tenancy.Events.RentPaymentRecorded
 
@@ -251,6 +252,31 @@ defmodule Latchkey.PropertyManagement.PaymentAclIntegrationTest do
 
     # Only the sentinel landed — the orphan reversal never crossed the seam.
     assert recorded_count(tenancy_stream) == 1
+  end
+
+  test "skips a reversal whose source stream does not exist at all (stream_not_found)",
+       %{tenancy_stream: tenancy_stream} do
+    # Distinct from the orphan case above: there the source stream exists but lacks the
+    # original payment (find_value default); here the source stream itself is missing.
+    # Drive the handler synchronously with a fabricated metadata.stream_id so
+    # source_holder's EventStore.stream_forward hits {:error, :stream_not_found} — a
+    # permanent miss that is logged and skipped (never retried), booking nothing.
+    reversal =
+      Accounts.payment_reversed(%{
+        payment_id: "acl-nostream-rev",
+        reverses: "acl-nostream-orig",
+        amount_cents: -50_000,
+        reversed_on: ~D[2026-01-10],
+        reason: "dishonoured"
+      })
+
+    missing_stream = "accounts-missing-#{System.unique_integer([:positive])}"
+
+    # :ok = skip (checkpoint advances); a transient read would instead return {:error, _}.
+    assert :ok = PaymentAcl.handle(reversal, %{stream_id: missing_stream})
+
+    # Nothing booked on the committed tenancy stream.
+    assert recorded_count(tenancy_stream) == 0
   end
 
   test "skips a reversal whose original payment was UNKNOWN-held (suspense never crosses)",
