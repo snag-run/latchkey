@@ -42,6 +42,21 @@ defmodule Latchkey.Simulation.Seeder.Projection do
   """
   @spec timeline(Scenario.t(), String.t()) :: [step()]
   def timeline(%Scenario{} = scenario, tenancy_id) do
+    scenario
+    |> dated_timeline(tenancy_id)
+    |> Enum.map(fn {_date, step} -> step end)
+  end
+
+  @doc """
+  The scenario's `timeline/2` paired with the **real-world date each step is ordered
+  by** — a payment's received date, a notice's given date, an exit's keys-return date.
+  Same chronological order as `timeline/2` (oldest first), but it keeps the sort date so
+  a caller merging *many* tenancies' timelines into one pass — the interleaved seeder
+  replay (issue #115) — can order steps *across* streams while each tenancy's own steps
+  keep their intra-stream order.
+  """
+  @spec dated_timeline(Scenario.t(), String.t()) :: [{Date.t(), step()}]
+  def dated_timeline(%Scenario{} = scenario, tenancy_id) do
     payment_steps =
       scenario.profile
       |> Behaviour.payments(schedule(scenario, tenancy_id))
@@ -61,7 +76,7 @@ defmodule Latchkey.Simulation.Seeder.Projection do
 
     (payment_steps ++ notice_steps ++ exit_steps)
     |> Enum.sort_by(fn {date, tiebreak, _step} -> {Date.to_erl(date), tiebreak} end)
-    |> Enum.map(fn {_date, _tiebreak, step} -> step end)
+    |> Enum.map(fn {date, _tiebreak, step} -> {date, step} end)
   end
 
   @doc """

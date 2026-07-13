@@ -18,6 +18,8 @@ defmodule Latchkey.Simulation.SeederIntegrationTest do
   """
   use Latchkey.DataCase, async: false
 
+  alias Latchkey.Accounts.Events.PaymentReceived
+  alias Latchkey.EventStore
   alias Latchkey.PropertyManagement.Arrears
   alias Latchkey.Simulation.Directory
   alias Latchkey.Simulation.Identity
@@ -157,6 +159,62 @@ defmodule Latchkey.Simulation.SeederIntegrationTest do
     for %{tenancy_id: tenancy_id} <- reseed do
       assert directory(tenancy_id) != nil
     end
+  end
+
+  test "interleaves the Accounts stream by arrival date across tenancies (issue #115)", %{
+    seed_opts: seed_opts
+  } do
+    payments =
+      seed_opts[:accounts_stream]
+      |> EventStore.stream_forward()
+      |> Enum.map(& &1.data)
+      |> Enum.filter(&match?(%PaymentReceived{}, &1))
+
+    # A meaningful board: several tenancies, many payments — enough to interleave.
+    holders = Enum.map(payments, & &1.holder)
+    assert length(Enum.uniq(holders)) > 1
+    assert length(payments) > length(Enum.uniq(holders))
+
+    # Chronological: `occurred_on` (arrival/value date) is non-decreasing down the stream.
+    # Deserialized off the event store as ISO-8601 strings, which sort chronologically.
+    dates = Enum.map(payments, & &1.occurred_on)
+    assert dates == Enum.sort(dates)
+
+    # Actually interleaved, not clustered-by-tenancy: a per-tenancy block layout has
+    # exactly (#tenancies − 1) holder transitions; a date-ordered interleave has more.
+    transitions =
+      holders
+      |> Enum.chunk_every(2, 1, :discard)
+      |> Enum.count(fn [a, b] -> a != b end)
+
+    assert transitions > length(Enum.uniq(holders)) - 1
+  end
+
+  test "reseed reproduces the same interleaving byte-for-byte (determinism, ADR 0005)", %{
+    seed_opts: seed_opts
+  } do
+    # A fresh store keyed to a *new* accounts stream + id prefix, seeded from the same
+    # scenarios: the interleaved order must be identical to the setup seed's.
+    other_stream = "accounts-seed-it-#{System.unique_integer([:positive])}"
+    other_prefix = "seed-it-#{System.unique_integer([:positive])}-"
+
+    Seeder.seed(Keyword.merge(seed_opts, accounts_stream: other_stream, id_prefix: other_prefix))
+
+    assert payment_shape(seed_opts[:accounts_stream], seed_opts[:id_prefix]) ==
+             payment_shape(other_stream, other_prefix)
+  end
+
+  # The stream's payment order as prefix-independent tuples, so two runs on distinct
+  # prefixes/streams compare equal iff they interleave the same tenancies in the same
+  # order on the same dates.
+  defp payment_shape(stream, prefix) do
+    stream
+    |> EventStore.stream_forward()
+    |> Enum.map(& &1.data)
+    |> Enum.filter(&match?(%PaymentReceived{}, &1))
+    |> Enum.map(fn %PaymentReceived{holder: holder, occurred_on: on, amount_cents: cents} ->
+      {String.replace_prefix(holder, "tenancy-" <> prefix, ""), on, cents}
+    end)
   end
 
   defp arrears(tenancy_id) do
