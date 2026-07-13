@@ -92,6 +92,13 @@ defmodule LatchkeyWeb.InspectorLiveTest do
   end
 
   describe "stream navigation" do
+    # The stream view now renders the event-log pane (#81), which reads the raw
+    # EventStore; start it (Commanded is disabled in :test).
+    setup do
+      start_supervised!(Latchkey.EventStore)
+      :ok
+    end
+
     test "selecting a stream from the nav routes to the stream view", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/inspector")
 
