@@ -119,7 +119,7 @@ defmodule LatchkeyWeb.InspectorEventLogTest do
     } do
       # The commencement row's dates coincide → no divergence flag.
       refute has_element?(view, "#event-divergence-#{stream}-1")
-      # The lagged accrual tick's dates diverge → flag present.
+      # The imported tick's dates diverge → flag present.
       assert has_element?(view, "#event-divergence-#{stream}-2")
       # A thin bitemporal caption with a read-more link to domain-model.md §3.
       assert has_element?(view, "#bitemporal-caption")

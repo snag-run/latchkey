@@ -1,4 +1,4 @@
-# 0010 — `RentFellDue` books same-day; `recorded_on ≠ occurred_on` means "imported"
+# 0010 — `RentFellDue` books same-day; `recorded_on > occurred_on` means "imported"
 
 Status: **accepted** — resolves issue #118. **Supersedes
 [ADR 0005](0005-simulation-and-time-model.md) decision 4** (the "lazy accrual — accrual

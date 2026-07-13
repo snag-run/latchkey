@@ -35,3 +35,6 @@ latchkey-*.tar
 npm-debug.log
 /assets/node_modules/
 
+
+# Agent worktrees (Claude Code isolation) — never commit
+.claude/worktrees/

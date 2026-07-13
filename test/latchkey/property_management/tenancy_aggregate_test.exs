@@ -691,6 +691,10 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       assert boundary.period_from == ~D[2026-02-09]
       assert boundary.period_to == ~D[2026-02-12]
       assert boundary.amount_cents == 21_429
+
+      # #118: exit accrual books same-day — every whole-period and the boundary tick
+      # self-stamps recorded_on = occurred_on (no divergence for system-managed accrual).
+      assert Enum.all?(charges, &(&1.recorded_on == &1.occurred_on))
     end
 
     test "a tenant leaving mid-week is charged only the days within the tenancy, never the whole week" do
@@ -833,6 +837,8 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       assert overstay.period_to == ~D[2026-02-19]
       # 3 days at $500/week → round_half_up(50_000 × 3 ÷ 7) = 21_429.
       assert overstay.amount_cents == 21_429
+      # #118: the overstay tick books same-day too — recorded_on = occurred_on = E.
+      assert overstay.recorded_on == overstay.occurred_on
     end
 
     test "boundary-aligned monthly E divides the overstay by the last scheduled period (÷28), not the next month (÷31)" do
