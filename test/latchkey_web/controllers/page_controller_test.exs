@@ -1,8 +1,8 @@
 defmodule LatchkeyWeb.PageControllerTest do
   use LatchkeyWeb.ConnCase
 
-  test "GET /", %{conn: conn} do
+  test "GET / redirects to the inspector (the app's front door for now)", %{conn: conn} do
     conn = get(conn, ~p"/")
-    assert html_response(conn, 200) =~ "Peace of mind from prototype to production"
+    assert redirected_to(conn) == ~p"/inspector"
   end
 end

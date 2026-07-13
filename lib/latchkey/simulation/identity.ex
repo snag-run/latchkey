@@ -31,9 +31,14 @@ defmodule Latchkey.Simulation.Identity do
 
   ## Locale
 
-  Faker has no en_AU locale, so addresses render in Faker's default US style. The
-  Directory is disposable demo data, so this is cosmetic and intentionally not worth
-  chasing a custom locale for.
+  `faker` ships no `en_AU` locale, so its `Faker.Address` helpers render US-style
+  addresses (US cities, two-letter states, 5-digit ZIPs) — wrong for an Australian
+  tenancy sim. We compose the address ourselves instead: a Faker surname + an
+  Australian street suffix for the street, and a real `{suburb, postcode}` drawn as a
+  unit from a curated **NSW** table (`@nsw_localities`), so the suburb and its 2xxx
+  postcode always agree. Latchkey's simulated portfolio is a single-jurisdiction (NSW)
+  book, so every address is NSW. Every draw still goes through `:rand` inside
+  `seeded/2`, so determinism per `property_ref` is preserved.
   """
 
   @typedoc "The display identity resolved for a tenancy."
@@ -52,11 +57,50 @@ defmodule Latchkey.Simulation.Identity do
     }
   end
 
+  # Australian street suffixes (Faker's default street types skew US — "Fork",
+  # "Skyway" — so we supply our own).
+  @au_street_suffixes ~w(
+    Street Road Avenue Lane Court Place Drive Parade Crescent Close Terrace Way
+  )
+
+  # Real NSW {suburb, postcode} pairs (all 2xxx), so suburb and postcode always agree.
+  # Latchkey's book is single-jurisdiction NSW; the spread across metro Sydney + a few
+  # regional centres just needs enough variety for ~100 tenancies, not exhaustiveness.
+  @nsw_localities [
+    {"Bondi", "2026"},
+    {"Parramatta", "2150"},
+    {"Newtown", "2042"},
+    {"Manly", "2095"},
+    {"Chatswood", "2067"},
+    {"Surry Hills", "2010"},
+    {"Redfern", "2016"},
+    {"Marrickville", "2204"},
+    {"Coogee", "2034"},
+    {"Randwick", "2031"},
+    {"Paddington", "2021"},
+    {"Glebe", "2037"},
+    {"Balmain", "2041"},
+    {"Mosman", "2088"},
+    {"Cronulla", "2230"},
+    {"Dee Why", "2099"},
+    {"Hornsby", "2077"},
+    {"Penrith", "2750"},
+    {"Blacktown", "2148"},
+    {"Bankstown", "2200"},
+    {"Liverpool", "2170"},
+    {"Katoomba", "2780"},
+    {"Newcastle", "2300"},
+    {"Wollongong", "2500"}
+  ]
+
   defp draw_name, do: Faker.Person.name()
 
   defp draw_address do
-    "#{Faker.Address.street_address()}, #{Faker.Address.city()} " <>
-      "#{Faker.Address.state_abbr()} #{Faker.Address.zip_code()}"
+    number = Enum.random(1..300)
+    street = "#{Faker.Person.last_name()} #{Enum.random(@au_street_suffixes)}"
+    {suburb, postcode} = Enum.random(@nsw_localities)
+
+    "#{number} #{street}, #{suburb} NSW #{postcode}"
   end
 
   # Draw `fun` from a `:rand` state seeded deterministically off `key`, then restore

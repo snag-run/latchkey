@@ -95,7 +95,13 @@ defmodule LatchkeyWeb.InspectorLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    tenancy_context = Map.put(@tenancy_context_base, :streams, list_tenancy_streams())
+    tenancy_streams = list_tenancy_streams()
+
+    tenancy_context =
+      @tenancy_context_base
+      |> Map.put(:streams, tenancy_streams)
+      |> Map.put(:groups, group_tenancy_streams(tenancy_streams))
+
     contexts = [tenancy_context, @accounts_context]
 
     # Connected mount only (spec D5) — the static render on initial HTTP GET
@@ -113,6 +119,11 @@ defmodule LatchkeyWeb.InspectorLive do
       |> assign(:acl_edge_label, @acl_edge_label)
       |> assign(:docs, @docs)
       |> assign(:stream_found?, false)
+      # Nav-rail legibility state (~100 streams): a filter query and the set of
+      # expanded scenario groups. Both are server-side; the rail collapses all
+      # groups by default so the map lands compact.
+      |> assign(:nav_filter, "")
+      |> assign(:nav_expanded, [])
       # Replay-scrubber state (spec D4). The whole thing is one integer `k`; the
       # rest is bookkeeping. Defaulted here so every render path is safe before a
       # deep stream is selected.
@@ -243,6 +254,23 @@ defmodule LatchkeyWeb.InspectorLive do
     {:noreply, socket |> cancel_play() |> assign_prefix(socket.assigns.scrubber_n)}
   end
 
+  # ── Nav-rail filter + group collapse (server-side) ──────────────────────────
+  @impl true
+  def handle_event("nav_filter", %{"value" => query}, socket) do
+    {:noreply, assign(socket, :nav_filter, query)}
+  end
+
+  def handle_event("nav_toggle", %{"category" => category}, socket) do
+    expanded = socket.assigns.nav_expanded
+
+    expanded =
+      if category in expanded,
+        do: List.delete(expanded, category),
+        else: [category | expanded]
+
+    {:noreply, assign(socket, :nav_expanded, expanded)}
+  end
+
   defp to_firehose_row(event, %{event_number: event_number, stream_id: stream_id} = metadata) do
     %{
       id: event_number,
@@ -370,6 +398,27 @@ defmodule LatchkeyWeb.InspectorLive do
         |> assign(:recorded, recorded)
         |> assign(:event_rows, build_event_rows(stream_id, context.kind, recorded))
         |> init_scrubber(context.kind, recorded)
+        |> expand_active_group(stream_id)
+    end
+  end
+
+  # Deep-linking into a stream opens its nav group, so it isn't hidden behind a
+  # collapsed section. Keyed off the live groups so "other"-bucketed singletons
+  # resolve correctly; a stream in no group (the Accounts edge) is a no-op.
+  defp expand_active_group(socket, stream_id) do
+    groups = Map.get(socket.assigns.tenancy_context, :groups, [])
+
+    key =
+      Enum.find_value(groups, fn group ->
+        if Enum.any?(group.streams, &(&1.id == stream_id)), do: group.key
+      end)
+
+    expanded = socket.assigns.nav_expanded
+
+    if is_nil(key) or key in expanded do
+      socket
+    else
+      assign(socket, :nav_expanded, [key | expanded])
     end
   end
 
@@ -661,6 +710,8 @@ defmodule LatchkeyWeb.InspectorLive do
             contexts={@contexts}
             named_contexts={@named_contexts}
             active_stream={@active_stream}
+            nav_filter={@nav_filter}
+            nav_expanded={@nav_expanded}
           />
         </aside>
 
@@ -675,43 +726,52 @@ defmodule LatchkeyWeb.InspectorLive do
                   <span aria-hidden="true">/</span>
                   <span class="font-mono text-base-content">{@active_stream}</span>
                 </nav>
-                <.events_pane
-                  stream_id={@active_stream}
-                  context_name={@context_name}
-                  kind={@stream_kind}
-                  rows={@event_rows}
-                  docs={@docs}
-                  highlight_version={@highlight_version}
-                />
-                <%!-- The server-side replay scrubber: fold the log event-by-event (#85, D4). --%>
-                <%!-- Deep (tenancy) streams only; the Accounts edge folds no state (D3/D4). --%>
-                <.scrubber
-                  :if={@stream_kind == :deep}
-                  k={@scrubber_k}
-                  n={@scrubber_n}
-                  playing?={@scrubber_playing?}
-                  new_events_available?={@new_events_available?}
-                  docs={@docs}
-                />
-                <%!-- The write-vs-read money-shot: what the log folds into (#83, D1/D2). --%>
-                <%!-- Deep (tenancy) streams only; the Accounts edge folds no state (D3). --%>
-                <.fold_panes
-                  :if={@stream_kind == :deep}
-                  stream_id={@active_stream}
-                  state={@aggregate_state}
-                  derived={@read_model}
-                  consistency={@consistency}
-                  docs={@docs}
-                />
-                <%!-- The double-entry accounting lens on the same fold (#84, D1). --%>
-                <%!-- Deep (tenancy) streams only; the Accounts edge folds no state (D3). --%>
-                <.ledger_pane
-                  :if={@stream_kind == :deep}
-                  stream_id={@active_stream}
-                  entries={@ledger_entries}
-                  read_model_balance_cents={@read_model.balance_cents}
-                  docs={@docs}
-                />
+                <%!-- The raw event log leads on the left; everything it folds into --%>
+                <%!-- (scrubber → aggregate state, read model, ledger) sits alongside on --%>
+                <%!-- the right, so the source events and their derivations read side by --%>
+                <%!-- side. Deep streams split two-up; the Accounts edge (events only, no --%>
+                <%!-- fold — D3) stays a single full-width column. --%>
+                <div class={[
+                  "grid gap-6 items-start",
+                  if(@stream_kind == :deep, do: "grid-cols-1 xl:grid-cols-2", else: "grid-cols-1")
+                ]}>
+                  <div id="stream-events-col" class="min-w-0">
+                    <.events_pane
+                      stream_id={@active_stream}
+                      context_name={@context_name}
+                      kind={@stream_kind}
+                      rows={@event_rows}
+                      docs={@docs}
+                      highlight_version={@highlight_version}
+                    />
+                  </div>
+
+                  <div :if={@stream_kind == :deep} id="stream-derived-col" class="min-w-0 space-y-6">
+                    <%!-- The server-side replay scrubber: fold the log event-by-event (#85, D4). --%>
+                    <.scrubber
+                      k={@scrubber_k}
+                      n={@scrubber_n}
+                      playing?={@scrubber_playing?}
+                      new_events_available?={@new_events_available?}
+                      docs={@docs}
+                    />
+                    <%!-- The write-vs-read money-shot: what the log folds into (#83, D1/D2). --%>
+                    <.fold_panes
+                      stream_id={@active_stream}
+                      state={@aggregate_state}
+                      derived={@read_model}
+                      consistency={@consistency}
+                      docs={@docs}
+                    />
+                    <%!-- The double-entry accounting lens on the same fold (#84, D1). --%>
+                    <.ledger_pane
+                      stream_id={@active_stream}
+                      entries={@ledger_entries}
+                      read_model_balance_cents={@read_model.balance_cents}
+                      docs={@docs}
+                    />
+                  </div>
+                </div>
               <% @live_action == :stream -> %>
                 <.stream_not_found stream_id={@unknown_stream_id} />
               <% true -> %>
@@ -721,6 +781,7 @@ defmodule LatchkeyWeb.InspectorLive do
                   named_contexts={@named_contexts}
                   acl_edge_label={@acl_edge_label}
                   docs={@docs}
+                  nav_expanded={@nav_expanded}
                 />
             <% end %>
           </main>
@@ -750,6 +811,46 @@ defmodule LatchkeyWeb.InspectorLive do
       }
     end)
   end
+
+  # ── Nav-rail scenario grouping ──────────────────────────────────────────────
+  # Fan the ~100 tenancy streams into scenario groups for the nav rail: derive a
+  # category from the tenancy id (drop the trailing `-NN` and any re-let
+  # `-prior`/`-current` suffix), fold one-off scenarios into "other", and order
+  # groups biggest-first with "other" last. Purely nav legibility — not a domain
+  # classification.
+  defp group_tenancy_streams(streams) do
+    streams
+    |> Enum.group_by(&stream_category(&1.label))
+    |> merge_singletons()
+    |> Enum.map(fn {key, members} ->
+      %{key: key, label: category_label(key), count: length(members), streams: members}
+    end)
+    |> Enum.sort_by(fn group -> {group.key == "other", -group.count} end)
+  end
+
+  defp stream_category(label) do
+    label
+    |> String.replace(~r/-(prior|current)$/, "")
+    |> String.replace(~r/-\d+$/, "")
+  end
+
+  # Categories with a single member (paid-up, notice-then-paid, …) collapse into a
+  # shared "other" bucket so the rail isn't littered with count-1 groups.
+  defp merge_singletons(grouped) do
+    {singletons, groups} =
+      Enum.split_with(grouped, fn {_key, members} -> length(members) == 1 end)
+
+    others = Enum.flat_map(singletons, fn {_key, members} -> members end)
+
+    case others do
+      [] -> groups
+      _ -> groups ++ [{"other", others}]
+    end
+  end
+
+  defp category_label("under-notice"), do: "Under notice"
+  defp category_label("relet"), do: "Re-let"
+  defp category_label(key), do: key |> String.replace("-", " ") |> String.capitalize()
 
   # A small at-a-glance tone for the nav dot — not the canonical arrears rule
   # (that stays in domain-model.md, linked from the deep panes in a later slice).

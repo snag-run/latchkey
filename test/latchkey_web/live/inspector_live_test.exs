@@ -91,6 +91,69 @@ defmodule LatchkeyWeb.InspectorLiveTest do
     end
   end
 
+  describe "nav rail scenario grouping" do
+    # Enough of two scenarios to form multi-member groups, plus a lone scenario
+    # that should fall into the shared "other" bucket.
+    defp seed_scenarios! do
+      for n <- 1..3, do: put_arrears!(%{tenancy_id: "arrears-0#{n}", balance_cents: 100_000})
+      for n <- 1..2, do: put_arrears!(%{tenancy_id: "healthy-0#{n}"})
+      put_arrears!(%{tenancy_id: "paid-up"})
+    end
+
+    test "fans streams into collapsible scenario groups with counts", %{conn: conn} do
+      seed_scenarios!()
+
+      {:ok, view, _html} = live(conn, ~p"/inspector")
+
+      assert has_element?(view, "#nav-group-arrears", "Arrears")
+      assert has_element?(view, "#nav-group-healthy", "Healthy")
+      # the lone scenario is bucketed, not a count-1 group of its own
+      assert has_element?(view, "#nav-group-other", "Other")
+      refute has_element?(view, "#nav-group-paid-up")
+      # every stream is still in the DOM (collapse only hides), addressable directly
+      assert has_element?(view, "#nav-stream-tenancy-arrears-01")
+      assert has_element?(view, "#nav-stream-tenancy-paid-up")
+    end
+
+    test "toggling a group expands it (chevron rotates)", %{conn: conn} do
+      seed_scenarios!()
+
+      {:ok, view, _html} = live(conn, ~p"/inspector")
+
+      # collapsed by default
+      refute has_element?(view, "#nav-group-arrears .rotate-90")
+
+      view |> element("#nav-group-arrears button") |> render_click()
+      assert has_element?(view, "#nav-group-arrears .rotate-90")
+
+      # toggling again collapses
+      view |> element("#nav-group-arrears button") |> render_click()
+      refute has_element?(view, "#nav-group-arrears .rotate-90")
+    end
+
+    test "filtering hides non-matching streams and reveals matches", %{conn: conn} do
+      seed_scenarios!()
+
+      {:ok, view, _html} = live(conn, ~p"/inspector")
+
+      view |> element("#nav-filter") |> render_keyup(%{"value" => "arrears-01"})
+
+      # the match is shown, a non-match is hidden (class toggled, still in DOM)
+      refute has_element?(view, "#nav-stream-tenancy-arrears-01.hidden")
+      assert has_element?(view, "#nav-stream-tenancy-healthy-01.hidden")
+    end
+
+    test "a no-match filter surfaces an honest empty state", %{conn: conn} do
+      seed_scenarios!()
+
+      {:ok, view, _html} = live(conn, ~p"/inspector")
+
+      view |> element("#nav-filter") |> render_keyup(%{"value" => "zzz-nope"})
+
+      assert has_element?(view, "#nav-no-match-tenancy", "no streams match")
+    end
+  end
+
   describe "stream navigation" do
     # The stream view now renders the event-log pane (#81), which reads the raw
     # EventStore; start it (Commanded is disabled in :test).
@@ -126,6 +189,19 @@ defmodule LatchkeyWeb.InspectorLiveTest do
       # it must NOT masquerade as a valid stream/context view
       refute has_element?(view, "#stream-view")
       refute has_element?(view, "#inspector-breadcrumb")
+    end
+
+    test "deep-linking into a stream auto-expands its nav group", %{conn: conn} do
+      put_arrears!(%{tenancy_id: "arrears-01", balance_cents: 100_000})
+      put_arrears!(%{tenancy_id: "arrears-02", balance_cents: 100_000})
+      put_arrears!(%{tenancy_id: "healthy-01"})
+      put_arrears!(%{tenancy_id: "healthy-02"})
+
+      {:ok, view, _html} = live(conn, ~p"/inspector/streams/tenancy-arrears-01")
+
+      # the active stream's group opens; an unrelated group stays collapsed
+      assert has_element?(view, "#nav-group-arrears .rotate-90")
+      refute has_element?(view, "#nav-group-healthy .rotate-90")
     end
   end
 

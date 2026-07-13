@@ -17,10 +17,19 @@ defmodule LatchkeyWeb.InspectorComponents do
   @doc """
   Left nav rail: contexts (deep + edge) with their aggregate and streams, then
   the named-only contexts rendered as honestly-labelled, non-navigable entries.
+
+  A context carrying a non-empty `:groups` list (the deep Tenancy context, which
+  fans out to ~100 per-tenancy streams) renders those streams **grouped by
+  scenario**, each group collapsible; a `:filter` box narrows the list by id.
+  Both are driven server-side (`nav_toggle` / `nav_filter`). Every stream link is
+  always in the DOM — collapse and filter only toggle a CSS `hidden` class — so a
+  collapsed or filtered-out stream stays addressable (deep links, tests).
   """
   attr :contexts, :list, required: true, doc: "the live, emitting contexts"
   attr :named_contexts, :list, required: true, doc: "named-only, not-modelled contexts"
   attr :active_stream, :string, default: nil, doc: "currently selected stream id, if any"
+  attr :nav_filter, :string, default: "", doc: "current stream-filter query"
+  attr :nav_expanded, :list, default: [], doc: "keys of the currently-expanded groups"
 
   def nav_rail(assigns) do
     ~H"""
@@ -28,6 +37,21 @@ defmodule LatchkeyWeb.InspectorComponents do
       <p class="px-2 mb-2 text-[11px] font-semibold uppercase tracking-widest text-base-content/50">
         Context → Aggregate → Stream
       </p>
+
+      <%!-- A bare input (phx-keyup), not a <form>, so the inspector stays literally --%>
+      <%!-- form-free — the read-only invariant the tests assert. Filtering never mutates. --%>
+      <div class="px-2 mb-3">
+        <input
+          id="nav-filter"
+          type="text"
+          value={@nav_filter}
+          phx-keyup="nav_filter"
+          phx-debounce="150"
+          autocomplete="off"
+          placeholder="Filter streams…"
+          class="w-full px-2 py-1 text-xs rounded-md bg-base-200 border border-base-300 focus:outline-none focus:border-primary"
+        />
+      </div>
 
       <div :for={ctx <- @contexts} id={"nav-context-#{ctx.id}"} class="mb-4">
         <div class="flex items-center gap-2 px-2 py-1 font-semibold">
@@ -53,21 +77,56 @@ defmodule LatchkeyWeb.InspectorComponents do
           no streams yet — seed the board to populate
         </p>
 
-        <.link
-          :for={stream <- ctx.streams}
-          id={"nav-stream-#{stream.id}"}
-          patch={~p"/inspector/streams/#{stream.id}"}
-          class={[
-            "flex items-center gap-2 pl-6 pr-2 py-1.5 rounded-md hover:bg-base-200 transition-colors",
-            @active_stream == stream.id && "bg-primary/10 text-primary font-medium"
-          ]}
-        >
-          <span class={["inline-block size-2 rounded-full", tone_dot(stream.tone)]} />
-          <span class="flex flex-col leading-tight">
-            <span>{stream.label}</span>
-            <span class="font-mono text-[10.5px] text-base-content/50">{stream.id}</span>
-          </span>
-        </.link>
+        <%= if ctx[:groups] not in [nil, []] do %>
+          <div :for={group <- ctx.groups} id={"nav-group-#{group.key}"} class="mb-1">
+            <button
+              type="button"
+              id={"nav-toggle-#{group.key}"}
+              aria-expanded={to_string(group_open?(group, @nav_filter, @nav_expanded))}
+              phx-click="nav_toggle"
+              phx-value-category={group.key}
+              class="w-full flex items-center gap-2 pl-4 pr-2 py-1 rounded-md hover:bg-base-200 text-xs font-medium text-base-content/70"
+            >
+              <span
+                class={[
+                  "inline-block transition-transform text-base-content/40",
+                  group_open?(group, @nav_filter, @nav_expanded) && "rotate-90"
+                ]}
+                aria-hidden="true"
+              >
+                ›
+              </span>
+              <span>{group.label}</span>
+              <span class="ml-auto text-[10.5px] text-base-content/45">
+                {group_visible_count(group, @nav_filter)}
+              </span>
+            </button>
+
+            <div class={["mt-0.5", not group_open?(group, @nav_filter, @nav_expanded) && "hidden"]}>
+              <.stream_link
+                :for={stream <- group.streams}
+                stream={stream}
+                active_stream={@active_stream}
+                hidden={not stream_matches?(stream, @nav_filter)}
+              />
+            </div>
+          </div>
+
+          <p
+            :if={@nav_filter != "" and no_matches?(ctx.groups, @nav_filter)}
+            id={"nav-no-match-#{ctx.id}"}
+            class="pl-6 py-1 text-xs italic text-base-content/45"
+          >
+            no streams match “{@nav_filter}”
+          </p>
+        <% else %>
+          <.stream_link
+            :for={stream <- ctx.streams}
+            stream={stream}
+            active_stream={@active_stream}
+            hidden={not stream_matches?(stream, @nav_filter)}
+          />
+        <% end %>
       </div>
 
       <div id="nav-named-only" class="mb-2">
@@ -84,6 +143,57 @@ defmodule LatchkeyWeb.InspectorComponents do
     """
   end
 
+  # One stream entry in the nav rail. `hidden` (filtered out) only adds a CSS class,
+  # never removes the link — so it stays addressable by deep link and by tests.
+  attr :stream, :map, required: true
+  attr :active_stream, :string, default: nil
+  attr :hidden, :boolean, default: false
+
+  defp stream_link(assigns) do
+    ~H"""
+    <.link
+      id={"nav-stream-#{@stream.id}"}
+      patch={~p"/inspector/streams/#{@stream.id}"}
+      class={[
+        "flex items-center gap-2 pl-6 pr-2 py-1.5 rounded-md hover:bg-base-200 transition-colors",
+        @active_stream == @stream.id && "bg-primary/10 text-primary font-medium",
+        @hidden && "hidden"
+      ]}
+    >
+      <span class={["inline-block size-2 rounded-full", tone_dot(@stream.tone)]} />
+      <span class="flex flex-col leading-tight">
+        <span>{@stream.label}</span>
+        <span class="font-mono text-[10.5px] text-base-content/50">{@stream.id}</span>
+      </span>
+    </.link>
+    """
+  end
+
+  # A stream matches an empty filter, else a case-insensitive substring of its
+  # label or id.
+  defp stream_matches?(_stream, ""), do: true
+
+  defp stream_matches?(stream, filter) do
+    haystack = String.downcase(stream.label <> " " <> stream.id)
+    String.contains?(haystack, String.downcase(filter))
+  end
+
+  # A group is open when the user has expanded it, or — while filtering — whenever
+  # it holds a match (so matches are never hidden behind a collapsed group).
+  defp group_open?(group, "", expanded), do: group.key in expanded
+
+  defp group_open?(group, filter, _expanded),
+    do: Enum.any?(group.streams, &stream_matches?(&1, filter))
+
+  defp group_visible_count(group, ""), do: group.count
+
+  defp group_visible_count(group, filter),
+    do: Enum.count(group.streams, &stream_matches?(&1, filter))
+
+  defp no_matches?(groups, filter) do
+    Enum.all?(groups, fn group -> group_visible_count(group, filter) == 0 end)
+  end
+
   @doc """
   Orientation-map landing: the two live context boxes joined by the ACL-1 seam
   edge, then the named-only static boxes. This *is* the strategic context map,
@@ -94,6 +204,7 @@ defmodule LatchkeyWeb.InspectorComponents do
   attr :named_contexts, :list, required: true
   attr :acl_edge_label, :string, required: true
   attr :docs, :map, required: true, doc: "canonical doc URLs for read-more links"
+  attr :nav_expanded, :list, default: [], doc: "keys of the currently-expanded groups"
 
   def orientation_map(assigns) do
     ~H"""
@@ -115,7 +226,7 @@ defmodule LatchkeyWeb.InspectorComponents do
       </header>
 
       <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-4 mb-8">
-        <.context_box context={@edge_context} />
+        <.context_box context={@edge_context} nav_expanded={@nav_expanded} />
 
         <div id="acl-1-edge" class="text-center">
           <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary font-mono text-xs">
@@ -125,7 +236,7 @@ defmodule LatchkeyWeb.InspectorComponents do
           <p class="text-primary text-lg leading-none" aria-hidden="true">→</p>
         </div>
 
-        <.context_box context={@deep_context} />
+        <.context_box context={@deep_context} nav_expanded={@nav_expanded} />
       </div>
 
       <p class="mb-2 text-[11px] font-semibold uppercase tracking-widest text-base-content/50">
@@ -147,6 +258,7 @@ defmodule LatchkeyWeb.InspectorComponents do
 
   @doc "One context box on the orientation map: deep (clickable streams) or edge."
   attr :context, :map, required: true
+  attr :nav_expanded, :list, default: [], doc: "keys of the currently-expanded groups"
 
   def context_box(assigns) do
     ~H"""
@@ -177,19 +289,59 @@ defmodule LatchkeyWeb.InspectorComponents do
       <p :if={@context.streams == []} class="text-xs italic text-base-content/50">
         no streams yet — seed the board to populate
       </p>
-      <.link
-        :for={stream <- @context.streams}
-        id={"map-stream-#{stream.id}"}
-        patch={~p"/inspector/streams/#{stream.id}"}
-        class="flex items-center gap-2 px-1 py-1.5 rounded-md hover:bg-base-200 transition-colors"
-      >
-        <span class={["inline-block size-2 rounded-full", tone_dot(stream.tone)]} />
-        <span class="flex flex-col leading-tight">
-          <span>{stream.label}</span>
-          <span class="font-mono text-[10.5px] text-base-content/50">{stream.id}</span>
-        </span>
-      </.link>
+
+      <%= if @context[:groups] not in [nil, []] do %>
+        <%!-- Deep context fans out to ~100 streams: group by scenario, collapsible, --%>
+        <%!-- sharing the nav rail's expand state (nav_toggle) so the two agree. --%>
+        <div :for={group <- @context.groups} id={"map-group-#{group.key}"} class="mb-0.5">
+          <button
+            type="button"
+            id={"map-toggle-#{group.key}"}
+            aria-expanded={to_string(group_open?(group, "", @nav_expanded))}
+            phx-click="nav_toggle"
+            phx-value-category={group.key}
+            class="w-full flex items-center gap-2 px-1 py-1 rounded-md hover:bg-base-200 text-xs font-medium text-base-content/70"
+          >
+            <span
+              class={[
+                "inline-block transition-transform text-base-content/40",
+                group_open?(group, "", @nav_expanded) && "rotate-90"
+              ]}
+              aria-hidden="true"
+            >
+              ›
+            </span>
+            <span>{group.label}</span>
+            <span class="ml-auto text-[10.5px] text-base-content/45">{group.count}</span>
+          </button>
+
+          <div class={["pl-3", not group_open?(group, "", @nav_expanded) && "hidden"]}>
+            <.map_stream_link :for={stream <- group.streams} stream={stream} />
+          </div>
+        </div>
+      <% else %>
+        <.map_stream_link :for={stream <- @context.streams} stream={stream} />
+      <% end %>
     </div>
+    """
+  end
+
+  # One clickable stream entry inside an orientation-map context box.
+  attr :stream, :map, required: true
+
+  defp map_stream_link(assigns) do
+    ~H"""
+    <.link
+      id={"map-stream-#{@stream.id}"}
+      patch={~p"/inspector/streams/#{@stream.id}"}
+      class="flex items-center gap-2 px-1 py-1.5 rounded-md hover:bg-base-200 transition-colors"
+    >
+      <span class={["inline-block size-2 rounded-full", tone_dot(@stream.tone)]} />
+      <span class="flex flex-col leading-tight">
+        <span>{@stream.label}</span>
+        <span class="font-mono text-[10.5px] text-base-content/50">{@stream.id}</span>
+      </span>
+    </.link>
     """
   end
 
