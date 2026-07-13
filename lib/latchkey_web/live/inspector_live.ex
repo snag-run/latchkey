@@ -4,8 +4,12 @@ defmodule LatchkeyWeb.InspectorLive do
   decisions D2/D3/D6).
 
   This slice is the **web spine**: the public `/inspector` route, the Workbench
-  shell (nav rail · content · live firehose), and the orientation-map landing.
-  Deeper slices hang the three-pane fold and the replay scrubber off this shell.
+  shell (nav rail · content · live firehose), and the orientation-map landing. It
+  also hosts the **event-log pane** (issue #81, D3/D7) — a selected stream's raw,
+  immutable events rendered in-memory with full payloads, both envelope dates + a
+  divergence flag, and property-leading identity; the `accounts` edge renders
+  through the same pane, events-only. Deeper slices hang the aggregate / read-model
+  fold and the replay scrubber off this shell.
 
   The firehose (spec D5) subscribes to `Latchkey.Inspector.Broadcaster`'s
   global `dev:events` PubSub topic on connected mount and appends new events
@@ -20,11 +24,18 @@ defmodule LatchkeyWeb.InspectorLive do
   """
   use LatchkeyWeb, :live_view
 
+  import LatchkeyWeb.Inspector.EventLog
   import LatchkeyWeb.Inspector.Firehose
   import LatchkeyWeb.InspectorComponents
 
+  alias Latchkey.Accounts
+  alias Latchkey.Accounts.Events.PaymentReceived
+  alias Latchkey.EventStore
   alias Latchkey.Inspector.Broadcaster
   alias Latchkey.PropertyManagement.Arrears
+  alias Latchkey.PropertyManagement.Tenancy.Events.TenancyCommenced
+  alias Latchkey.Simulation.Directory
+  alias Latchkey.Simulation.Identity
 
   # Bound on the firehose feed's live retained rows — old rows fall off the head
   # as new ones arrive, so the stream can't balloon memory over a long-running
@@ -163,7 +174,149 @@ defmodule LatchkeyWeb.InspectorLive do
         |> assign(:active_stream, stream_id)
         |> assign(:stream_found?, true)
         |> assign(:context_name, context.name)
+        |> assign(:stream_kind, context.kind)
+        |> assign(:event_rows, load_event_rows(stream_id, context.kind))
     end
+  end
+
+  # ── Event-log pane (issue #81, spec D3/D7) ──────────────────────────────────
+  # Reads a stream's raw events from the store and builds display rows: full
+  # payloads, both envelope dates + a divergence flag (D7), and property-leading
+  # identity. In-memory only — no fold, no write. Tenancy streams resolve identity
+  # once off the stream's `property_ref` + `tenancy_id` (Identity.resolve/2); the
+  # `accounts` edge derives identity from each payment `holder`, honestly showing
+  # UNKNOWN when unresolvable (D3).
+  defp load_event_rows(stream_id, :edge) do
+    directory = directory_map()
+    recorded = read_stream(stream_id)
+    holders = payment_holders(recorded)
+
+    Enum.map(recorded, fn r -> base_row(r, accounts_identity(r.data, directory, holders)) end)
+  end
+
+  defp load_event_rows(stream_id, _deep) do
+    recorded = read_stream(stream_id)
+    identity = tenancy_identity(stream_id, recorded)
+
+    Enum.map(recorded, fn r -> base_row(r, identity) end)
+  end
+
+  # Raw events in commit order; a not-yet-written stream reads as empty.
+  defp read_stream(stream_id) do
+    case EventStore.stream_forward(stream_id) do
+      {:error, :stream_not_found} -> []
+      events -> Enum.to_list(events)
+    end
+  end
+
+  defp base_row(recorded, identity) do
+    data = recorded.data
+    occurred_on = to_date(Map.get(data, :occurred_on))
+    recorded_on = to_date(Map.get(data, :recorded_on))
+
+    %{
+      version: recorded.stream_version,
+      type: short_type(data),
+      occurred_on: occurred_on,
+      recorded_on: recorded_on,
+      divergent?: divergent?(occurred_on, recorded_on),
+      identity: identity,
+      payload: payload_pairs(data)
+    }
+  end
+
+  defp short_type(%module{}), do: module |> Module.split() |> List.last()
+
+  # Payload columns deserialize dates as ISO strings (JSON serializer); coerce so
+  # the divergence check compares real dates, not string shapes.
+  defp to_date(%Date{} = date), do: date
+
+  defp to_date(value) when is_binary(value) do
+    case Date.from_iso8601(value) do
+      {:ok, date} -> date
+      _ -> nil
+    end
+  end
+
+  defp to_date(_), do: nil
+
+  defp divergent?(%Date{} = occurred, %Date{} = recorded),
+    do: Date.compare(occurred, recorded) != :eq
+
+  defp divergent?(_, _), do: false
+
+  defp payload_pairs(%_struct{} = data) do
+    data
+    |> Map.from_struct()
+    |> Enum.sort_by(fn {key, _value} -> Atom.to_string(key) end)
+  end
+
+  # ── Identity resolution ─────────────────────────────────────────────────────
+  # Tenancy stream: one identity for the whole stream, keyed off the commencement
+  # event's non-PII `property_ref` + the stream's `tenancy_id` (ADR 0008). Property
+  # leads — it is the primary PM identifier.
+  defp tenancy_identity(stream_id, recorded) do
+    tenancy_id = String.replace_prefix(stream_id, "tenancy-", "")
+
+    property_ref =
+      Enum.find_value(recorded, fn r ->
+        case r.data do
+          %TenancyCommenced{property_ref: ref} -> ref
+          _ -> nil
+        end
+      end)
+
+    if is_binary(property_ref) and property_ref != "" do
+      %{tenant_name: tenant, property_address: property} =
+        Identity.resolve(tenancy_id, property_ref)
+
+      %{property: property, tenant: tenant, ref: stream_id, resolved?: true}
+    else
+      unknown_identity(stream_id)
+    end
+  end
+
+  # Accounts edge: identity derives from the payment `holder` (a `tenancy_ref`).
+  # A reversal carries no holder of its own, so it inherits the holder of the
+  # payment it reverses. Unresolvable holders honestly render UNKNOWN (D3).
+  defp accounts_identity(%PaymentReceived{holder: holder}, directory, _holders) do
+    holder_identity(holder, directory)
+  end
+
+  defp accounts_identity(%{reverses: reverses}, directory, holders) do
+    holder_identity(Map.get(holders, reverses), directory)
+  end
+
+  defp accounts_identity(_data, directory, _holders), do: holder_identity(nil, directory)
+
+  defp holder_identity(holder, directory) do
+    with true <- Accounts.known_holder?(holder),
+         tenancy_id = String.replace_prefix(holder, "tenancy-", ""),
+         %{tenant_name: tenant, property_address: property} <- Map.get(directory, tenancy_id) do
+      %{property: property, tenant: tenant, ref: holder, resolved?: true}
+    else
+      _ -> unknown_identity(holder)
+    end
+  end
+
+  defp unknown_identity(ref) do
+    ref = if is_binary(ref) and ref != "", do: ref, else: "UNKNOWN"
+    %{property: "UNKNOWN", tenant: "UNKNOWN", ref: ref, resolved?: false}
+  end
+
+  defp payment_holders(recorded) do
+    for %{data: %PaymentReceived{payment_id: payment_id, holder: holder}} <- recorded,
+        into: %{},
+        do: {payment_id, holder}
+  end
+
+  # A disposable, non-PII display lookup keyed by `tenancy_id` (ADR 0008 Directory).
+  defp directory_map do
+    Directory
+    |> Ash.read!()
+    |> Map.new(fn dir ->
+      {dir.tenancy_id, %{tenant_name: dir.tenant_name, property_address: dir.property_address}}
+    end)
   end
 
   @impl true
@@ -190,7 +343,13 @@ defmodule LatchkeyWeb.InspectorLive do
                   <span aria-hidden="true">/</span>
                   <span class="font-mono text-base-content">{@active_stream}</span>
                 </nav>
-                <.stream_placeholder stream_id={@active_stream} context_name={@context_name} />
+                <.events_pane
+                  stream_id={@active_stream}
+                  context_name={@context_name}
+                  kind={@stream_kind}
+                  rows={@event_rows}
+                  docs={@docs}
+                />
               <% @live_action == :stream -> %>
                 <.stream_not_found stream_id={@unknown_stream_id} />
               <% true -> %>
