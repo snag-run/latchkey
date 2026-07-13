@@ -78,18 +78,23 @@ replay panes. Each entry is one thin, uniform unit:
 
 Covering all **three lenses** from the issue — domain-context, DDD patterns, ES
 patterns — because the onboarding audience needs all three and the brief-summary
-format keeps each cheap. Its home is the inspector (a browsable glossary index,
-with anchor hooks so live terms can link into it); it is *not* a separate feature
-divorced from the inspector.
+format keeps each cheap. Its home is the inspector — an **extension** of it, not
+a feature divorced from it. Whether that surface is a standalone glossary index,
+inline enrichment of live inspector terms, or both is deferred to `grill-spec`
+(see Out of Scope); the brief settles only that it lives on the inspector.
 
 **Where scope stops, and why there:**
 
-1. **Every entry anchors to something real** — a domain term in `CONTEXT.md`, or
-   a DDD/ES concept *actually applied in the code* (aggregate → `Tenancy`,
-   projection → `ArrearsProjector`, ACL → `PaymentACL`, bitemporality →
-   `occurred_on` / `recorded_on`). **A concept neither in the domain nor in the
-   code gets no entry.** This tripwire stops the glossary sprawling into "teach
-   all of DDD" — un-anchored theory is what the canonical links are for. (One
+1. **Every entry anchors to something real, and to code wherever code exists.**
+   A DDD/ES concept anchors to where it is *actually applied* (aggregate →
+   `Tenancy`, projection → `ArrearsProjector`, ACL → `PaymentACL`, bitemporality
+   → `occurred_on` / `recorded_on`). A domain-context term anchors to its
+   `CONTEXT.md` definition *and* to its code home where one exists (arrears →
+   `arrears.ex` / `ArrearsProjector`, `property_ref` → its use-site) —
+   `CONTEXT.md`-only is the floor reserved for pure-vocabulary terms with no code
+   home. **A concept neither in the domain nor in the code gets no entry.** This
+   tripwire stops the glossary sprawling into "teach all of DDD" — un-anchored
+   theory is what the canonical links are for. (One
    notch out = a generic DDD encyclopedia, rejected as commodity + unmaintainable
    duplicate of the internet; one notch in = domain-terms-only, rejected because
    the audience needs the DDD/ES concepts too.)
@@ -141,8 +146,10 @@ and the usual "wait for a richer system" counter-argument **dissolves** here:
   barrier for someone new to DDD/ES (vs. bouncing off the inspector, or reading
   canonical sources alone). This is the load-bearing empirical belief and it is
   **not** resolvable by reasoning. — Test: show one colleague new to DDD/ES the
-  inspector + glossary and ask, unprompted, what an aggregate / projection / ACL
-  is and where it lives; note where they get stuck. Cheap, and it converts the
+  inspector + glossary and ask, unprompted, for one term per lens — a DDD concept
+  (aggregate / ACL), an ES concept (projection, or `occurred_on` vs
+  `recorded_on`), and a domain term (arrears / `property_ref`) — what each means
+  and where it lives; note where they get stuck. Cheap, and it converts the
   secondary criterion from hypothesis to evidence.
 - Assumption: colleagues / a public audience engage with the artifact at all.
   Carried as **accepted risk** (as in the developer-view brief) — David is the
