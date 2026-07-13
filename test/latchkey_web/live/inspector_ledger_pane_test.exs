@@ -166,6 +166,9 @@ defmodule LatchkeyWeb.InspectorLedgerPaneTest do
     test "is read-only — no form, no edit/delete affordance, no 'tamper-evident' claim", %{
       view: view
     } do
+      # No mutation controls — the pane is a rendered fold, not an editor.
+      refute has_element?(view, "#ledger-pane form")
+      refute has_element?(view, "#ledger-pane button")
       assert has_element?(view, "#ledger-caption", "append-only")
       refute view |> element("#ledger-caption") |> render() =~ "tamper-evident"
     end
