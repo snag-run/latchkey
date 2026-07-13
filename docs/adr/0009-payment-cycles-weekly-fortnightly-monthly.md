@@ -90,8 +90,10 @@ denominator generalises.
 **Overstay across a period/month boundary.** The overstay charge (#32) is a *single*
 `RentFellDue` over `[E, V)` (exit-settlement spec), so with a monthly cadence a span
 that crosses a month boundary (E in a 28-day February, V in a 31-day March) needs one
-unambiguous daily rate. We fix the denominator to **the period E falls in** — the last
-scheduled period — and apply that flat daily rate across the whole `[E, V)` span. The
+unambiguous daily rate. We fix the denominator to **the last scheduled period** — the
+period E falls in, which for a **boundary-aligned** E (E exactly on a due date) is the
+period *ending* at E, i.e. `[due(m-1), due(m))`, **not** the post-exit period *starting*
+at E — and apply that flat daily rate across the whole `[E, V)` span. The
 overstay is a hold-over penalty reckoned at keys-return off the last period's rate, not
 a continuation of the schedule into fresh periods, so it stays one derived figure and
 never re-pro-rates per-month. Piecewise splitting of a cross-boundary overstay by each
