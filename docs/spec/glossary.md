@@ -72,15 +72,16 @@ is being added anyway, and the domain lens rendering `CONTEXT.md` then comes fre
 A markdown renderer dependency is added (specific library is a ticket-level
 detail; content is trusted first-party markdown, so sanitisation is not a driver).
 
-### D3 — Placement: a dedicated `/inspector/glossary` route, advertised from the landing
+### D3 — Placement: a dedicated `/inspector/glossary` route, advertised from the top-bar
 
 A dedicated **`/inspector/glossary`** route — a `:glossary` live action on
 `InspectorLive`, added **inside the existing `live_session :inspector`** (not a
 standalone route, so the inspector's session contract is preserved) — renders the
 three lens-sections on one scannable page — domain
 (from `CONTEXT.md`), DDD, ES — each **term a heading with a fragment anchor** for
-deep-linking. The **orientation landing advertises it** with a small entry-point
-link ("Reference / Glossary"). Rejected: folding the glossary into the landing —
+deep-linking. The **persistent top-bar advertises it** with an entry-point link on
+every view (**#140** — promoted from the original landing-only "Reference /
+Glossary" pill). Rejected: folding the glossary into the landing —
 three lenses of terms bloat the orientation map and make per-term deep-linking
 awkward.
 
@@ -237,9 +238,11 @@ The deep docs get an in-app front door beyond the `read_more` deep-links, so a
 browsing visitor who never clicks a specific pane still finds them (the brief's
 thesis):
 
-- **Landing orientation map** — a "Reference" cluster beside the existing glossary
-  entry-point (D3), listing **Context Map** and **Domain Model** with **equal
-  billing** (no priority ordering between them for now).
+- **Persistent top-bar** (**#140**) — `context map` / `domain model` links beside
+  `full log` / `glossary` in `Layouts.inspector`, present on **every** view with
+  **equal billing** (no priority ordering between them for now). *Promoted from the
+  original landing-map "Reference" pill cluster + docs-page sub-nav, which were
+  easily missed and are now removed.*
 - **Glossary page** — the domain-lens intro caption ("…cross-refs point to the
   domain model") becomes a **live in-app link** to `/inspector/docs/domain-model`,
   turning a dead reference into a real one.
@@ -257,8 +260,8 @@ tests under `test/latchkey_web/live/`. Test external behaviour, not markup detai
   known term anchors (an aggregate/ES heading, a domain-term heading).
 - **Domain lens wired to source:** a known `CONTEXT.md` term renders on the page
   (guards the "render, don't copy" wiring from breaking).
-- **Discoverability:** the `:landing` orientation map shows the glossary
-  entry-point link.
+- **Discoverability:** the persistent top-bar links to the glossary (asserted on
+  the landing; present on every view) — #140.
 
 **Deep docs (D8–D11, issue #131):**
 
@@ -273,8 +276,9 @@ tests under `test/latchkey_web/live/`. Test external behaviour, not markup detai
   `/inspector/docs/domain-model#…` (and the context-map page) **in-app,
   same-tab** — no `github.com`, no `target="_blank"` — proving the brief's gap
   closed for the deep docs. (Replaces the superseded D4 test.)
-- **D11 discoverability:** the `:landing` "Reference" cluster links to both deep
-  docs; the glossary domain-lens caption links to `/inspector/docs/domain-model`.
+- **D11 discoverability:** the persistent top-bar links to both deep docs
+  (asserted on the landing; present on every view — #140); the glossary
+  domain-lens caption links to `/inspector/docs/domain-model`.
 
 **Accepted limitation:** the D7 anchor tripwire ("every DDD/ES entry names a
 symbol or links a pane") is **not** automatically enforceable over freeform
