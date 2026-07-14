@@ -145,11 +145,19 @@ defmodule LatchkeyWeb.InspectorGlossaryTest do
       # Terms hang off their lens as level-3 entries…
       assert Enum.any?(toc, &(&1.id == "aggregate" and &1.level == 3))
 
-      # …and every term id is an anchor the rendered lenses carry (jump contract).
-      html = Enum.map_join(Glossary.lenses(), "\n", &Glossary.html/1)
+      # …and every term id is an anchor the rendered lenses carry (jump contract),
+      # asserted against parsed nodes rather than a raw HTML string.
+      rendered =
+        Glossary.lenses()
+        |> Enum.map_join("\n", &Glossary.html/1)
+        |> LazyHTML.from_fragment()
+
       terms = Enum.filter(toc, &(&1.level == 3))
       refute Enum.empty?(terms)
-      assert Enum.all?(terms, fn t -> String.contains?(html, ~s(id="#{t.id}")) end)
+
+      assert Enum.all?(terms, fn t ->
+               not Enum.empty?(LazyHTML.query(rendered, ~s([id="#{t.id}"])))
+             end)
     end
   end
 

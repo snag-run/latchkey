@@ -144,9 +144,13 @@ defmodule LatchkeyWeb.InspectorDocsTest do
       assert Enum.any?(toc, &(&1.id == "lifecycle-state-machine" and &1.level == 3))
 
       # Every TOC id is an anchor the rendered doc actually carries, so a `#id`
-      # jump / scroll-spy target can never point at a missing heading.
-      html = Docs.html(:domain_model)
-      assert Enum.all?(toc, fn h -> String.contains?(html, ~s(id="#{h.id}")) end)
+      # jump / scroll-spy target can never point at a missing heading. Asserted
+      # against parsed nodes (attribute selector — the ids begin with a digit).
+      rendered = LazyHTML.from_fragment(Docs.html(:domain_model))
+
+      assert Enum.all?(toc, fn h ->
+               not Enum.empty?(LazyHTML.query(rendered, ~s([id="#{h.id}"])))
+             end)
     end
   end
 
