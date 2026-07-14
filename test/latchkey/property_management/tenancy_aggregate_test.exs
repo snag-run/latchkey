@@ -88,6 +88,60 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     {apply_all(agg, notice), notice}
   end
 
+  # ── Event-replayed fixtures (issue #120) ─────────────────────────────────────
+  # The boundary/overstay/cadence maths below need `:active` and `:ending` states
+  # that have swept nothing yet (`due_through` nil), deliberately isolated from the
+  # L7 notice sweep so the exit maths is exercised end to end by `decide_return_keys`
+  # / `catch_up_events`. Rather than hand-build the internal `%State{}`, we fold a
+  # minimal event stream through the real aggregate fold (`Agg.apply`): commence
+  # (+ optional prepayment) (+ termination notice). Folding just those events skips
+  # the accrual ticks, so the resulting state is `:ending`/`:active` with
+  # `due_through` nil — identical to the old literal, but bound to the event/fold
+  # boundary instead of the `%State{}` field layout.
+  defp commenced_event(cycle, first_due_date, rent) do
+    %TenancyCommenced{
+      tenancy_id: "t1",
+      property_ref: "prop-t1",
+      occurred_on: first_due_date,
+      recorded_on: first_due_date,
+      rent_amount_cents: rent,
+      cycle: cycle,
+      first_due_date: first_due_date
+    }
+  end
+
+  defp active_core(cycle, first_due_date, rent) do
+    apply_all(%Agg{}, [commenced_event(cycle, first_due_date, rent)]).core
+  end
+
+  defp ending_core(cycle, first_due_date, e, rent, paid) do
+    prepayments =
+      if paid > 0 do
+        [
+          %RentPaymentRecorded{
+            tenancy_id: "t1",
+            occurred_on: first_due_date,
+            recorded_on: first_due_date,
+            amount_cents: paid,
+            source_payment_id: "p-prepaid"
+          }
+        ]
+      else
+        []
+      end
+
+    notice = %TerminationNoticeGiven{
+      tenancy_id: "t1",
+      occurred_on: first_due_date,
+      recorded_on: first_due_date,
+      grounds: :arrears,
+      termination_date: e
+    }
+
+    events = [commenced_event(cycle, first_due_date, rent)] ++ prepayments ++ [notice]
+    apply_all(%Agg{}, events).core
+  end
+
   test "L7 gate refuses under 14 days behind" do
     assert {:error, {:not_in_arrears, 7}} =
              Agg.execute(commenced_agg(), %C.GiveTerminationNotice{
@@ -645,19 +699,17 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
   describe "exit settlement — boundary period pro-ration to E (issue #31)" do
     # A tenancy `:ending` with a **mid-week** effective end date E. Weekly $500 from
     # 01-05; nothing swept yet (due_through nil). E = 02-12 falls inside the period
-    # [02-09, 02-16), 3 days in. Built directly so the maths is isolated from the L7
-    # notice path.
+    # [02-09, 02-16), 3 days in. Reached by replaying events through the real fold
+    # (`ending_core/5`) so the maths stays isolated from the L7 notice path while the
+    # fixture binds to the event boundary, not the internal `%State{}` (issue #120).
     defp midweek_ending_state(e, opts \\ []) do
-      %State{
-        status: :ending,
-        tenancy_id: "t1",
-        rent_amount_cents: Keyword.get(opts, :rent_amount_cents, 50_000),
-        cycle: :weekly,
-        first_due_date: ~D[2026-01-05],
-        due_through: Keyword.get(opts, :due_through),
-        payments_total_cents: Keyword.get(opts, :payments_total_cents, 0),
-        effective_end_date: e
-      }
+      ending_core(
+        :weekly,
+        ~D[2026-01-05],
+        e,
+        Keyword.get(opts, :rent_amount_cents, 50_000),
+        Keyword.get(opts, :payments_total_cents, 0)
+      )
     end
 
     test "books full periods, then a single pro-rated boundary charge covering [start, E)" do
@@ -817,9 +869,9 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
   end
 
   describe "exit settlement — overstay `[E, V)` reckoned at vacant possession (issue #32)" do
-    # `midweek_ending_state/2` (above) builds an `:ending` state directly. E = 02-16 is a
-    # **period boundary** (01-05 + 7×6), so catch-up to E books six whole weeks with no
-    # boundary pro-ration — keeping the overstay maths isolated from #31.
+    # `midweek_ending_state/2` (above) replays events into an `:ending` state. E = 02-16
+    # is a **period boundary** (01-05 + 7×6), so catch-up to E books six whole weeks with
+    # no boundary pro-ration — keeping the overstay maths isolated from #31.
     test "keys returned after E append a single overstay RentFellDue for the [E, V) span" do
       {:ok, events} =
         Tenancy.decide_return_keys(
@@ -847,16 +899,10 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
       # days must divide by the last **scheduled** period `[Feb 1, Mar 1)` = 28 days →
       # $100/day → $500. The pre-fix bug sourced the denominator from the post-exit period
       # `[Mar 1, Apr 1)` = 31 days → $90.32/day → $451.61, understating the charge.
-      state = %State{
-        status: :ending,
-        tenancy_id: "t1",
-        rent_amount_cents: 280_000,
-        cycle: :monthly,
-        first_due_date: ~D[2026-02-01],
-        due_through: nil,
-        payments_total_cents: 0,
-        effective_end_date: ~D[2026-03-01]
-      }
+      # `cadence_ending_state/4` replays commence + notice through the real fold — an
+      # `:ending` monthly tenancy anchored Feb 1, $2,800, with E = Mar 1 and nothing
+      # swept (issue #120).
+      state = cadence_ending_state(:monthly, ~D[2026-02-01], ~D[2026-03-01], 280_000)
 
       {:ok, events} =
         Tenancy.decide_return_keys(state, %{keys_on: ~D[2026-03-06], recorded_on: ~D[2026-03-06]})
@@ -1003,23 +1049,15 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
   end
 
   describe "payment cadences — fortnightly & monthly accrual (ADR 0009)" do
-    # An **active** tenancy built directly (no notice), sweepable from `first_due_date`.
-    defp active_state(cycle, first_due_date, rent \\ 50_000) do
-      %State{
-        status: :active,
-        tenancy_id: "t1",
-        rent_amount_cents: rent,
-        cycle: cycle,
-        first_due_date: first_due_date,
-        due_through: nil,
-        effective_end_date: nil
-      }
-    end
+    # An **active** tenancy reached by replaying just the commence event (no notice),
+    # sweepable from `first_due_date` — event-folded, not hand-built (issue #120).
+    defp active_state(cycle, first_due_date, rent \\ 50_000),
+      do: active_core(cycle, first_due_date, rent)
 
-    # An `:ending` tenancy on a given cadence with a mid-period effective end date E.
-    defp cadence_ending_state(cycle, first_due_date, e, rent) do
-      %{active_state(cycle, first_due_date, rent) | status: :ending, effective_end_date: e}
-    end
+    # An `:ending` tenancy on a given cadence with a mid-period effective end date E,
+    # reached by replaying commence + termination-notice events through the real fold.
+    defp cadence_ending_state(cycle, first_due_date, e, rent),
+      do: ending_core(cycle, first_due_date, e, rent, 0)
 
     test "weekly REGRESSION — due dates step +7 and every period spans 7 days" do
       charges =
@@ -1070,9 +1108,17 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     end
 
     test "monthly resume via due_through books only the not-yet-charged months" do
-      # Already booked through Feb 28; sweep to Apr 30 must resume at Mar 31, not re-book Feb.
-      state = %{active_state(:monthly, ~D[2026-01-31], 250_000) | due_through: ~D[2026-02-28]}
-      charges = Tenancy.catch_up_events(state, ~D[2026-04-30], ~D[2026-04-30])
+      # Book through Feb 28 by folding a real sweep (so `due_through` is event-derived,
+      # not hand-set), then resume: the sweep to Apr 30 must pick up at Mar 31, never
+      # re-booking Feb.
+      active = active_state(:monthly, ~D[2026-01-31], 250_000)
+
+      booked =
+        active
+        |> Tenancy.catch_up_events(~D[2026-02-28], ~D[2026-02-28])
+        |> Enum.reduce(active, &Tenancy.evolve(&2, &1))
+
+      charges = Tenancy.catch_up_events(booked, ~D[2026-04-30], ~D[2026-04-30])
 
       assert Enum.map(charges, & &1.occurred_on) == [~D[2026-03-31], ~D[2026-04-30]]
     end
