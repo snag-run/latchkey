@@ -92,6 +92,10 @@ defmodule Latchkey.MixProject do
       # maintained (Earmark is deprecated); ships precompiled NIFs.
       {:mdex, "~> 0.13"},
       {:req, "~> 0.5"},
+      # Security pin: force patched Mint (transitive via req→finch→mint, also tz).
+      # Addresses EEF-CVE-2026-59246 (HTTP/2 CONTINUATION) and -58229 (HTTP/1
+      # header/trailer accumulation) DoS advisories against 1.9.1.
+      {:mint, "~> 1.9 and >= 1.9.2", override: true},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 1.0"},
