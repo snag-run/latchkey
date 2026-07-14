@@ -58,6 +58,16 @@ COPY priv priv
 
 COPY lib lib
 
+# The inspector's Glossary and Docs LiveViews embed repo markdown at compile
+# time via @external_resource (glossary.ex: CONTEXT.md + docs/glossary/*.md;
+# docs.ex: docs/context-map.md + docs/domain-model.md). These must exist in the
+# builder before `mix compile`. Copy the whole docs/ tree rather than naming
+# individual files so adding a new lens or deep-doc can't silently break the
+# build at deploy time; deploys are tag-triggered and remote, so the compile
+# cache layer rarely rebuilds and the broader COPY costs nothing in practice.
+COPY CONTEXT.md ./
+COPY docs docs
+
 # Compile the release
 RUN mix compile
 
