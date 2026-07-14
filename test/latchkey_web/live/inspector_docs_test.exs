@@ -3,8 +3,8 @@ defmodule LatchkeyWeb.InspectorDocsTest do
   Tests for the in-app **deep docs** (spec glossary.md, D8–D11, issue #131): the
   two `/inspector/docs/{context-map,domain-model}` routes rendering the canonical
   narrative docs, the D9 relative-link→GitHub rewrite, and the D11 front doors
-  (landing Reference cluster + glossary caption link). Asserts on stable DOM ids /
-  hrefs, never raw HTML, per the repo's LiveView testing guidelines.
+  (the persistent top-bar links + the glossary caption link). Asserts on stable DOM
+  ids / hrefs, never raw HTML, per the repo's LiveView testing guidelines.
   """
   use LatchkeyWeb.ConnCase
 
@@ -23,6 +23,15 @@ defmodule LatchkeyWeb.InspectorDocsTest do
       # A known section heading anchor (matches the slugs the pane read_more links
       # already carry). Attribute selector — the id begins with a digit.
       assert has_element?(view, "#docs-content-domain_model [id='7-arrears']")
+    end
+
+    test "the GFM event tables render as real tables, not raw pipe text", %{conn: conn} do
+      # Regression: the MDEx `table` extension must be on, else the domain-model
+      # event tables fall through as literal `| Event | … |` paragraphs.
+      {:ok, view, _html} = live(conn, ~p"/inspector/docs/domain-model")
+
+      assert has_element?(view, "#docs-content-domain_model table thead th")
+      assert has_element?(view, "#docs-content-domain_model table tbody td")
     end
 
     test "the context-map doc route renders", %{conn: conn} do
@@ -69,14 +78,20 @@ defmodule LatchkeyWeb.InspectorDocsTest do
   end
 
   describe "docs page chrome" do
-    test "cross-links the other reference surfaces and its GitHub source (same-tab in-app)", %{
-      conn: conn
-    } do
+    test "the top-bar cross-links the reference surfaces; the page keeps its GitHub source link",
+         %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/inspector/docs/domain-model")
 
-      assert has_element?(view, "#docs-nav-glossary[href='/inspector/glossary']")
-      assert has_element?(view, "#docs-nav-context_map[href='/inspector/docs/context-map']")
-      # The source link is the one external, new-tab affordance (D5c).
+      # Cross-doc navigation is the persistent top-bar, present on every view.
+      assert has_element?(view, "#inspector-glossary-link[href='/inspector/glossary']")
+      assert has_element?(view, "#inspector-context-map-link[href='/inspector/docs/context-map']")
+
+      assert has_element?(
+               view,
+               "#inspector-domain-model-link[href='/inspector/docs/domain-model']"
+             )
+
+      # The one page-local affordance is the external, new-tab GitHub source (D5c).
       assert has_element?(
                view,
                "#docs-source-link[href='#{@github_docs}/domain-model.md'][target='_blank']"
@@ -84,21 +99,18 @@ defmodule LatchkeyWeb.InspectorDocsTest do
     end
   end
 
-  describe "discoverability — two front doors (D11)" do
-    test "the landing Reference cluster links to both deep docs and the glossary", %{conn: conn} do
+  describe "discoverability — front doors (D11)" do
+    test "the persistent top-bar links to both deep docs and the glossary", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/inspector")
 
-      assert has_element?(view, "#orientation-reference")
-      assert has_element?(view, "#orientation-glossary-link[href='/inspector/glossary']")
+      # The top-bar is the primary front door — present on every view, so the docs
+      # are never one missable landing-page pill away.
+      assert has_element?(view, "#inspector-glossary-link[href='/inspector/glossary']")
+      assert has_element?(view, "#inspector-context-map-link[href='/inspector/docs/context-map']")
 
       assert has_element?(
                view,
-               "#orientation-docs-context-map[href='/inspector/docs/context-map']"
-             )
-
-      assert has_element?(
-               view,
-               "#orientation-docs-domain-model[href='/inspector/docs/domain-model']"
+               "#inspector-domain-model-link[href='/inspector/docs/domain-model']"
              )
     end
 
