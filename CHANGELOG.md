@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/snag-run/latchkey/compare/v0.1.0...v0.1.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* patch mint DoS advisories + unblock the fly build ([#143](https://github.com/snag-run/latchkey/issues/143)) ([ca91342](https://github.com/snag-run/latchkey/commit/ca9134260f96c9015fbc15096ea2d7b28b6f3449))
+
 ## 0.1.0 (2026-07-14)
 
 
