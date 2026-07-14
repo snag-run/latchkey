@@ -26,10 +26,8 @@ defmodule LatchkeyWeb.InspectorLive do
 
   import LatchkeyWeb.Inspector.EventLog
   import LatchkeyWeb.Inspector.Firehose
-  import LatchkeyWeb.Inspector.LedgerPane
+  import LatchkeyWeb.Inspector.GuidedStream
   import LatchkeyWeb.Inspector.LogPane
-  import LatchkeyWeb.Inspector.Scrubber
-  import LatchkeyWeb.Inspector.StatePanes
   import LatchkeyWeb.InspectorComponents
 
   alias LatchkeyWeb.Inspector.Docs
@@ -122,6 +120,11 @@ defmodule LatchkeyWeb.InspectorLive do
       |> assign(:acl_edge_label, @acl_edge_label)
       |> assign(:docs, @docs)
       |> assign(:stream_found?, false)
+      # Guided-tour overlay state for the deep-stream pipeline: whether the tour is
+      # running and which stage (0-based) it is on. Tour starts off; opt-in via the
+      # "Guided tour" button.
+      |> assign(:tour_active?, false)
+      |> assign(:tour_step, 0)
       # Nav-rail legibility state (~100 streams): a filter query and the set of
       # expanded scenario groups. Both are server-side; the rail collapses all
       # groups by default so the map lands compact.
@@ -269,6 +272,26 @@ defmodule LatchkeyWeb.InspectorLive do
   @impl true
   def handle_event("nav_filter", %{"value" => query}, socket) do
     {:noreply, assign(socket, :nav_filter, query)}
+  end
+
+  # ── Guided-tour overlay controls (deep-stream pipeline) ─────────────────────
+  # Step the tour narration forward/back, clamped to 0..(max-1) where `max` is the
+  # stage count the narration card posts.
+  def handle_event("tour_step", %{"dir" => dir, "max" => max}, socket) do
+    max_steps = to_int(max, 1)
+    delta = if dir == "next", do: 1, else: -1
+    step = (socket.assigns.tour_step + delta) |> max(0) |> min(max_steps - 1)
+    {:noreply, assign(socket, :tour_step, step)}
+  end
+
+  # Launch / relaunch the tour from the top button (resets to the first stage).
+  def handle_event("tour_start", _params, socket) do
+    {:noreply, socket |> assign(:tour_active?, true) |> assign(:tour_step, 0)}
+  end
+
+  # Bail out of the tour (Skip / ✕ / Done) — reveals the plain pipeline.
+  def handle_event("tour_exit", _params, socket) do
+    {:noreply, assign(socket, :tour_active?, false)}
   end
 
   def handle_event("nav_toggle", %{"category" => category}, socket) do
@@ -453,6 +476,9 @@ defmodule LatchkeyWeb.InspectorLive do
         |> init_scrubber(context.kind, recorded)
         |> apply_at(params, context.kind)
         |> expand_active_group(stream_id)
+        # Opening a stream resets the guided tour (off, at the first stage).
+        |> assign(:tour_active?, false)
+        |> assign(:tour_step, 0)
     end
   end
 
@@ -776,15 +802,30 @@ defmodule LatchkeyWeb.InspectorLive do
                   <span aria-hidden="true">/</span>
                   <span class="font-mono text-base-content">{@active_stream}</span>
                 </nav>
-                <%!-- The raw event log leads on the left; everything it folds into --%>
-                <%!-- (scrubber → aggregate state, read model, ledger) sits alongside on --%>
-                <%!-- the right, so the source events and their derivations read side by --%>
-                <%!-- side. Deep streams split two-up; the Accounts edge (events only, no --%>
-                <%!-- fold — D3) stays a single full-width column. --%>
-                <div class={[
-                  "grid gap-6 items-start",
-                  if(@stream_kind == :deep, do: "grid-cols-1 xl:grid-cols-2", else: "grid-cols-1")
-                ]}>
+                <%!-- Deep (tenancy) streams render the numbered fold pipeline with the --%>
+                <%!-- opt-in guided tour (LatchkeyWeb.Inspector.GuidedStream): the log, --%>
+                <%!-- then everything it folds into (replay → aggregate state, read model, --%>
+                <%!-- ledger), top to bottom. The Accounts edge (events only, no fold — D3) --%>
+                <%!-- stays a single full-width column. --%>
+                <%= if @stream_kind == :deep do %>
+                  <.deep_stream
+                    tour_active?={@tour_active?}
+                    tour_step={@tour_step}
+                    active_stream={@active_stream}
+                    context_name={@context_name}
+                    event_rows={@event_rows}
+                    docs={@docs}
+                    highlight_version={@highlight_version}
+                    scrubber_k={@scrubber_k}
+                    scrubber_n={@scrubber_n}
+                    scrubber_playing?={@scrubber_playing?}
+                    new_events_available?={@new_events_available?}
+                    aggregate_state={@aggregate_state}
+                    read_model={@read_model}
+                    consistency={@consistency}
+                    ledger_entries={@ledger_entries}
+                  />
+                <% else %>
                   <div id="stream-events-col" class="min-w-0">
                     <.events_pane
                       stream_id={@active_stream}
@@ -795,33 +836,7 @@ defmodule LatchkeyWeb.InspectorLive do
                       highlight_version={@highlight_version}
                     />
                   </div>
-
-                  <div :if={@stream_kind == :deep} id="stream-derived-col" class="min-w-0 space-y-6">
-                    <%!-- The server-side replay scrubber: fold the log event-by-event (#85, D4). --%>
-                    <.scrubber
-                      k={@scrubber_k}
-                      n={@scrubber_n}
-                      playing?={@scrubber_playing?}
-                      new_events_available?={@new_events_available?}
-                      docs={@docs}
-                    />
-                    <%!-- The write-vs-read money-shot: what the log folds into (#83, D1/D2). --%>
-                    <.fold_panes
-                      stream_id={@active_stream}
-                      state={@aggregate_state}
-                      derived={@read_model}
-                      consistency={@consistency}
-                      docs={@docs}
-                    />
-                    <%!-- The double-entry accounting lens on the same fold (#84, D1). --%>
-                    <.ledger_pane
-                      stream_id={@active_stream}
-                      entries={@ledger_entries}
-                      read_model_balance_cents={@read_model.balance_cents}
-                      docs={@docs}
-                    />
-                  </div>
-                </div>
+                <% end %>
               <% @live_action == :stream -> %>
                 <.stream_not_found stream_id={@unknown_stream_id} />
               <% @live_action == :log -> %>
