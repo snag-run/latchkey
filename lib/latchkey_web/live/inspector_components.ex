@@ -580,9 +580,9 @@ defmodule LatchkeyWeb.InspectorComponents do
 
   def read_more(assigns) do
     ~H"""
-    <a href={@href} target="_blank" rel="noopener" class="text-xs font-semibold text-primary">
-      {render_slot(@inner_block)} ↗
-    </a>
+    <.link navigate={@href} class="text-xs font-semibold text-primary">
+      {render_slot(@inner_block)}
+    </.link>
     """
   end
 

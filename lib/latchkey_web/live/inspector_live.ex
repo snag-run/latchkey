@@ -69,11 +69,12 @@ defmodule LatchkeyWeb.InspectorLive do
   @acl_edge_label "payment → arrears reduction"
 
   # Canonical deep-model docs live in the repo (spec D2: the view links, never
-  # re-authors, the deep prose). Point at the GitHub source so the public
-  # portfolio artifact's "read more" links resolve.
+  # re-authors, the deep prose). Now that the deep docs render in-app (#131), the
+  # `read_more` links target the in-app routes (spec D10) — the pane call sites
+  # append the section anchors, which already match the slugs MDEx emits in-app.
   @docs %{
-    context_map: "https://github.com/snag-run/latchkey/blob/main/docs/context-map.md",
-    domain_model: "https://github.com/snag-run/latchkey/blob/main/docs/domain-model.md"
+    context_map: "/inspector/docs/context-map",
+    domain_model: "/inspector/docs/domain-model"
   }
 
   @accounts_context %{
