@@ -72,20 +72,16 @@ is being added anyway, and the domain lens rendering `CONTEXT.md` then comes fre
 A markdown renderer dependency is added (specific library is a ticket-level
 detail; content is trusted first-party markdown, so sanitisation is not a driver).
 
-### D3 — Placement: a dedicated `/inspector/glossary` route, advertised from the landing
-
-> **Amended (#140, 2026-07-14):** the "advertised from the landing" mechanism
-> below moved to the **persistent top-bar** (`Layouts.inspector`) — the glossary
-> entry-point is a top-bar link present on *every* view, not a landing-only pill.
-> The route and rationale are unchanged.
+### D3 — Placement: a dedicated `/inspector/glossary` route, advertised from the top-bar
 
 A dedicated **`/inspector/glossary`** route — a `:glossary` live action on
 `InspectorLive`, added **inside the existing `live_session :inspector`** (not a
 standalone route, so the inspector's session contract is preserved) — renders the
 three lens-sections on one scannable page — domain
 (from `CONTEXT.md`), DDD, ES — each **term a heading with a fragment anchor** for
-deep-linking. The **orientation landing advertises it** with a small entry-point
-link ("Reference / Glossary"). Rejected: folding the glossary into the landing —
+deep-linking. The **persistent top-bar advertises it** with an entry-point link on
+every view (**#140** — promoted from the original landing-only "Reference /
+Glossary" pill). Rejected: folding the glossary into the landing —
 three lenses of terms bloat the orientation map and make per-term deep-linking
 awkward.
 
@@ -238,22 +234,15 @@ faithful flip, and must land after #131 (the in-app anchors must exist first).
 
 ### D11 — Discoverability: two front doors, equal billing (issue #131)
 
-> **Amended (#140, 2026-07-14):** the "Landing orientation map — Reference
-> cluster" front door below was **promoted to the persistent top-bar**
-> (`Layouts.inspector`): `context map` / `domain model` links beside `full log` /
-> `glossary`, present on **every** view with equal billing — not just the landing.
-> The redundant landing pill cluster **and** the docs-page pill sub-nav were
-> removed; the second front door (the glossary caption link) is unchanged. The
-> pills were easily missed, so a persistent top-bar serves this decision's own
-> discoverability intent better. The original text stands as the historical record.
-
 The deep docs get an in-app front door beyond the `read_more` deep-links, so a
 browsing visitor who never clicks a specific pane still finds them (the brief's
 thesis):
 
-- **Landing orientation map** — a "Reference" cluster beside the existing glossary
-  entry-point (D3), listing **Context Map** and **Domain Model** with **equal
-  billing** (no priority ordering between them for now).
+- **Persistent top-bar** (**#140**) — `context map` / `domain model` links beside
+  `full log` / `glossary` in `Layouts.inspector`, present on **every** view with
+  **equal billing** (no priority ordering between them for now). *Promoted from the
+  original landing-map "Reference" pill cluster + docs-page sub-nav, which were
+  easily missed and are now removed.*
 - **Glossary page** — the domain-lens intro caption ("…cross-refs point to the
   domain model") becomes a **live in-app link** to `/inspector/docs/domain-model`,
   turning a dead reference into a real one.
