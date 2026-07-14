@@ -32,6 +32,8 @@ defmodule LatchkeyWeb.InspectorLive do
   import LatchkeyWeb.Inspector.StatePanes
   import LatchkeyWeb.InspectorComponents
 
+  alias LatchkeyWeb.Inspector.Docs
+
   alias Latchkey.EventStore
   alias Latchkey.Inspector.Broadcaster
   alias Latchkey.Inspector.Log
@@ -380,6 +382,13 @@ defmodule LatchkeyWeb.InspectorLive do
     |> assign(:active_stream, nil)
   end
 
+  # ── Deep docs (spec glossary.md, D8/D9/D11, issue #131) ─────────────────────
+  # The two canonical narrative docs rendered in-app as a read-through reference
+  # library, each on its own route. Static content compiled from `Docs` — like the
+  # glossary they hold no open stream, no scrubber, no live subscription.
+  defp apply_action(socket, :docs_context_map, _params), do: apply_docs(socket, :context_map)
+  defp apply_action(socket, :docs_domain_model, _params), do: apply_docs(socket, :domain_model)
+
   # ── Full paginated log (issue #114, spec D8) ────────────────────────────────
   # A read-only historical browser over the entire $all stream, newest-first, with
   # keyset paging. Cursor comes from the URL (`?before=`/`?after=`) so pages are
@@ -444,6 +453,18 @@ defmodule LatchkeyWeb.InspectorLive do
         |> apply_at(params, context.kind)
         |> expand_active_group(stream_id)
     end
+  end
+
+  # Shared by the two `:docs_*` actions: a static deep-doc page, like the glossary
+  # holding no open stream, no scrubber, no live subscription.
+  defp apply_docs(socket, doc) do
+    socket
+    |> cancel_play()
+    |> resubscribe_stream(nil)
+    |> assign(:new_events_available?, false)
+    |> assign(:page_title, "Inspector — #{Docs.title(doc)}")
+    |> assign(:active_stream, nil)
+    |> assign(:doc_key, doc)
   end
 
   # Deep-linked from the paginated log (D8): `?at=<stream_version>` opens a deep
@@ -813,6 +834,8 @@ defmodule LatchkeyWeb.InspectorLive do
                 />
               <% @live_action == :glossary -> %>
                 <.glossary_page />
+              <% @live_action in [:docs_context_map, :docs_domain_model] -> %>
+                <.docs_page doc_key={@doc_key} />
               <% true -> %>
                 <.orientation_map
                   deep_context={@tenancy_context}

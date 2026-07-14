@@ -27,6 +27,8 @@ defmodule LatchkeyWeb.Router do
     live_session :inspector do
       live "/inspector", InspectorLive, :landing
       live "/inspector/glossary", InspectorLive, :glossary
+      live "/inspector/docs/context-map", InspectorLive, :docs_context_map
+      live "/inspector/docs/domain-model", InspectorLive, :docs_domain_model
       live "/inspector/log", InspectorLive, :log
       live "/inspector/streams/:stream_id", InspectorLive, :stream
     end
