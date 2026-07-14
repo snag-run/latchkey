@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0](https://github.com/snag-run/latchkey/compare/v0.1.1...v0.2.0) (2026-07-14)
+
+
+### Features
+
+* **inspector:** left-rail TOC + drop firehose on reference pages ([#148](https://github.com/snag-run/latchkey/issues/148)) ([81cce1c](https://github.com/snag-run/latchkey/commit/81cce1c24cf9268afbef05de3199c79dcc3a977f))
+* **inspector:** numbered fold pipeline + guided tour for deep streams ([#145](https://github.com/snag-run/latchkey/issues/145)) ([c061163](https://github.com/snag-run/latchkey/commit/c06116304d32de04ddd6bd9e54808def4dee88ab))
+
 ## [0.1.1](https://github.com/snag-run/latchkey/compare/v0.1.0...v0.1.1) (2026-07-14)
 
 
