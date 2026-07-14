@@ -106,16 +106,9 @@ defmodule LatchkeyWeb.InspectorGlossaryTest do
   end
 
   describe "discoverability (D3)" do
-    test "the orientation landing shows the glossary entry-point link", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/inspector")
-
-      assert has_element?(
-               view,
-               "#orientation-glossary-link[href='/inspector/glossary']"
-             )
-    end
-
-    test "the workbench header links to the glossary from any inspector page", %{conn: conn} do
+    test "the top-bar links to the glossary from any inspector page", %{conn: conn} do
+      # The glossary entry-point is the persistent top-bar (present on the landing
+      # and every other view), not a landing-page-only pill.
       {:ok, view, _html} = live(conn, ~p"/inspector")
 
       assert has_element?(view, "#inspector-glossary-link[href='/inspector/glossary']")

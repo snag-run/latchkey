@@ -94,7 +94,6 @@ defmodule LatchkeyWeb.Layouts do
     <div class="flex flex-col h-screen overflow-hidden bg-base-100 text-base-content">
       <header class="flex items-center gap-3 h-12 shrink-0 px-4 border-b border-base-300 bg-base-200">
         <a href={~p"/inspector"} class="font-semibold tracking-tight">/inspector</a>
-        <span class="text-base-content/50 text-sm">workbench</span>
         <.link
           navigate={~p"/inspector/log"}
           id="inspector-full-log-link"
@@ -108,6 +107,20 @@ defmodule LatchkeyWeb.Layouts do
           class="text-sm text-base-content/60 hover:text-base-content"
         >
           glossary
+        </.link>
+        <.link
+          navigate={~p"/inspector/docs/context-map"}
+          id="inspector-context-map-link"
+          class="text-sm text-base-content/60 hover:text-base-content"
+        >
+          context map
+        </.link>
+        <.link
+          navigate={~p"/inspector/docs/domain-model"}
+          id="inspector-domain-model-link"
+          class="text-sm text-base-content/60 hover:text-base-content"
+        >
+          domain model
         </.link>
         <span class="ml-auto">
           <.theme_toggle />

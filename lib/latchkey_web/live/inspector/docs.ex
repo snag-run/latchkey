@@ -37,9 +37,12 @@ defmodule LatchkeyWeb.Inspector.Docs do
   for {_doc, path} <- @sources, do: @external_resource(path)
 
   # header_id_prefix: "" gives each heading a GitHub-style anchor id matching
-  # `MDEx.anchorize/1`. Content is trusted first-party markdown (default safe
-  # render left on). Same options as `Glossary`, so the two agree byte-for-byte.
-  @md_opts [extension: [header_id_prefix: ""]]
+  # `MDEx.anchorize/1`. table/strikethrough are GFM extensions the docs use (the
+  # event tables in §3/§5, ~~struck~~ deferred markers) — off by default, they'd
+  # otherwise fall through as raw pipe text. Content is trusted first-party
+  # markdown (default safe render left on). Same options as `Glossary`, so the two
+  # agree byte-for-byte.
+  @md_opts [extension: [header_id_prefix: "", table: true, strikethrough: true]]
 
   # D9: relative in-repo doc links resolve against docs/ and point at the GitHub
   # blob, since the ADRs and cross-doc targets are not (all) rendered in-app.

@@ -133,44 +133,18 @@ defmodule LatchkeyWeb.InspectorComponents do
           links point at, in sync at every build.
         </.caption>
 
-        <nav class="mt-4 flex flex-wrap items-center gap-2" aria-label="Reference navigation">
-          <.link
-            :for={
-              {key, path, label} <- [
-                {:context_map, ~p"/inspector/docs/context-map", "Context Map"},
-                {:domain_model, ~p"/inspector/docs/domain-model", "Domain Model"}
-              ]
-            }
-            id={"docs-nav-#{key}"}
-            navigate={path}
-            class={[
-              "px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
-              if(@doc_key == key,
-                do: "bg-primary/10 text-primary",
-                else: "bg-base-200 hover:bg-base-300"
-              )
-            ]}
-            aria-current={@doc_key == key && "page"}
-          >
-            {label}
-          </.link>
-          <.link
-            id="docs-nav-glossary"
-            navigate={~p"/inspector/glossary"}
-            class="px-2.5 py-1 rounded-full bg-base-200 hover:bg-base-300 text-xs font-medium transition-colors"
-          >
-            Glossary
-          </.link>
-          <a
-            id="docs-source-link"
-            href={@source_url}
-            target="_blank"
-            rel="noopener"
-            class="ml-auto text-xs font-semibold text-primary"
-          >
-            View source on GitHub ↗
-          </a>
-        </nav>
+        <%!-- Cross-doc navigation lives in the persistent top-bar (glossary /
+              context map / domain model); the one page-local affordance is the
+              external view-source link (D5c). --%>
+        <a
+          id="docs-source-link"
+          href={@source_url}
+          target="_blank"
+          rel="noopener"
+          class="mt-4 inline-block text-xs font-semibold text-primary"
+        >
+          View source on GitHub ↗
+        </a>
       </header>
 
       <div id={"docs-content-#{@doc_key}"} class="glossary-prose">{raw(@body_html)}</div>
@@ -387,29 +361,6 @@ defmodule LatchkeyWeb.InspectorComponents do
           that is the point.
           <.read_more href={@docs.context_map}>context-map.md</.read_more>
         </.caption>
-        <nav
-          id="orientation-reference"
-          class="mt-3 flex flex-wrap items-center gap-2"
-          aria-label="Reference"
-        >
-          <span class="text-[11px] font-semibold uppercase tracking-widest text-base-content/40">
-            Reference
-          </span>
-          <.link
-            :for={
-              {id, path, label} <- [
-                {"orientation-glossary-link", ~p"/inspector/glossary", "Glossary"},
-                {"orientation-docs-context-map", ~p"/inspector/docs/context-map", "Context Map"},
-                {"orientation-docs-domain-model", ~p"/inspector/docs/domain-model", "Domain Model"}
-              ]
-            }
-            id={id}
-            navigate={path}
-            class="px-2.5 py-1 rounded-full bg-base-200 hover:bg-base-300 text-xs font-medium text-primary transition-colors"
-          >
-            {label}
-          </.link>
-        </nav>
       </header>
 
       <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-4 mb-8">

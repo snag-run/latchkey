@@ -37,9 +37,12 @@ defmodule LatchkeyWeb.Inspector.Glossary do
 
   # header_id_prefix: "" enables Comrak's header-id extension with no prefix, giving
   # each heading a GitHub-style anchor id that matches `MDEx.anchorize/1` (see the
-  # moduledoc). Content is trusted first-party markdown, so the default safe render
-  # (raw HTML escaped) is left on — no sanitisation is a driver (D2).
-  @md_opts [extension: [header_id_prefix: ""]]
+  # moduledoc). table/strikethrough are GFM extensions kept in lock-step with
+  # `Docs` (both render GitHub-authored markdown; the lenses have none today, but a
+  # future table in CONTEXT.md must not fall through as raw pipe text). Content is
+  # trusted first-party markdown, so the default safe render (raw HTML escaped) is
+  # left on — no sanitisation is a driver (D2).
+  @md_opts [extension: [header_id_prefix: "", table: true, strikethrough: true]]
 
   @rendered Map.new(@sources, fn {lens, path} ->
               {lens, MDEx.to_html!(File.read!(path), @md_opts)}
