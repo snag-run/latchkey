@@ -74,6 +74,11 @@ detail; content is trusted first-party markdown, so sanitisation is not a driver
 
 ### D3 — Placement: a dedicated `/inspector/glossary` route, advertised from the landing
 
+> **Amended (#140, 2026-07-14):** the "advertised from the landing" mechanism
+> below moved to the **persistent top-bar** (`Layouts.inspector`) — the glossary
+> entry-point is a top-bar link present on *every* view, not a landing-only pill.
+> The route and rationale are unchanged.
+
 A dedicated **`/inspector/glossary`** route — a `:glossary` live action on
 `InspectorLive`, added **inside the existing `live_session :inspector`** (not a
 standalone route, so the inspector's session contract is preserved) — renders the
@@ -233,6 +238,15 @@ faithful flip, and must land after #131 (the in-app anchors must exist first).
 
 ### D11 — Discoverability: two front doors, equal billing (issue #131)
 
+> **Amended (#140, 2026-07-14):** the "Landing orientation map — Reference
+> cluster" front door below was **promoted to the persistent top-bar**
+> (`Layouts.inspector`): `context map` / `domain model` links beside `full log` /
+> `glossary`, present on **every** view with equal billing — not just the landing.
+> The redundant landing pill cluster **and** the docs-page pill sub-nav were
+> removed; the second front door (the glossary caption link) is unchanged. The
+> pills were easily missed, so a persistent top-bar serves this decision's own
+> discoverability intent better. The original text stands as the historical record.
+
 The deep docs get an in-app front door beyond the `read_more` deep-links, so a
 browsing visitor who never clicks a specific pane still finds them (the brief's
 thesis):
@@ -257,8 +271,8 @@ tests under `test/latchkey_web/live/`. Test external behaviour, not markup detai
   known term anchors (an aggregate/ES heading, a domain-term heading).
 - **Domain lens wired to source:** a known `CONTEXT.md` term renders on the page
   (guards the "render, don't copy" wiring from breaking).
-- **Discoverability:** the `:landing` orientation map shows the glossary
-  entry-point link.
+- **Discoverability:** the persistent top-bar links to the glossary (asserted on
+  the landing; present on every view) — #140.
 
 **Deep docs (D8–D11, issue #131):**
 
@@ -273,8 +287,9 @@ tests under `test/latchkey_web/live/`. Test external behaviour, not markup detai
   `/inspector/docs/domain-model#…` (and the context-map page) **in-app,
   same-tab** — no `github.com`, no `target="_blank"` — proving the brief's gap
   closed for the deep docs. (Replaces the superseded D4 test.)
-- **D11 discoverability:** the `:landing` "Reference" cluster links to both deep
-  docs; the glossary domain-lens caption links to `/inspector/docs/domain-model`.
+- **D11 discoverability:** the persistent top-bar links to both deep docs
+  (asserted on the landing; present on every view — #140); the glossary
+  domain-lens caption links to `/inspector/docs/domain-model`.
 
 **Accepted limitation:** the D7 anchor tripwire ("every DDD/ES entry names a
 symbol or links a pane") is **not** automatically enforceable over freeform
