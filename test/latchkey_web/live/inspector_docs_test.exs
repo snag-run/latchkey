@@ -133,5 +133,50 @@ defmodule LatchkeyWeb.InspectorDocsTest do
       assert Docs.title(:domain_model) == "Domain Model"
       assert Docs.source_url(:context_map) == "#{@github_docs}/context-map.md"
     end
+
+    test "toc/1 returns the h2/h3 headings (h1 title omitted) with rendered-anchor ids" do
+      toc = Docs.toc(:domain_model)
+
+      # The h1 doc title is not a TOC entry (the page header already shows it).
+      refute Enum.any?(toc, &(&1.level == 1))
+      # The numbered sections (h2) and their subsections (h3) are, in source order.
+      assert %{id: "7-arrears", text: "7. Arrears", level: 2} in toc
+      assert Enum.any?(toc, &(&1.id == "lifecycle-state-machine" and &1.level == 3))
+
+      # Every TOC id is an anchor the rendered doc actually carries, so a `#id`
+      # jump / scroll-spy target can never point at a missing heading. Asserted
+      # against parsed nodes (attribute selector — the ids begin with a digit).
+      rendered = LazyHTML.from_fragment(Docs.html(:domain_model))
+
+      assert Enum.all?(toc, fn h ->
+               not Enum.empty?(LazyHTML.query(rendered, ~s([id="#{h.id}"])))
+             end)
+    end
+  end
+
+  describe "reference-page TOC rail" do
+    test "a deep-doc route swaps the stream nav + firehose for the TOC rail", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/inspector/docs/domain-model")
+
+      # A known section anchor is a jump link in the rail…
+      assert has_element?(view, "#toc-rail a[href='#7-arrears']")
+      # …and the stream nav + live firehose (dead weight on static prose) are gone.
+      refute has_element?(view, "#inspector-nav")
+      refute has_element?(view, "#firehose")
+    end
+
+    test "the context-map route shows the TOC rail too", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/inspector/docs/context-map")
+
+      assert has_element?(view, "#toc-rail a[href='#the-seams-where-the-language-flips']")
+    end
+
+    test "non-reference routes keep the stream nav and the firehose", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/inspector")
+
+      assert has_element?(view, "#inspector-nav")
+      assert has_element?(view, "#firehose")
+      refute has_element?(view, "#toc-rail")
+    end
   end
 end

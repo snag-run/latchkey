@@ -31,6 +31,7 @@ defmodule LatchkeyWeb.InspectorLive do
   import LatchkeyWeb.InspectorComponents
 
   alias LatchkeyWeb.Inspector.Docs
+  alias LatchkeyWeb.Inspector.Glossary
 
   alias Latchkey.EventStore
   alias Latchkey.Inspector.Broadcaster
@@ -130,6 +131,11 @@ defmodule LatchkeyWeb.InspectorLive do
       # groups by default so the map lands compact.
       |> assign(:nav_filter, "")
       |> assign(:nav_expanded, [])
+      # Reference-page TOC rail (glossary / deep docs): the flat heading list and
+      # the page title it belongs to. Defaulted so the always-rendered left <aside>
+      # is safe on the stream/log/landing routes, which show the nav rail instead.
+      |> assign(:toc, [])
+      |> assign(:toc_title, nil)
       # Replay-scrubber state (spec D4). The whole thing is one integer `k`; the
       # rest is bookkeeping. Defaulted here so every render path is safe before a
       # deep stream is selected.
@@ -411,6 +417,8 @@ defmodule LatchkeyWeb.InspectorLive do
     |> assign(:new_events_available?, false)
     |> assign(:page_title, "Inspector — glossary")
     |> assign(:active_stream, nil)
+    |> assign(:toc, Glossary.toc())
+    |> assign(:toc_title, "Glossary")
   end
 
   # ── Deep docs (spec glossary.md, D8/D9/D11, issue #131) ─────────────────────
@@ -490,7 +498,8 @@ defmodule LatchkeyWeb.InspectorLive do
   end
 
   # Shared by the two `:docs_*` actions: a static deep-doc page, like the glossary
-  # holding no open stream, no scrubber, no live subscription.
+  # holding no open stream, no scrubber, no live subscription. Feeds the TOC rail
+  # its heading list (`Docs.toc/1`) and title.
   defp apply_docs(socket, doc) do
     socket
     |> cancel_play()
@@ -499,7 +508,15 @@ defmodule LatchkeyWeb.InspectorLive do
     |> assign(:page_title, "Inspector — #{Docs.title(doc)}")
     |> assign(:active_stream, nil)
     |> assign(:doc_key, doc)
+    |> assign(:toc, Docs.toc(doc))
+    |> assign(:toc_title, Docs.title(doc))
   end
+
+  # The reference routes (glossary + deep docs): static, read-through pages that
+  # swap the stream nav for a TOC rail and drop the live firehose (both are dead
+  # weight on a page with no streams).
+  @reference_actions [:glossary, :docs_context_map, :docs_domain_model]
+  defp reference_route?(action), do: action in @reference_actions
 
   # Deep-linked from the paginated log (D8): `?at=<stream_version>` opens a deep
   # stream scrubbed to that event's position (the prefix folding the first N events
@@ -789,13 +806,19 @@ defmodule LatchkeyWeb.InspectorLive do
     <Layouts.inspector flash={@flash}>
       <div id="inspector" class="flex flex-1 min-h-0">
         <aside class="w-64 shrink-0 overflow-y-auto p-3 border-r border-base-300 bg-base-100">
-          <.nav_rail
-            contexts={@contexts}
-            named_contexts={@named_contexts}
-            active_stream={@active_stream}
-            nav_filter={@nav_filter}
-            nav_expanded={@nav_expanded}
-          />
+          <%!-- Reference pages (glossary / deep docs) swap the stream nav for the
+                page's TOC rail; every other route keeps the stream nav. --%>
+          <%= if reference_route?(@live_action) do %>
+            <.toc_rail toc={@toc} title={@toc_title} />
+          <% else %>
+            <.nav_rail
+              contexts={@contexts}
+              named_contexts={@named_contexts}
+              active_stream={@active_stream}
+              nav_filter={@nav_filter}
+              nav_expanded={@nav_expanded}
+            />
+          <% end %>
         </aside>
 
         <div class="flex flex-1 min-w-0">
@@ -871,7 +894,12 @@ defmodule LatchkeyWeb.InspectorLive do
             <% end %>
           </main>
 
-          <aside class="w-72 shrink-0 border-l border-base-300 bg-base-100">
+          <%!-- The live firehose is hidden on the reference routes: they carry no
+                streams, so a live event feed is noise next to static prose. --%>
+          <aside
+            :if={not reference_route?(@live_action)}
+            class="w-72 shrink-0 border-l border-base-300 bg-base-100"
+          >
             <.firehose_feed stream={@streams.firehose} />
           </aside>
         </div>

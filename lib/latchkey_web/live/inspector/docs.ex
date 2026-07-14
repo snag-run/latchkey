@@ -85,10 +85,51 @@ defmodule LatchkeyWeb.Inspector.Docs do
               end)
             )
 
+  # Table of contents per doc: the h2/h3 headings in source order, each with the
+  # GitHub-style anchor id the rendered heading carries (so a `#id` jump/scroll-spy
+  # target lines up byte-for-byte with `MDEx.anchorize/1`). Computed at compile time
+  # from the same AST the render walks — h1 (the doc title, already in the page
+  # header) is dropped. Anonymous fns only, so this is legal in an attribute.
+  @toc (
+         # Flatten a heading's inline children to its plain text (Text/Code carry a
+         # literal; Strong/Emph/Link nest further). Self-referential so it can recur.
+         flatten = fn flatten, nodes ->
+           Enum.map_join(nodes, "", fn
+             %MDEx.Text{literal: t} -> t
+             %MDEx.Code{literal: t} -> t
+             %{nodes: children} -> flatten.(flatten, children)
+             _ -> ""
+           end)
+         end
+
+         Map.new(@sources, fn {doc, path} ->
+           headings =
+             path
+             |> File.read!()
+             |> MDEx.parse_document!(@md_opts)
+             |> Map.fetch!(:nodes)
+             |> Enum.filter(&match?(%MDEx.Heading{level: level} when level in [2, 3], &1))
+             |> Enum.map(fn %MDEx.Heading{level: level, nodes: inline} ->
+               text = flatten.(flatten, inline) |> String.trim()
+               %{id: MDEx.anchorize(text), text: text, level: level}
+             end)
+
+           {doc, headings}
+         end)
+       )
+
   @docs Map.keys(@sources)
 
   @doc "The deep-doc keys, in canonical order (equal billing — no priority, D11)."
   def docs, do: [:context_map, :domain_model]
+
+  @doc """
+  The table of contents for a doc: its h2/h3 headings in source order as
+  `[%{id, text, level}]`, where `id` is the anchor the rendered heading carries
+  (a `#id` fragment jumps to it). Feeds the in-page navigation (TOC rail / mini-map
+  / section bar); h1 is omitted since the page header already shows the title.
+  """
+  def toc(doc) when doc in @docs, do: Map.fetch!(@toc, doc)
 
   @doc """
   The rendered HTML for a doc (`:context_map` | `:domain_model`), as a trusted
