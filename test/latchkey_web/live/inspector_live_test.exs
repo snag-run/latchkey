@@ -59,10 +59,13 @@ defmodule LatchkeyWeb.InspectorLiveTest do
       {:ok, view, _html} = live(conn, ~p"/inspector")
 
       # #129/D10: the orientation-map read_more targets the in-app context-map page
-      # (top), same-tab — no github.com, no target=_blank.
+      # (top), same-tab — no github.com, no target=_blank. Pin by the read_more's
+      # "context-map.md" text so the sibling D11 reference-nav link (same href, but
+      # labelled "Context Map") can't satisfy this in its place.
       assert has_element?(
                view,
-               "#orientation-map a[href='/inspector/docs/context-map']:not([target='_blank'])"
+               "#orientation-map a[href='/inspector/docs/context-map']:not([target='_blank'])",
+               "context-map.md"
              )
     end
   end
