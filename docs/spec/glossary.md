@@ -20,6 +20,11 @@ renders `CONTEXT.md` itself (single source, always in sync), the DDD and ES
 lenses are new authored markdown. The existing external `read_more` links are
 redirected to these in-app targets.
 
+The same in-app machinery then extends to the two **deep docs** — the strategic
+`context-map.md` and the tactical `domain-model.md` — which render on their own
+routes as a coexisting reference library (D8–D11, issue #131), so the `read_more`
+links land on the exact deep-doc section in-app rather than leaving for GitHub.
+
 ## User Stories
 
 1. As David (still learning DDD/ES), I want to open an in-app glossary and see
@@ -79,7 +84,14 @@ link ("Reference / Glossary"). Rejected: folding the glossary into the landing �
 three lenses of terms bloat the orientation map and make per-term deep-linking
 awkward.
 
-### D4 — Redirect the existing `read_more` links in-app
+### D4 — Redirect the existing `read_more` links in-app — **SUPERSEDED by D10**
+
+> **Superseded** (issue #131 grill, 2026-07-14). D4 proposed redirecting the
+> `read_more` links to `/inspector/glossary#term`. Once the *deep docs*
+> themselves render in-app (D8), the faithful target is the deep-doc section the
+> pane already references — no lossy concept→glossary-term remap. See **D10**.
+> The original text is retained below for provenance only; it is superseded and
+> non-normative — implementers follow D10, not this.
 
 The five per-pane `read_more` links (currently pointing out to GitHub
 `domain-model.md` / `context-map.md` anchors) are **redirected to
@@ -145,6 +157,96 @@ onboarding gap. Un-anchored theory is what the canonical links are for.
 entity/value object, invariant, checkpoint, idempotency, optimistic concurrency,
 compute-on-read's `Timeline` example (may not be built yet).
 
+### D8 — Render the deep docs in-app as a distinct, coexisting docs surface (issue #131)
+
+The two canonical **deep docs** — `docs/context-map.md` (strategic) and
+`docs/domain-model.md` (tactical, §1–§11) — render **in-app**, each on its own
+route: **`/inspector/docs/context-map`** and **`/inspector/docs/domain-model`**
+(live actions inside the existing `live_session :inspector`, mirroring D3). They
+reuse the #127 machinery unchanged — the same compile-time `@external_resource` +
+`MDEx.to_html!` + `header_id_prefix: ""` anchor scheme as `LatchkeyWeb.Inspector.Glossary`.
+
+**Not a reversal of D2/D5/D6 — a scope expansion.** #131's framing ("reverses
+D2/D5/D6") was imprecise. D2 (render in-app) is the *precedent this extends* to
+two more docs; D5(c) (source code → GitHub octocat) stands untouched — the deep
+docs are learning *prose*, not source code; D6 (verbatim render) is extended, not
+undone (D9). What actually moves is one implicit scoping assumption — *"only
+`CONTEXT.md` + the authored DDD/ES lenses render in-app; the deep docs stay
+GitHub-only."* The deep docs were mis-filed as "leaving-for-source is acceptable"
+(D5(c)); they are prose-to-learn, so they belong in-app.
+
+**Distinct surface, not folded into the glossary page.** The glossary is the
+concise *index / on-ramp* (look up a term seen in a pane); the deep docs are a
+*read-through reference library*. They **coexist** — the `CONTEXT.md` domain lens
+(concise ubiquitous language) and `domain-model.md` (deep prose) serve different
+reading modes (30-second look-up vs. sit-and-read) and **neither absorbs the
+other**. Folding the deep docs inline was rejected: `domain-model.md` alone is
+§1–§11 and would wreck the glossary's one-page scannability that D3 protects.
+
+### D9 — Deep-doc link handling: verbatim text refs; relative markdown links rewritten to GitHub (Option A)
+
+The deep docs render **verbatim** (extends D6) **except** for one class of link
+that would break in-app. Two cases:
+
+- **Plain-text refs** (`§7`, `ADR 0008`, `#16`) — render as inert text, never
+  break. **Kept verbatim.** (`CONTEXT.md` has *only* this kind, which is why
+  D6-verbatim renders correctly today.)
+- **Relative markdown links** (`[ADR 0005](adr/0005-…md)` ×5 in `domain-model.md`;
+  `[domain-model.md](./domain-model.md)` in `context-map.md`) — rendered in-app at
+  `/inspector/docs/…`, a relative `href` resolves to `/inspector/docs/adr/…` →
+  **404**. So verbatim is *not* neutral here: it ships broken links. **Fix
+  (Option A):** a single render-time rule rewrites any *relative* `href` to its
+  absolute GitHub `blob/main/docs/…` URL; **absolute URLs** (e.g. the NSW RTA
+  links), **`#` anchors**, and **plain-text refs** are untouched.
+
+Option A is one *mechanical* rule (not per-ref hand-editing — honors D6's
+"don't hand-resolve, don't drift"), keeps the source markdown unmodified, and is
+consistent with D5(c): ADRs and canonical docs *not* in the in-app set are
+legitimate GitHub link-outs. **Deferred (gated):** resolving cross-doc links
+between the two in-app docs to `/inspector/docs/…` instead of GitHub (Option B) —
+trigger: the GitHub round-trip for an already-in-app doc proves annoying.
+Auto-linking plain-text `§`-refs to same-page anchors — trigger: reader feedback
+shows the manual scroll is real friction.
+
+### D10 — `read_more` retarget: existing deep-doc anchors, in-app, same-tab (supersedes D4)
+
+The seven pane `read_more` links **keep the exact deep-doc section anchors they
+already carry** — they were authored forward-compatibly and already equal the
+slugs MDEx emits in-app (`#3-events-producers`, `#4-the-tenancy-aggregate`,
+`#7-arrears`; the orientation-map link points at the context-map page top). The
+retarget is therefore **two mechanical edits, no anchor changes**:
+
+1. Flip the two base URLs in `inspector_live.ex` (`@docs.domain_model` /
+   `@docs.context_map`) from `github.com/…/blob/main/docs/…` to the in-app paths
+   `/inspector/docs/domain-model` / `/inspector/docs/context-map`.
+2. Render `read_more/1` (`inspector_components.ex`) **same-tab** — drop
+   `target="_blank" rel="noopener"` and the `↗` external glyph, use in-app
+   navigation. The **octocat/source links stay new-tab external** (separate
+   component; D5(c) untouched).
+
+This **supersedes D4**: the target is the deep-doc section the pane already
+references (faithful, `domain-model.md §7 → /inspector/docs/domain-model#7-arrears`),
+not a lossy concept→`CONTEXT.md`-term remap. The glossary stays reachable for the
+*browse* intent via the front doors (D11). **This is issue #129's deliverable** —
+issue #129 is reshaped from "redirect to glossary term anchors" to this simpler,
+faithful flip, and must land after #131 (the in-app anchors must exist first).
+
+### D11 — Discoverability: two front doors, equal billing (issue #131)
+
+The deep docs get an in-app front door beyond the `read_more` deep-links, so a
+browsing visitor who never clicks a specific pane still finds them (the brief's
+thesis):
+
+- **Landing orientation map** — a "Reference" cluster beside the existing glossary
+  entry-point (D3), listing **Context Map** and **Domain Model** with **equal
+  billing** (no priority ordering between them for now).
+- **Glossary page** — the domain-lens intro caption ("…cross-refs point to the
+  domain model") becomes a **live in-app link** to `/inspector/docs/domain-model`,
+  turning a dead reference into a real one.
+
+`read_more`-deep-links-only was rejected: a portfolio visitor who never clicks a
+pane would never reach the deep docs, defeating the brief's accessibility thesis.
+
 ## Testing Decisions
 
 Outcome-focused `Phoenix.LiveViewTest`, mirroring the existing inspector LiveView
@@ -155,11 +257,24 @@ tests under `test/latchkey_web/live/`. Test external behaviour, not markup detai
   known term anchors (an aggregate/ES heading, a domain-term heading).
 - **Domain lens wired to source:** a known `CONTEXT.md` term renders on the page
   (guards the "render, don't copy" wiring from breaking).
-- **D4 behavioural test (key):** the panes' `read_more` links target
-  `/inspector/glossary#…` in-app, not `github.com` — proves the brief's gap
-  closed.
 - **Discoverability:** the `:landing` orientation map shows the glossary
   entry-point link.
+
+**Deep docs (D8–D11, issue #131):**
+
+- **Docs routes render:** `/inspector/docs/domain-model` and
+  `/inspector/docs/context-map` each render, with a known section anchor present
+  (e.g. `#7-arrears`) — guards the "point the machinery at two more files" wiring.
+- **D9 relative-link rewrite (key):** a relative doc link (`domain-model.md`'s
+  `[ADR 0005](adr/…)`) renders as an **absolute `github.com/…/blob/main/docs/…`**
+  href, not a `/inspector/docs/adr/…` link that would 404; an already-absolute
+  link (NSW RTA) is untouched.
+- **D10 behavioural test (key):** the panes' `read_more` links target
+  `/inspector/docs/domain-model#…` (and the context-map page) **in-app,
+  same-tab** — no `github.com`, no `target="_blank"` — proving the brief's gap
+  closed for the deep docs. (Replaces the superseded D4 test.)
+- **D11 discoverability:** the `:landing` "Reference" cluster links to both deep
+  docs; the glossary domain-lens caption links to `/inspector/docs/domain-model`.
 
 **Accepted limitation:** the D7 anchor tripwire ("every DDD/ES entry names a
 symbol or links a pane") is **not** automatically enforceable over freeform
@@ -177,11 +292,18 @@ LiveView/render code, covered by the tests above.
   real need.
 - **Editing `CONTEXT.md` for outward readability** — rejected at D6; maintenance
   cost + drift risk outweigh the dangling internal refs.
-- **Rendering the full codebase in-app** — source links go to GitHub (octocat,
-  D5); only the *learning content* lives in-app.
+- **Rendering the full codebase in-app** — source *code* links go to GitHub
+  (octocat, D5(c)); only the *learning content* — the glossary lenses **and** the
+  deep prose docs (D8) — lives in-app. Un-rendered canonical docs (ADRs) remain
+  GitHub link-outs (D9).
+- **Auto-linking plain-text `§`-refs & cross-doc in-app resolution** — deferred at
+  D9 behind named triggers, not undertaken now.
 
 ## Further Notes
 
 No ADR was warranted: the decisions here (markdown vs. structured data, dedicated
 route, anchor mechanics) are feature-scoped and reversible — none clear the
-hard-to-reverse + surprising + real-trade-off bar. They live in this spec.
+hard-to-reverse + surprising + real-trade-off bar. They live in this spec. The
+issue #131 additions (D8–D11 — deep docs in-app, link handling, `read_more`
+retarget, discoverability) are likewise feature-scoped and reversible, and stay
+in this spec.
