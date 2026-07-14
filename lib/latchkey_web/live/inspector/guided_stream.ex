@@ -46,7 +46,7 @@ defmodule LatchkeyWeb.Inspector.GuidedStream do
     %{
       title: "④ The ledger — the same events, as money",
       body:
-        "The identical events viewed as double-entry accounting. Debits and credits whose running balance equals the read model's balance, by construction — not by a second calculation."
+        "The identical events viewed through an independent double-entry fold. Debits and credits whose running balance can be compared with the read model's balance."
     }
   ]
 
@@ -296,7 +296,6 @@ defmodule LatchkeyWeb.Inspector.GuidedStream do
             id="tour-back"
             phx-click="tour_step"
             phx-value-dir="prev"
-            phx-value-max={@stops_count}
             disabled={@tour_step == 0}
             class="px-3 py-1.5 text-xs rounded-md border border-base-300 disabled:opacity-30 hover:bg-base-200"
           >
@@ -311,7 +310,6 @@ defmodule LatchkeyWeb.Inspector.GuidedStream do
             id="tour-next"
             phx-click="tour_step"
             phx-value-dir="next"
-            phx-value-max={@stops_count}
             class="px-3 py-1.5 text-xs rounded-md bg-orange-500 text-white hover:bg-orange-600"
           >
             Next →

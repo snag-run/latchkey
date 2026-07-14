@@ -112,6 +112,27 @@ defmodule LatchkeyWeb.InspectorGuidedStreamTest do
       assert has_element?(view, "#tour-stage-0")
     end
 
+    test "bounds are server-controlled — forged dir/max cannot escape the stops", %{view: view} do
+      view |> element("#tour-start") |> render_click()
+
+      # A forged over-large `max` no longer advances past the real stop count:
+      # the client value is ignored and the step is clamped to 0..(stops-1).
+      render_hook(view, "tour_step", %{"dir" => "next", "max" => "9999"})
+      assert has_element?(view, "#tour-progress", "2 / 4")
+
+      # Even repeated "next" clamps at the last stop rather than overrunning it
+      # (which would make Enum.at/2 return nil and crash the narration render).
+      for _ <- 1..10, do: render_hook(view, "tour_step", %{"dir" => "next"})
+      assert has_element?(view, "#tour-progress", "4 / 4")
+
+      # An unknown direction is a no-op delta, and "prev" cannot go below the first.
+      render_hook(view, "tour_step", %{"dir" => "sideways"})
+      assert has_element?(view, "#tour-progress", "4 / 4")
+
+      for _ <- 1..10, do: render_hook(view, "tour_step", %{"dir" => "prev"})
+      assert has_element?(view, "#tour-progress", "1 / 4")
+    end
+
     test "the last stage swaps Next for a Done control that exits the tour", %{view: view} do
       view |> element("#tour-start") |> render_click()
 

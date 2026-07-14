@@ -275,12 +275,19 @@ defmodule LatchkeyWeb.InspectorLive do
   end
 
   # ── Guided-tour overlay controls (deep-stream pipeline) ─────────────────────
-  # Step the tour narration forward/back, clamped to 0..(max-1) where `max` is the
-  # stage count the narration card posts.
-  def handle_event("tour_step", %{"dir" => dir, "max" => max}, socket) do
-    max_steps = to_int(max, 1)
-    delta = if dir == "next", do: 1, else: -1
-    step = (socket.assigns.tour_step + delta) |> max(0) |> min(max_steps - 1)
+  # Step the tour narration forward/back, clamped server-side to 0..(stops-1).
+  # The stop count is derived from `GuidedStream.stops_count/0`, never trusted
+  # from the client, and any `dir` other than "next"/"prev" is a no-op.
+  def handle_event("tour_step", %{"dir" => dir}, socket) do
+    delta =
+      case dir do
+        "next" -> 1
+        "prev" -> -1
+        _ -> 0
+      end
+
+    last_step = stops_count() - 1
+    step = (socket.assigns.tour_step + delta) |> max(0) |> min(last_step)
     {:noreply, assign(socket, :tour_step, step)}
   end
 
