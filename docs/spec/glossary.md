@@ -90,7 +90,8 @@ awkward.
 > `read_more` links to `/inspector/glossary#term`. Once the *deep docs*
 > themselves render in-app (D8), the faithful target is the deep-doc section the
 > pane already references — no lossy concept→glossary-term remap. See **D10**.
-> The original text is kept below for provenance.
+> The original text is retained below for provenance only; it is superseded and
+> non-normative — implementers follow D10, not this.
 
 The five per-pane `read_more` links (currently pointing out to GitHub
 `domain-model.md` / `context-map.md` anchors) are **redirected to
@@ -227,7 +228,7 @@ This **supersedes D4**: the target is the deep-doc section the pane already
 references (faithful, `domain-model.md §7 → /inspector/docs/domain-model#7-arrears`),
 not a lossy concept→`CONTEXT.md`-term remap. The glossary stays reachable for the
 *browse* intent via the front doors (D11). **This is issue #129's deliverable** —
-#129 is reshaped from "redirect to glossary term anchors" to this simpler,
+issue #129 is reshaped from "redirect to glossary term anchors" to this simpler,
 faithful flip, and must land after #131 (the in-app anchors must exist first).
 
 ### D11 — Discoverability: two front doors, equal billing (issue #131)
