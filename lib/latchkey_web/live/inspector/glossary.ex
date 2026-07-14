@@ -50,8 +50,54 @@ defmodule LatchkeyWeb.Inspector.Glossary do
 
   @lenses Map.keys(@sources)
 
+  # The three lens sections as the page renders them: the `<section>` wrapper id (a
+  # jump target) and the human label. Order matches `lenses/0` (domain first, D6).
+  @lens_headers [
+    %{lens: :domain, id: "glossary-domain", label: "Domain"},
+    %{lens: :ddd, id: "glossary-ddd", label: "DDD"},
+    %{lens: :es, id: "glossary-es", label: "Event sourcing"}
+  ]
+
+  # Table of contents: the three lens sections as level-2 group headers (jumping to
+  # the `<section>` wrapper), each followed by its `##` term headings as level-3
+  # entries (jumping to the term anchor). Flat `[%{id, text, level}]` so it shares
+  # the deep docs' TOC-rail rendering. Anonymous fns only — legal in an attribute.
+  @toc (
+         flatten = fn flatten, nodes ->
+           Enum.map_join(nodes, "", fn
+             %MDEx.Text{literal: t} -> t
+             %MDEx.Code{literal: t} -> t
+             %{nodes: children} -> flatten.(flatten, children)
+             _ -> ""
+           end)
+         end
+
+         Enum.flat_map(@lens_headers, fn %{lens: lens, id: id, label: label} ->
+           terms =
+             @sources
+             |> Map.fetch!(lens)
+             |> File.read!()
+             |> MDEx.parse_document!(@md_opts)
+             |> Map.fetch!(:nodes)
+             |> Enum.filter(&match?(%MDEx.Heading{level: 2}, &1))
+             |> Enum.map(fn %MDEx.Heading{nodes: inline} ->
+               text = flatten.(flatten, inline) |> String.trim()
+               %{id: MDEx.anchorize(text), text: text, level: 3}
+             end)
+
+           [%{id: id, text: label, level: 2} | terms]
+         end)
+       )
+
   @doc "The lens keys, in canonical order (domain first — the reference lens, D6)."
   def lenses, do: [:domain, :ddd, :es]
+
+  @doc """
+  The glossary's table of contents as a flat `[%{id, text, level}]` — each lens as a
+  level-2 group header (`id` is its `<section>` wrapper) followed by its term
+  headings as level-3 entries (`id` is the term anchor). Feeds the shared TOC rail.
+  """
+  def toc, do: @toc
 
   @doc """
   The rendered HTML for a lens (`:domain` | `:ddd` | `:es`), as a trusted string to

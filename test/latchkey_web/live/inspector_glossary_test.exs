@@ -135,5 +135,35 @@ defmodule LatchkeyWeb.InspectorGlossaryTest do
         refute Enum.empty?(headings)
       end
     end
+
+    test "toc/0 groups each lens header (level 2) with its term anchors (level 3)" do
+      toc = Glossary.toc()
+
+      # Each lens is a level-2 group header whose id jumps to its <section> wrapper.
+      assert %{id: "glossary-domain", text: "Domain", level: 2} in toc
+      assert %{id: "glossary-ddd", text: "DDD", level: 2} in toc
+      # Terms hang off their lens as level-3 entries…
+      assert Enum.any?(toc, &(&1.id == "aggregate" and &1.level == 3))
+
+      # …and every term id is an anchor the rendered lenses carry (jump contract).
+      html = Enum.map_join(Glossary.lenses(), "\n", &Glossary.html/1)
+      terms = Enum.filter(toc, &(&1.level == 3))
+      refute Enum.empty?(terms)
+      assert Enum.all?(terms, fn t -> String.contains?(html, ~s(id="#{t.id}")) end)
+    end
+  end
+
+  describe "TOC rail" do
+    test "the glossary route swaps the stream nav + firehose for the lens-grouped rail",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/inspector/glossary")
+
+      # A lens group header and a term are both jump links in the rail…
+      assert has_element?(view, "#toc-rail a[href='#glossary-ddd']")
+      assert has_element?(view, "#toc-rail a[href='#aggregate']")
+      # …and the stream nav + live firehose are gone on this static reference page.
+      refute has_element?(view, "#inspector-nav")
+      refute has_element?(view, "#firehose")
+    end
   end
 end

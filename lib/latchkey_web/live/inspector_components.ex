@@ -153,6 +153,78 @@ defmodule LatchkeyWeb.InspectorComponents do
   end
 
   @doc """
+  The reference-page **table-of-contents rail** — the left rail on the glossary and
+  deep-doc routes, in place of the stream nav (which is dead weight on a static
+  reference page). It lists the page's headings as in-page jump links; a client-side
+  scroll-spy (`.TocSpy`) flips `data-active` on the entry whose heading is top-most
+  in the viewport. Level-2 entries read as section headers, level-3 as indented
+  children. `toc` is a flat `[%{id, text, level}]` (see `Docs.toc/1` / `Glossary.toc/0`);
+  `title` names the doc the rail belongs to.
+  """
+  attr :toc, :list, required: true, doc: "flat [%{id, text, level}] heading list"
+  attr :title, :string, required: true, doc: "the reference page's title"
+
+  def toc_rail(assigns) do
+    ~H"""
+    <nav id="toc-rail" phx-hook=".TocSpy" aria-label="On this page" class="text-sm">
+      <p class="px-2 mb-1 text-[11px] font-semibold uppercase tracking-widest text-base-content/50">
+        On this page
+      </p>
+      <p class="px-2 mb-3 text-xs text-base-content/70 truncate" title={@title}>{@title}</p>
+      <ul class="space-y-0.5">
+        <li :for={h <- @toc}>
+          <a
+            href={"##{h.id}"}
+            data-toc-link
+            class={[
+              "block rounded px-2 py-1 transition-colors",
+              "hover:bg-base-200 hover:text-base-content",
+              "data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-semibold",
+              h.level == 2 && "font-medium text-base-content/80",
+              h.level == 3 && "pl-5 text-[13px] text-base-content/60"
+            ]}
+          >
+            {h.text}
+          </a>
+        </li>
+      </ul>
+      <script :type={Phoenix.LiveView.ColocatedHook} name=".TocSpy">
+        export default {
+          mounted() { this.setup() },
+          updated() { this.setup() },
+          destroyed() { this.observer && this.observer.disconnect() },
+          setup() {
+            if (this.observer) this.observer.disconnect()
+            const content = document.querySelector("main")
+            if (!content) return
+            const headings = Array.from(content.querySelectorAll("h2, h3"))
+            const idOf = (h) => (h.querySelector(".anchor")?.id) || h.id
+            // A little breathing room when a jump lands a heading at the top.
+            headings.forEach(h => h.style.scrollMarginTop = "1.5rem")
+            const links = () => Array.from(this.el.querySelectorAll("[data-toc-link]"))
+            const visible = new Set()
+            this.observer = new IntersectionObserver((entries) => {
+              for (const e of entries) {
+                const id = idOf(e.target)
+                if (!id) continue
+                if (e.isIntersecting) visible.add(id); else visible.delete(id)
+              }
+              const active = headings.map(idOf).find(id => visible.has(id))
+              for (const l of links()) l.dataset.active = "false"
+              if (active) {
+                const a = links().find(l => l.getAttribute("href") === "#" + active)
+                if (a) a.dataset.active = "true"
+              }
+            }, { rootMargin: "0px 0px -70% 0px", threshold: 0 })
+            headings.forEach(h => this.observer.observe(h))
+          }
+        }
+      </script>
+    </nav>
+    """
+  end
+
+  @doc """
   Left nav rail: contexts (deep + edge) with their aggregate and streams, then
   the named-only contexts rendered as honestly-labelled, non-navigable entries.
 
