@@ -283,7 +283,6 @@ defmodule LatchkeyWeb.InspectorComponents do
   attr :edge_context, :map, required: true
   attr :named_contexts, :list, required: true
   attr :acl_edge_label, :string, required: true
-  attr :docs, :map, required: true, doc: "canonical doc URLs for read-more links"
   attr :nav_expanded, :list, default: [], doc: "keys of the currently-expanded groups"
 
   def orientation_map(assigns) do
@@ -301,7 +300,7 @@ defmodule LatchkeyWeb.InspectorComponents do
           fold into aggregate state, a read model, and a double-entry ledger. Nothing
           here can be edited or deleted; the log is <b>append-only / immutable</b>, and
           that is the point.
-          <.read_more href={@docs.context_map}>context-map.md</.read_more>
+          <.read_more href={glossary_ref("Bounded context")}>Bounded context</.read_more>
         </.caption>
         <.link
           id="orientation-glossary-link"
@@ -474,16 +473,39 @@ defmodule LatchkeyWeb.InspectorComponents do
     """
   end
 
-  @doc "A 'read more' link out to the canonical deep-model docs (never re-authored here)."
+  @doc """
+  A 'read more' link. An in-app href (leading `/`, e.g. a glossary anchor) renders
+  as a same-tab live navigation with a `→`; any other href renders as an external
+  link opened in a new tab with a `↗`. Use `glossary_ref/1` to build in-app targets.
+  """
   attr :href, :string, required: true
   slot :inner_block, required: true
 
   def read_more(assigns) do
     ~H"""
-    <a href={@href} target="_blank" rel="noopener" class="text-xs font-semibold text-primary">
-      {render_slot(@inner_block)} ↗
-    </a>
+    <%= if String.starts_with?(@href, "/") do %>
+      <.link navigate={@href} class="text-xs font-semibold text-primary">
+        {render_slot(@inner_block)} →
+      </.link>
+    <% else %>
+      <a href={@href} target="_blank" rel="noopener" class="text-xs font-semibold text-primary">
+        {render_slot(@inner_block)} ↗
+      </a>
+    <% end %>
     """
+  end
+
+  @doc """
+  The in-app glossary URL for a term — `/inspector/glossary` plus the term's
+  fragment anchor. Built from `Glossary.anchor/1`, the *same* slug function the
+  glossary headings use, so a pane's `read_more` target and its glossary heading
+  can never drift apart (glossary.ex).
+
+      iex> LatchkeyWeb.InspectorComponents.glossary_ref("Rental ledger")
+      "/inspector/glossary#rental-ledger"
+  """
+  def glossary_ref(term) when is_binary(term) do
+    ~p"/inspector/glossary" <> "#" <> Glossary.anchor(term)
   end
 
   defp context_dot(:deep), do: "bg-primary"

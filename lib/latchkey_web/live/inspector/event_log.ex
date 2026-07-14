@@ -23,18 +23,17 @@ defmodule LatchkeyWeb.Inspector.EventLog do
   """
   use LatchkeyWeb, :html
 
-  import LatchkeyWeb.InspectorComponents, only: [caption: 1, read_more: 1]
+  import LatchkeyWeb.InspectorComponents, only: [caption: 1, read_more: 1, glossary_ref: 1]
 
   @doc """
   The event-log pane for one stream. `rows` are the pre-resolved event rows (see
   `LatchkeyWeb.InspectorLive`), `kind` is `:deep` (a tenancy stream) or `:edge`
-  (the `accounts` stream), and `docs` carries the canonical "read more" URLs.
+  (the `accounts` stream).
   """
   attr :stream_id, :string, required: true
   attr :context_name, :string, required: true
   attr :kind, :atom, required: true, doc: ":deep (tenancy) or :edge (accounts)"
   attr :rows, :list, required: true, doc: "pre-resolved event rows in commit order"
-  attr :docs, :map, required: true, doc: "canonical doc URLs for read-more links"
 
   attr :highlight_version, :integer,
     default: nil,
@@ -68,9 +67,7 @@ defmodule LatchkeyWeb.Inspector.EventLog do
               (when it was booked). When they diverge it is flagged: an
               imported/rebuilt tenancy or a forward-dated fact — organic accrual
               books same-day.
-              <.read_more href={"#{@docs.domain_model}#3-events-producers"}>
-                domain-model.md §3
-              </.read_more>
+              <.read_more href={glossary_ref("Domain event")}>Domain event</.read_more>
             </.caption>
 
             <p id="immutability-note" class="text-xs leading-relaxed text-base-content/60">

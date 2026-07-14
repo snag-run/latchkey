@@ -121,9 +121,12 @@ defmodule LatchkeyWeb.InspectorEventLogTest do
       refute has_element?(view, "#event-divergence-#{stream}-1")
       # The imported tick's dates diverge → flag present.
       assert has_element?(view, "#event-divergence-#{stream}-2")
-      # A thin bitemporal caption with a read-more link to domain-model.md §3.
+      # A thin bitemporal caption with an in-app read-more link to the glossary.
       assert has_element?(view, "#bitemporal-caption")
-      assert view |> element("#event-log a[href*='domain-model.md']") |> has_element?()
+
+      assert view
+             |> element("#event-log a[href='/inspector/glossary#domain-event']")
+             |> has_element?()
     end
 
     test "renders the full stored payload of an event", %{view: view, stream: stream} do

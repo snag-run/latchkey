@@ -27,7 +27,7 @@ defmodule LatchkeyWeb.Inspector.Scrubber do
   """
   use LatchkeyWeb, :html
 
-  import LatchkeyWeb.InspectorComponents, only: [caption: 1, read_more: 1]
+  import LatchkeyWeb.InspectorComponents, only: [caption: 1, read_more: 1, glossary_ref: 1]
 
   @doc """
   The replay-scrubber controls for one tenancy stream. `k` is the current prefix
@@ -41,8 +41,6 @@ defmodule LatchkeyWeb.Inspector.Scrubber do
   attr :new_events_available?, :boolean,
     default: false,
     doc: "live events landed while parked mid-history (D5) — shows the jump-to-head nudge"
-
-  attr :docs, :map, required: true, doc: "canonical doc URLs for read-more links"
 
   def scrubber(assigns) do
     ~H"""
@@ -87,9 +85,7 @@ defmodule LatchkeyWeb.Inspector.Scrubber do
         events, computed <b>server-side by the same fold</b>
         production runs. Nothing is edited; the log is <b>append-only / immutable</b>, and this
         is an in-memory fold over a selected prefix.
-        <.read_more href={"#{@docs.domain_model}#4-the-tenancy-aggregate"}>
-          domain-model.md §4
-        </.read_more>
+        <.read_more href={glossary_ref("Replay")}>Replay</.read_more>
       </.caption>
 
       <div class="flex items-center gap-2">

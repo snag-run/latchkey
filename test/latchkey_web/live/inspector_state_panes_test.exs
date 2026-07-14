@@ -119,9 +119,12 @@ defmodule LatchkeyWeb.InspectorStatePanesTest do
       assert has_element?(view, "#aggregate-due-through")
       assert has_element?(view, "#aggregate-charges")
       assert has_element?(view, "#aggregate-effective-end-date")
-      # A write-model caption distinguishing it, linking the canonical aggregate doc.
+      # A write-model caption distinguishing it, linking the in-app Aggregate term.
       assert has_element?(view, "#aggregate-caption")
-      assert view |> element("#aggregate-caption a[href*='domain-model.md']") |> has_element?()
+
+      assert view
+             |> element("#aggregate-caption a[href='/inspector/glossary#aggregate']")
+             |> has_element?()
     end
 
     test "renders the read-model pane with derived Arrears fields by stable DOM id", %{view: view} do
@@ -131,9 +134,14 @@ defmodule LatchkeyWeb.InspectorStatePanesTest do
       assert has_element?(view, "#read-model-balance", "$500.00")
       assert has_element?(view, "#read-model-oldest-unpaid")
       assert has_element?(view, "#read-model-days-behind")
-      # A read-model caption distinguishing it, linking the canonical arrears doc.
+      # A read-model caption distinguishing it, linking the in-app projection term.
       assert has_element?(view, "#read-model-caption")
-      assert view |> element("#read-model-caption a[href*='domain-model.md']") |> has_element?()
+
+      assert view
+             |> element(
+               "#read-model-caption a[href='/inspector/glossary#projection-vs-compute-on-read']"
+             )
+             |> has_element?()
     end
 
     test "consistency check reconciles the recompute against the live Arrears row", %{view: view} do

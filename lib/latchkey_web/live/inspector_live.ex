@@ -66,14 +66,6 @@ defmodule LatchkeyWeb.InspectorLive do
 
   @acl_edge_label "payment → arrears reduction"
 
-  # Canonical deep-model docs live in the repo (spec D2: the view links, never
-  # re-authors, the deep prose). Point at the GitHub source so the public
-  # portfolio artifact's "read more" links resolve.
-  @docs %{
-    context_map: "https://github.com/snag-run/latchkey/blob/main/docs/context-map.md",
-    domain_model: "https://github.com/snag-run/latchkey/blob/main/docs/domain-model.md"
-  }
-
   @accounts_context %{
     id: "accounts",
     name: "Accounts",
@@ -117,7 +109,6 @@ defmodule LatchkeyWeb.InspectorLive do
       |> assign(:accounts_context, @accounts_context)
       |> assign(:named_contexts, @named_contexts)
       |> assign(:acl_edge_label, @acl_edge_label)
-      |> assign(:docs, @docs)
       |> assign(:stream_found?, false)
       # Nav-rail legibility state (~100 streams): a filter query and the set of
       # expanded scenario groups. Both are server-side; the rail collapses all
@@ -769,7 +760,6 @@ defmodule LatchkeyWeb.InspectorLive do
                       context_name={@context_name}
                       kind={@stream_kind}
                       rows={@event_rows}
-                      docs={@docs}
                       highlight_version={@highlight_version}
                     />
                   </div>
@@ -781,7 +771,6 @@ defmodule LatchkeyWeb.InspectorLive do
                       n={@scrubber_n}
                       playing?={@scrubber_playing?}
                       new_events_available?={@new_events_available?}
-                      docs={@docs}
                     />
                     <%!-- The write-vs-read money-shot: what the log folds into (#83, D1/D2). --%>
                     <.fold_panes
@@ -789,14 +778,12 @@ defmodule LatchkeyWeb.InspectorLive do
                       state={@aggregate_state}
                       derived={@read_model}
                       consistency={@consistency}
-                      docs={@docs}
                     />
                     <%!-- The double-entry accounting lens on the same fold (#84, D1). --%>
                     <.ledger_pane
                       stream_id={@active_stream}
                       entries={@ledger_entries}
                       read_model_balance_cents={@read_model.balance_cents}
-                      docs={@docs}
                     />
                   </div>
                 </div>
@@ -809,7 +796,6 @@ defmodule LatchkeyWeb.InspectorLive do
                   range={@log_range}
                   newer_cursor={@log_newer_cursor}
                   older_cursor={@log_older_cursor}
-                  docs={@docs}
                 />
               <% @live_action == :glossary -> %>
                 <.glossary_page />
@@ -819,7 +805,6 @@ defmodule LatchkeyWeb.InspectorLive do
                   edge_context={@accounts_context}
                   named_contexts={@named_contexts}
                   acl_edge_label={@acl_edge_label}
-                  docs={@docs}
                   nav_expanded={@nav_expanded}
                 />
             <% end %>

@@ -18,7 +18,7 @@ defmodule LatchkeyWeb.Inspector.LogPane do
   """
   use LatchkeyWeb, :html
 
-  import LatchkeyWeb.InspectorComponents, only: [caption: 1, read_more: 1]
+  import LatchkeyWeb.InspectorComponents, only: [caption: 1, read_more: 1, glossary_ref: 1]
 
   @doc """
   The paginated log. `rows` is the `@streams.log_rows` LiveView stream; `head` is
@@ -30,7 +30,6 @@ defmodule LatchkeyWeb.Inspector.LogPane do
   attr :range, :any, default: nil, doc: "{oldest, newest} event number on this page, or nil"
   attr :newer_cursor, :integer, default: nil, doc: "event number to page toward the head, or nil"
   attr :older_cursor, :integer, default: nil, doc: "event number to page into history, or nil"
-  attr :docs, :map, required: true, doc: "canonical doc URLs for read-more links"
 
   def log_pane(assigns) do
     ~H"""
@@ -47,9 +46,7 @@ defmodule LatchkeyWeb.Inspector.LogPane do
           Every event ever recorded, across <b>all streams</b>, newest first —
           the whole <b>$all</b>
           stream. This complements the live firehose on the right: the firehose is a live <i>tail</i>; this pages the full recorded history.
-          <.read_more href={"#{@docs.domain_model}#3-events-producers"}>
-            domain-model.md §3
-          </.read_more>
+          <.read_more href={glossary_ref("Event store / stream")}>Event store / stream</.read_more>
         </.caption>
 
         <p id="full-log-immutability-note" class="text-xs leading-relaxed text-base-content/60">

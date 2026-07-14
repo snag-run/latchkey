@@ -26,7 +26,7 @@ defmodule LatchkeyWeb.Inspector.StatePanes do
   """
   use LatchkeyWeb, :html
 
-  import LatchkeyWeb.InspectorComponents, only: [caption: 1, read_more: 1]
+  import LatchkeyWeb.InspectorComponents, only: [caption: 1, read_more: 1, glossary_ref: 1]
 
   @doc """
   The aggregate-state + read-model panes and the consistency check for one
@@ -39,7 +39,6 @@ defmodule LatchkeyWeb.Inspector.StatePanes do
   attr :state, :map, required: true, doc: "the folded %Tenancy.State{} core"
   attr :derived, :map, required: true, doc: "the ArrearsFold struct (read-model fields)"
   attr :consistency, :any, required: true, doc: "reconcile/2 report or :no_live_row"
-  attr :docs, :map, required: true, doc: "canonical doc URLs for read-more links"
 
   def fold_panes(assigns) do
     ~H"""
@@ -60,9 +59,7 @@ defmodule LatchkeyWeb.Inspector.StatePanes do
           model needs to enforce its invariants; it is <b>never</b>
           read by reports, only by the
           aggregate's own decisions.
-          <.read_more href={"#{@docs.domain_model}#4-the-tenancy-aggregate"}>
-            domain-model.md §4
-          </.read_more>
+          <.read_more href={glossary_ref("Aggregate")}>Aggregate</.read_more>
         </.caption>
 
         <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[11px]">
@@ -113,7 +110,9 @@ defmodule LatchkeyWeb.Inspector.StatePanes do
           projection, never the arrears gate (that reads the aggregate). It is rebuildable from the
           log at any time; <code class="font-mono">days_behind</code>
           is computed on read, here as-at the prefix's last event.
-          <.read_more href={"#{@docs.domain_model}#7-arrears"}>domain-model.md §7</.read_more>
+          <.read_more href={glossary_ref("Projection vs compute-on-read")}>
+            Projection vs compute-on-read
+          </.read_more>
         </.caption>
 
         <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[11px]">

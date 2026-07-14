@@ -28,13 +28,12 @@ defmodule LatchkeyWeb.Inspector.LedgerPane do
   """
   use LatchkeyWeb, :html
 
-  import LatchkeyWeb.InspectorComponents, only: [caption: 1, read_more: 1]
+  import LatchkeyWeb.InspectorComponents, only: [caption: 1, read_more: 1, glossary_ref: 1]
 
   @doc """
   The double-entry ledger pane for one tenancy stream. `entries` is the ordered
   `Timeline.Entry` list from `Timeline.fold/1`, `read_model_balance_cents` is the
-  read-model pane's `balance_cents` (surfaced as the final-balance equivalence),
-  and `docs` carries the canonical "read more" URLs.
+  read-model pane's `balance_cents` (surfaced as the final-balance equivalence).
   """
   attr :stream_id, :string, required: true
   attr :entries, :list, required: true, doc: "ordered Timeline.Entry rows from Timeline.fold/1"
@@ -42,8 +41,6 @@ defmodule LatchkeyWeb.Inspector.LedgerPane do
   attr :read_model_balance_cents, :integer,
     required: true,
     doc: "the read-model pane's balance_cents, for the final-balance equivalence"
-
-  attr :docs, :map, required: true, doc: "canonical doc URLs for read-more links"
 
   def ledger_pane(assigns) do
     ledger_final = ledger_final_balance(assigns.entries)
@@ -71,7 +68,7 @@ defmodule LatchkeyWeb.Inspector.LedgerPane do
         is shown as a <b>debit</b>, never a negative credit — corrections are
         compensating, not erasures. Folded on read from the <b>append-only / immutable</b>
         log; nothing here is edited.
-        <.read_more href={"#{@docs.domain_model}#7-arrears"}>domain-model.md §7</.read_more>
+        <.read_more href={glossary_ref("Rental ledger")}>Rental ledger</.read_more>
       </.caption>
 
       <div class="overflow-x-auto">

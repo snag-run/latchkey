@@ -55,11 +55,11 @@ defmodule LatchkeyWeb.InspectorLiveTest do
       assert has_element?(view, "#acl-1-edge", "payment → arrears reduction")
     end
 
-    test "carries a read-more link out to the canonical docs", %{conn: conn} do
+    test "carries an in-app read-more link to the glossary", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/inspector")
 
       assert view
-             |> element("#orientation-map a[href*='context-map.md']")
+             |> element("#orientation-map a[href='/inspector/glossary#bounded-context']")
              |> has_element?()
     end
   end
