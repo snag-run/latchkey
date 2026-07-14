@@ -105,9 +105,9 @@ defmodule LatchkeyWeb.InspectorComponents do
   canonical narrative doc (`:context_map` | `:domain_model`) rendered verbatim from
   its markdown source, with relative links rewritten to GitHub (D9). It reuses the
   glossary's `.glossary-prose` styling and is a distinct, read-through surface that
-  coexists with the concise glossary index (D8). A sub-nav cross-links the other
-  reference surfaces (D11); the octocat source link stays external (D5c). Content is
-  trusted first-party markdown, emitted with `raw/1`.
+  coexists with the concise glossary index (D8). Cross-doc navigation lives in the
+  persistent top-bar (#140); the page keeps only the external octocat source link
+  (D5c). Content is trusted first-party markdown, emitted with `raw/1`.
   """
   attr :doc_key, :atom, required: true, doc: ":context_map or :domain_model"
 
