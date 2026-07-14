@@ -14,6 +14,7 @@ defmodule LatchkeyWeb.InspectorComponents do
   """
   use LatchkeyWeb, :html
 
+  alias LatchkeyWeb.Inspector.Docs
   alias LatchkeyWeb.Inspector.Glossary
 
   @doc """
@@ -77,7 +78,12 @@ defmodule LatchkeyWeb.InspectorComponents do
             Latchkey's ubiquitous language, rendered verbatim from
             <code class="font-mono text-base-content/80">CONTEXT.md</code>
             — a single source of truth, so it can't drift. Inward cross-references
-            (“ADR 0008”, “domain-model.md §7”) point to the ADRs and the domain model.
+            (“ADR 0008”, “domain-model.md §7”) point to the ADRs and the <.link
+              id="glossary-domain-model-link"
+              navigate={~p"/inspector/docs/domain-model"}
+              class="font-semibold text-primary"
+            >
+              domain model</.link>.
           </.caption>
         </div>
         <div class="glossary-prose">{raw(@domain_html)}</div>
@@ -90,6 +96,84 @@ defmodule LatchkeyWeb.InspectorComponents do
       <section id="glossary-es" class="mb-14">
         <div class="glossary-prose">{raw(@es_html)}</div>
       </section>
+    </section>
+    """
+  end
+
+  @doc """
+  An in-app **deep-doc** page (spec glossary.md, D8/D9/D11, issue #131): one
+  canonical narrative doc (`:context_map` | `:domain_model`) rendered verbatim from
+  its markdown source, with relative links rewritten to GitHub (D9). It reuses the
+  glossary's `.glossary-prose` styling and is a distinct, read-through surface that
+  coexists with the concise glossary index (D8). A sub-nav cross-links the other
+  reference surfaces (D11); the octocat source link stays external (D5c). Content is
+  trusted first-party markdown, emitted with `raw/1`.
+  """
+  attr :doc_key, :atom, required: true, doc: ":context_map or :domain_model"
+
+  def docs_page(assigns) do
+    assigns =
+      assign(assigns,
+        body_html: Docs.html(assigns.doc_key),
+        title: Docs.title(assigns.doc_key),
+        source_url: Docs.source_url(assigns.doc_key)
+      )
+
+    ~H"""
+    <section id="docs-page" class="max-w-3xl mx-auto">
+      <header class="mb-10">
+        <p class="text-[11px] font-semibold uppercase tracking-widest text-base-content/50">
+          Reference · deep documentation
+        </p>
+        <h1 class="mt-1.5 text-2xl font-semibold tracking-tight text-balance">{@title}</h1>
+        <.caption class="mt-2 max-w-[66ch]">
+          The repo's canonical <b>{@title}</b>
+          doc, rendered in-app from its markdown source — the same prose the
+          <code class="font-mono text-base-content/80">read_more</code>
+          links point at, in sync at every build.
+        </.caption>
+
+        <nav class="mt-4 flex flex-wrap items-center gap-2" aria-label="Reference navigation">
+          <.link
+            :for={
+              {key, path, label} <- [
+                {:context_map, ~p"/inspector/docs/context-map", "Context Map"},
+                {:domain_model, ~p"/inspector/docs/domain-model", "Domain Model"}
+              ]
+            }
+            id={"docs-nav-#{key}"}
+            navigate={path}
+            class={[
+              "px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
+              if(@doc_key == key,
+                do: "bg-primary/10 text-primary",
+                else: "bg-base-200 hover:bg-base-300"
+              )
+            ]}
+            aria-current={@doc_key == key && "page"}
+          >
+            {label}
+          </.link>
+          <.link
+            id="docs-nav-glossary"
+            navigate={~p"/inspector/glossary"}
+            class="px-2.5 py-1 rounded-full bg-base-200 hover:bg-base-300 text-xs font-medium transition-colors"
+          >
+            Glossary
+          </.link>
+          <a
+            id="docs-source-link"
+            href={@source_url}
+            target="_blank"
+            rel="noopener"
+            class="ml-auto text-xs font-semibold text-primary"
+          >
+            View source on GitHub ↗
+          </a>
+        </nav>
+      </header>
+
+      <div id={"docs-content-#{@doc_key}"} class="glossary-prose">{raw(@body_html)}</div>
     </section>
     """
   end
@@ -303,13 +387,29 @@ defmodule LatchkeyWeb.InspectorComponents do
           that is the point.
           <.read_more href={@docs.context_map}>context-map.md</.read_more>
         </.caption>
-        <.link
-          id="orientation-glossary-link"
-          navigate={~p"/inspector/glossary"}
-          class="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary"
+        <nav
+          id="orientation-reference"
+          class="mt-3 flex flex-wrap items-center gap-2"
+          aria-label="Reference"
         >
-          Reference / Glossary <span aria-hidden="true">→</span>
-        </.link>
+          <span class="text-[11px] font-semibold uppercase tracking-widest text-base-content/40">
+            Reference
+          </span>
+          <.link
+            :for={
+              {id, path, label} <- [
+                {"orientation-glossary-link", ~p"/inspector/glossary", "Glossary"},
+                {"orientation-docs-context-map", ~p"/inspector/docs/context-map", "Context Map"},
+                {"orientation-docs-domain-model", ~p"/inspector/docs/domain-model", "Domain Model"}
+              ]
+            }
+            id={id}
+            navigate={path}
+            class="px-2.5 py-1 rounded-full bg-base-200 hover:bg-base-300 text-xs font-medium text-primary transition-colors"
+          >
+            {label}
+          </.link>
+        </nav>
       </header>
 
       <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] items-center gap-4 mb-8">
