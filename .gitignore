@@ -38,3 +38,6 @@ npm-debug.log
 
 # Agent worktrees (Claude Code isolation) — never commit
 .claude/worktrees/
+
+# Playwright CLI working dir (browser exploration artifacts)
+.playwright-cli/
