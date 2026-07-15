@@ -43,6 +43,23 @@ resolved for display — the log carries only the non-PII `property_ref`. Distin
 the **tenant balance**, which is the tenancy's rent-ledger position (the *Rental
 ledger* above).
 
+## Agent — simulated vs human
+
+The **agent** is the property-manager side of a tenancy: the party who issues a
+termination notice, takes back keys, would agree a repayment plan. Two provenances,
+both producing the *same* domain events:
+
+- **Simulated agent** — the ambient world engine (ADR 0011) driving agent-side
+  events **AFK** from a deterministic **agent archetype** (a *notice threshold*:
+  `strict` = notice at L7/14 days behind, `lenient` = 30). Notice and vacate dates
+  are **derived** from the arrears trajectory, not authored. This is the default in
+  the current "watch a simulated world" deliverable.
+- **Human agent** — a person driving those same events interactively ("play the
+  agent"). The original ADR 0005 framing, **deferred** (reversible) under ADR 0011.
+
+Distinct from the **tenant**, the *other* simulated actor (pays / short / late /
+misses), and from the **Directory** identity below.
+
 ## Directory
 
 A **disposable, non-event-sourced read model** (`Latchkey.Simulation.Directory`, in
