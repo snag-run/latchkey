@@ -1,26 +1,58 @@
 import Config
 config :ash, policies: [show_policy_breakdowns?: true]
 
-# Configure your database
-config :latchkey, Latchkey.Repo,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
-  database: "latchkey_dev",
-  stacktrace: true,
-  show_sensitive_data_on_connection_error: true,
-  pool_size: 10
+# Configure your database.
+#
+# When DATABASE_URL is set, dev points at that database instead of the local
+# docker Postgres — e.g. to reset/seed the Neon prod DB from a local BEAM.
+# IMPORTANT: use Neon's *direct* endpoint, not the `-pooler` (PgBouncer) one.
+# Transaction pooling can't hold a LISTEN, which silently kills the EventStore's
+# LISTEN/NOTIFY projector delivery: events append fine but projectors never ack,
+# so `consistency: :strong` dispatches hang and time out. Migrations still pass on
+# the pooler, so it looks healthy right up until you seed.
+# CAUTION: this makes *every* dev mix command (incl. the destructive `mix reset`)
+# operate on that database, so pass it inline rather than exporting it.
+# Treat an unset *or empty* DATABASE_URL as "use the local docker Postgres" —
+# `System.get_env/1` returns "" (which is truthy in Elixir) when the var is
+# exported-but-blank, and that would otherwise select the remote branch with a
+# bogus `url: ""`.
+database_url =
+  case System.get_env("DATABASE_URL") do
+    url when is_binary(url) and byte_size(url) > 0 -> url
+    _ -> nil
+  end
+
+# Local docker Postgres defaults (used when DATABASE_URL is unset).
+local_db = [username: "postgres", password: "postgres", hostname: "localhost"]
+
+# When a URL is given, mirror config/runtime.exs's prod handling: TLS on (Neon
+# requires it), and for the EventStore strip the query string, since its URL
+# parser rejects Neon's `sslmode` param. The EventStore shares this database in
+# its own `event_store` schema, so one DATABASE_URL provisions both.
+repo_db =
+  if database_url,
+    do: [url: database_url, ssl: true],
+    else: local_db ++ [database: "latchkey_dev"]
+
+event_store_db =
+  if database_url,
+    do: [url: URI.to_string(%{URI.parse(database_url) | query: nil}), ssl: true],
+    else: local_db ++ [database: "latchkey_dev", port: 5432]
+
+# Keep connection-error diagnostics verbose for the local docker DB, but mute
+# them for a remote DATABASE_URL so a failed connection can't leak the URL's
+# credentials into dev logs.
+config :latchkey,
+       Latchkey.Repo,
+       [
+         stacktrace: true,
+         show_sensitive_data_on_connection_error: is_nil(database_url),
+         pool_size: 10
+       ] ++ repo_db
 
 # Commanded EventStore — shares the Ecto/Ash database above, isolated in its own
 # `event_store` schema (created by `mix event_store.init`, wired into setup/test).
-config :latchkey, Latchkey.EventStore,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
-  database: "latchkey_dev",
-  schema: "event_store",
-  port: 5432,
-  pool_size: 5
+config :latchkey, Latchkey.EventStore, [schema: "event_store", pool_size: 5] ++ event_store_db
 
 # For development, we disable any cache and enable
 # debugging and code reloading.
