@@ -92,6 +92,13 @@ if config_env() == :prod do
 
   config :latchkey, LatchkeyWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
+    # Accept LiveView/websocket connections from every domain the app is served
+    # on. `url: [host: ...]` only whitelists the canonical PHX_HOST, so custom
+    # domains are listed explicitly here.
+    check_origin: [
+      "https://latchkey.snag.run",
+      "https://latchkey.fly.dev"
+    ],
     http: [
       # Enable IPv6 and bind on all interfaces.
       # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
