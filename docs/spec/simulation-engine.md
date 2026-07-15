@@ -44,7 +44,8 @@ a deterministic agent archetype. The existing midnight sweep continues to advanc
 5. As the developer, I want the planner to compute each tenancy's world-line once
    after seed and enqueue only the future events as scheduled jobs, so that runtime
    jobs are dumb dispatches with no arrears read.
-6. As the developer, I want the enqueue idempotent on `{tenancy_id, event}`, so a
+6. As the developer, I want the enqueue idempotent on `{tenancy_id, event}` — safe
+   because each scheduled event kind occurs at most once per tenancy in v1 — so a
    re-run never double-schedules and the aggregate's own dedupe backstops it.
 7. As the developer, I want the agent's notice threshold to be a per-scenario
    archetype, so the board can show both a strict and a lenient response.
@@ -79,8 +80,11 @@ a deterministic agent archetype. The existing midnight sweep continues to advanc
   (issue #92), so "AFK" is satisfied by automation. Perpetual re-letting of
   vacated properties is deferred.
 - **One world-line function, cut at `today`.** A pure function turns a scenario
-  (tenant archetype + agent archetype + commence date + `property_ref`) into the
-  *full* dated event list, past and future. Events ≤ today → the seeder replays
+  (tenant archetype + agent archetype + commence date) into the *full* dated event
+  list, past and future. `property_ref` rides along as **identity only** — it labels
+  which premises the derived events attach to (per [ADR 0008](../adr/0008-property-tenant-identity-and-property-balance.md));
+  it is never a behavioural input to the trajectory, so the derivation tuple stays
+  `(tenant archetype × agent archetype × commence date)` everywhere. Events ≤ today → the seeder replays
   now (backhistory); events > today → the planner schedules. Seed and live stop
   being two code paths — they're one derivation cut at a different date. B2 lets
   the catalogue **drop hand-authored notices/keys-returns**: agent events are
@@ -88,8 +92,21 @@ a deterministic agent archetype. The existing midnight sweep continues to advanc
 - **Plan-once after seed.** Deterministic + finite + no intervention ⇒ the whole
   remaining future is known at seed time. The planner enqueues every future event
   once, as scheduled Oban jobs at their date; runtime jobs are dumb (dispatch the
-  pre-decided command, no arrears read). Idempotent on `{tenancy_id, event}`. No
-  recurring decider cron. Reset (#92) purges planned jobs + replans.
+  pre-decided command, no arrears read). Idempotent on `{tenancy_id, event}` —
+  sufficient in v1 because each scheduled event *kind* (`notice`, `vacate`) occurs
+  **at most once per tenancy lifecycle** (no curing, no re-let), so `{tenancy_id,
+  event}` uniquely identifies its single occurrence; the aggregate's own dedupe
+  backstops it. *Extension point:* if a later change makes an event kind recur
+  (re-letting a vacated property, multiple notice cycles after curing), the key
+  must gain a stable per-occurrence world-line event id so distinct occurrences
+  don't collapse into one. No recurring decider cron.
+- **Reset carries a seed generation.** Reset (#92) purges *scheduled* planned jobs
+  and replans — but a job Oban has already **claimed** (moved to `executing`) is
+  past deletion and would otherwise dispatch a stale command into the fresh seed.
+  So each planned job is stamped with the **seed generation** it was planned under;
+  reset advances the generation, and the dumb runtime dispatch checks its stamp
+  against the current generation and **no-ops if stale**. This closes the
+  reset-vs-claimed-job race without depending on purge timing.
 - **Exit lifecycle needs no new machinery.** Dispatching `ReturnKeys` at the
   vacate date already drives catch-up-to-`E`, the overstay charge, and
   `TenancySettled` → Terminal inside the aggregate (exit-settlement spec, story
@@ -124,6 +141,10 @@ a deterministic agent archetype. The existing midnight sweep continues to advanc
   events are not enqueued), and that a second plan run inserts no duplicates
   (idempotency on `{tenancy_id, event}`). Use Oban's testing mode; assert on
   enqueued jobs, not on dispatch side effects.
+- **Reset-generation guard.** Cover the reset-vs-claimed-job race: a planned job
+  stamped with generation *N*, executed after a reset has advanced the generation
+  to *N+1*, must no-op (dispatch no command); a job whose stamp matches the current
+  generation dispatches normally.
 - **Exit falls through existing tests.** The notice→vacate→settle path is already
   covered by the exit-settlement suite; the sim only needs to prove it dispatches
   `GiveTerminationNotice` / `ReturnKeys` at the derived dates — not re-test
@@ -145,5 +166,6 @@ a deterministic agent archetype. The existing midnight sweep continues to advanc
 All grill branches resolved. The build splits roughly into: (1) the **world-line**
 pure function (derives agent events from `tenant × agent archetype`, folds arrears);
 (2) rework the **catalogue/Projection** to derive rather than plant agent events;
-(3) the **planner** Oban job (plan-once, idempotent scheduled enqueue) + the dumb
-runtime dispatch jobs; (4) wiring the reset cron (#92) to purge planned jobs.
+(3) the **planner** Oban job (plan-once, idempotent scheduled enqueue, seed-generation
+stamp) + the dumb runtime dispatch jobs (generation-guarded); (4) wiring the reset
+cron (#92) to purge planned jobs + advance the seed generation.
