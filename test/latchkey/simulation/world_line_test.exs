@@ -71,6 +71,21 @@ defmodule Latchkey.Simulation.WorldLineTest do
       assert [_notice, {:exit, %{keys_on: ~D[2026-02-25]}}] = agent_steps(events)
     end
 
+    test "a payment on the crossing date does not suppress the notice (notice folds first)" do
+      # Period 0 (due 2026-01-05) stays unpaid until a payment on 2026-01-19 = due + 14
+      # that would clear it. The notice must still fire on 2026-01-19 off the *opening*
+      # arrears (14 days behind) — the same-day payment folds after, per notice → payment.
+      profile =
+        Profile.reliable()
+        |> Profile.with_override(0, {:pay, offset: 14})
+        |> Profile.with_override(1, :miss)
+        |> Profile.with_override(2, :miss)
+
+      events = WorldLine.events(profile, schedule(3), Agent.strict())
+
+      assert [{:notice, %{given_on: ~D[2026-01-19]}}, {:exit, _}] = agent_steps(events)
+    end
+
     test "crosses even when the arrears climb past the last scheduled due date" do
       # Only 4 periods (last due 2026-01-26); the strict crossing (2026-02-02) is after
       # the final due date, so the open-ended tail segment must still find it.

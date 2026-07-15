@@ -100,55 +100,46 @@ defmodule Latchkey.Simulation.WorldLine do
 
   # The first date `days_behind` reaches `threshold_days`, or `nil` if it never does.
   #
-  # `oldest_unpaid_due_date` only ever advances (payments clear periods FIFO; a new
-  # period is appended after the existing charges), so between two "change points" — a
-  # due date falling or a payment landing — it is constant and `days_behind` grows
-  # linearly. So we evaluate the oldest-unpaid at each change point and find the first
-  # segment in which `oldest + threshold_days` actually lands, taking the earliest. The
-  # open-ended tail segment (`:infinity`) catches a crossing after the last change point
-  # — a permanently-behind tenant whose arrears keep climbing past the final due date.
+  # Assessed with each day's **pre-payment** arrears: a payment landing on the crossing
+  # date folds *after* a same-day notice (the documented notice → payment order), so it
+  # never suppresses a notice the day's opening arrears already earn. We scan day by day
+  # from the first due date to a horizon past which no crossing can appear — no charges
+  # accrue after the last due date, so a permanently-behind tenant has crossed by then;
+  # `+ threshold_days` (and covering the last payment) leaves room for that final climb.
   defp notice_date(periods, payments, threshold_days) do
-    change_points =
-      (Enum.map(periods, & &1.due_on) ++ Enum.map(payments, & &1.occurred_on))
-      |> Enum.uniq()
-      |> Enum.sort(Date)
+    first_due = periods |> List.first() |> Map.fetch!(:due_on)
+    last_due = periods |> List.last() |> Map.fetch!(:due_on)
 
-    change_points
-    |> Enum.zip(tl(change_points) ++ [:infinity])
-    |> Enum.find_value(fn {start_on, next_on} ->
-      case oldest_unpaid_on(periods, payments, start_on) do
-        nil -> nil
-        oldest -> crossing_in_segment(oldest, threshold_days, start_on, next_on)
-      end
-    end)
+    horizon =
+      Date.add(latest_date([last_due | Enum.map(payments, & &1.occurred_on)]), threshold_days)
+
+    first_due
+    |> Date.range(horizon)
+    |> Enum.find(&(days_behind_on(periods, payments, &1) >= threshold_days))
   end
 
-  # Within `[start_on, next_on)` the oldest-unpaid is fixed, so the crossing is
-  # `oldest + threshold_days` — clamped up to `start_on` when the segment opens already
-  # past the threshold (a late payment having just revealed an old period as oldest).
-  # Valid only if it lands before the segment closes; otherwise a later segment owns it.
-  defp crossing_in_segment(oldest, threshold_days, start_on, next_on) do
-    candidate = later(start_on, Date.add(oldest, threshold_days))
-
-    cond do
-      next_on == :infinity -> candidate
-      Date.before?(candidate, next_on) -> candidate
-      true -> nil
+  # `days_behind` as the aggregate would read it on `date` — elapsed days from the
+  # oldest unpaid due date, `0` when square.
+  defp days_behind_on(periods, payments, date) do
+    case oldest_unpaid_on(periods, payments, date) do
+      nil -> 0
+      oldest -> max(0, Date.diff(date, oldest))
     end
   end
 
   # Mirrors `Tenancy.oldest_unpaid_due_date/1`: the earliest due date whose *cumulative*
-  # charge exceeds *cumulative* payments (FIFO), counting only periods due and payments
-  # received on or before `date`. `nil` when square. Keeping this in lock-step with the
-  # aggregate is what makes the derived notice pass the same L7 gate downstream.
+  # charge exceeds *cumulative* payments (FIFO). Charges are the periods due on or before
+  # `date`; payments are those received *strictly before* it, so a same-day payment folds
+  # after a same-day notice. Keeping this in lock-step with the aggregate is what makes
+  # the derived notice pass the same L7 gate downstream. `nil` when square.
   defp oldest_unpaid_on(periods, payments, date) do
     paid =
       payments
-      |> Enum.filter(&(Date.compare(&1.occurred_on, date) != :gt))
+      |> Enum.filter(&Date.before?(&1.occurred_on, date))
       |> Enum.reduce(0, &(&2 + &1.amount_cents))
 
     periods
-    |> Enum.filter(&(Date.compare(&1.due_on, date) != :gt))
+    |> Enum.filter(&(not Date.after?(&1.due_on, date)))
     |> Enum.reduce_while(0, fn %{due_on: due_on, amount_cents: amount}, cumulative ->
       cumulative = cumulative + amount
       if cumulative > paid, do: {:halt, due_on}, else: {:cont, cumulative}
@@ -159,5 +150,5 @@ defmodule Latchkey.Simulation.WorldLine do
     end
   end
 
-  defp later(a, b), do: if(Date.after?(a, b), do: a, else: b)
+  defp latest_date(dates), do: Enum.max(dates, Date)
 end
