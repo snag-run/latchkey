@@ -12,7 +12,15 @@ config :ash, policies: [show_policy_breakdowns?: true]
 # the pooler, so it looks healthy right up until you seed.
 # CAUTION: this makes *every* dev mix command (incl. the destructive `mix reset`)
 # operate on that database, so pass it inline rather than exporting it.
-database_url = System.get_env("DATABASE_URL")
+# Treat an unset *or empty* DATABASE_URL as "use the local docker Postgres" —
+# `System.get_env/1` returns "" (which is truthy in Elixir) when the var is
+# exported-but-blank, and that would otherwise select the remote branch with a
+# bogus `url: ""`.
+database_url =
+  case System.get_env("DATABASE_URL") do
+    url when is_binary(url) and byte_size(url) > 0 -> url
+    _ -> nil
+  end
 
 # Local docker Postgres defaults (used when DATABASE_URL is unset).
 local_db = [username: "postgres", password: "postgres", hostname: "localhost"]
@@ -31,9 +39,16 @@ event_store_db =
     do: [url: URI.to_string(%{URI.parse(database_url) | query: nil}), ssl: true],
     else: local_db ++ [database: "latchkey_dev", port: 5432]
 
+# Keep connection-error diagnostics verbose for the local docker DB, but mute
+# them for a remote DATABASE_URL so a failed connection can't leak the URL's
+# credentials into dev logs.
 config :latchkey,
        Latchkey.Repo,
-       [stacktrace: true, show_sensitive_data_on_connection_error: true, pool_size: 10] ++ repo_db
+       [
+         stacktrace: true,
+         show_sensitive_data_on_connection_error: is_nil(database_url),
+         pool_size: 10
+       ] ++ repo_db
 
 # Commanded EventStore — shares the Ecto/Ash database above, isolated in its own
 # `event_store` schema (created by `mix event_store.init`, wired into setup/test).
