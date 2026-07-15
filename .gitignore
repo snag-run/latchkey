@@ -41,3 +41,6 @@ npm-debug.log
 
 # Playwright CLI working dir (browser exploration artifacts)
 .playwright-cli/
+
+# Env
+.envrc.local
