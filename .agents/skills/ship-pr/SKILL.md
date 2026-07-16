@@ -30,14 +30,31 @@ mix precommit
 
 If you only want the fast pieces while iterating, run them individually — but **`mix precommit` must be green before you push**. Fix everything red here; don't push a partial. **Never lower the coverage floor** (`coveralls.json`) or file unrequested issues to route around a failure — surface it to David. Emergency bypass (rare, and you own the risk): `SKIP_PREPUSH=1 git push`.
 
+**Verify the real exit status — do not infer "green" from the tail of the output.** `mix precommit` passed only if it exited `0`. Check the actual exit code (`echo "gate exit: $?"` on its own line immediately after, or that the tool didn't report a non-zero exit) — never conclude "passed" from the last printed line. In a chained command a trailing success message can print *after* an earlier step already failed; that has produced false-green reports before. If you didn't watch it exit 0, you don't know it's green — re-run it.
+
 ## 3. Push once, open the PR
 
 - **One push per batch** to save cycles. Stage deliberately; don't push WIP.
 - PR body: repeat `Closes #N` before **each** issue number (only the first auto-closes otherwise).
 - **No `Co-Authored-By` / "Generated with" trailer** in commits or PR body — it biases the LLM reviewer.
-- Keep trivial PRs as **draft** and untriggered.
+- Trivial PRs (see step 4's summon test) stay **draft** and untriggered.
 
 ## 4. Babysit CodeRabbit to green
+
+**First decide whether to summon at all — default is YES.** Skip the CodeRabbit summon *only* when the change is genuinely trivial, meaning **both**:
+
+1. the diff touches **only** mechanical paths — `README.md`, `CHANGELOG.md`, other non-decision `*.md`, `.github/**`, non-secret JSON/config; **and**
+2. total changed lines (added + deleted, **excluding** lockfiles/generated files like `mix.lock`) is **≤ 150** — a tunable knob, nudge it if the cut-line feels wrong.
+
+**Always summon, regardless of size,** when the diff touches any of: `lib/**`, `priv/repo/migrations/**`, `config/runtime.exs`, or the **decision docs** — `docs/adr/**`, `docs/spec/**`, `docs/brief/**`, `CONTEXT.md` — or `test/**`. Line count is *not* a proxy for triviality in this domain: a 10-line ledger/money change or a 40-line ADR is exactly what most needs review, while a 200-line README refresh needs none. Decision docs and domain code are always reviewed by *path*; the ≤150 cap only guards a large mechanical dump. `test/**` is always reviewed because a wrong assertion locks in wrong behavior (mirrors the pre-push gate, which treats test changes as gate-worthy). **When in doubt, summon — an unrecognized path is "review", not "skip".**
+
+Check the diff before deciding:
+
+```bash
+git diff --numstat "origin/main...HEAD" -- . ':(exclude)mix.lock'
+```
+
+If every changed path is mechanical and the summed lines ≤ 150, leave the PR as **draft** and skip to step 5. Otherwise:
 
 - CodeRabbit auto-review is OFF (`.coderabbit.yaml`, summon-only). Trigger it explicitly: comment `@coderabbitai review` on the PR. (A push dismisses approvals — re-trigger after pushes.)
 - For each CodeRabbit comment: fix it, or skip with a brief justification when not warranted. Then **reply in-thread** referencing the fix/skip rationale and **resolve** the thread.

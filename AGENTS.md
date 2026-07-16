@@ -2,6 +2,35 @@ This is a web application written using the Phoenix web framework.
 
 > **Editing this file:** `CLAUDE.md` is a symlink to `AGENTS.md` — edit `AGENTS.md` (the real target), and the change reflects in both. Likewise the skills under `.claude/skills/<name>` are symlinks to `.agents/skills/<name>` (the canonical, agent-agnostic source); edit the files under `.agents/skills/`.
 
+## Orientation (read this first)
+
+**Latchkey is a learning project in event sourcing + DDD**, built as a *simulation*
+of the payments seam in residential property management (NSW). The deliverable is a
+**tenancy timeline** — a hash-chained history legible enough to serve as evidence in
+an NCAT (tribunal) arrears case. It is a simulation, **not production**: events are
+seeded and an Oban-driven sweep advances *simulated* time.
+
+Before touching code, get grounded in this order:
+
+- [`README.md`](README.md) — what the project is and the current build status.
+- [`CONTEXT.md`](CONTEXT.md) — the **ubiquitous language**. Use these exact terms
+  (ledger, arrears, `property_ref`, tenancy) in code, comments, and commits.
+- [`docs/domain-model.md`](docs/domain-model.md) + [`docs/context-map.md`](docs/context-map.md) — the model and the subdomain seams.
+- [`docs/adr/`](docs/adr/) — the **decision log**. A design may have been decided
+  (or superseded) here already; check before proposing a redesign.
+
+Codebase map (event sourcing runs on **raw Commanded + Postgres EventStore**, with
+**Ash for the read model** — see ADR 0003):
+
+- `lib/latchkey/property_management/` — the **core**: `Tenancy` aggregate, its
+  commands/events, the arrears fold/projector (14-day gate), the timeline read model.
+- `lib/latchkey/accounts/` — the thin **supporting edge**: payment facts, crossed
+  into PM through the payment ACL (`payment_acl.ex`) — never folded raw.
+- `lib/latchkey/simulation/` — the world simulation: seeded catalogue, deterministic
+  world-line, behaviour profiles, and the Oban sweep that advances simulated time.
+- `lib/latchkey_web/live/inspector/` — the **`/inspector`** LiveView, the app's front
+  door for *seeing* the event log, streams, ledger, and timeline.
+
 ## Planning workflow (SDLC)
 
 Non-trivial features move through a staged flow before implementation, each
@@ -27,6 +56,23 @@ Decision & doc homes:
 Small changes skip the flow — it earns its keep on features big enough to
 warrant a written why/how. All docs are created lazily, when the first
 decision in them resolves.
+
+## Starting work (resync before you implement)
+
+Before implementing any issue or ticket, **re-establish ground truth first** —
+handoffs and memory go stale, and a design can be superseded between sessions:
+
+- `git fetch origin` and branch off fresh `origin/main` (never build on a
+  stale base or a merged branch).
+- **Re-read the live issue text** on the tracker as it is *now*. If a handoff
+  note, plan, or memory conflicts with the live issue, **the live issue wins** —
+  do not implement from the handoff's description of the work.
+- Confirm out loud what you're building against: issue number, current title/
+  acceptance criteria, and which worktree/branch you're on. If any of that
+  can't be reconciled, stop and flag it rather than guessing.
+
+This is the cheapest guard against the most expensive rework — implementing a
+superseded design and having to roll it back.
 
 ## Project guidelines
 
