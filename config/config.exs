@@ -14,7 +14,9 @@ config :latchkey, Oban,
   plugins: [
     {Oban.Plugins.Cron, crontab: [{"@daily", Latchkey.PropertyManagement.Sweep.CronWorker}]}
   ],
-  queues: [default: 10],
+  # `:default` runs the daily sweep fan-out; `:simulation` runs the planner's scheduled
+  # world-line events (notice/vacate), isolated for observability (ADR 0011).
+  queues: [default: 10, simulation: 10],
   repo: Latchkey.Repo
 
 # Event-sourcing foundation (ADR 0003): raw Commanded + its Postgres EventStore.

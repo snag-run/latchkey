@@ -70,11 +70,30 @@ defmodule Latchkey.Simulation.Seeder.Projection do
   """
   @spec dated_timeline(Scenario.t(), String.t(), Date.t()) :: [{Date.t(), step()}]
   def dated_timeline(%Scenario{} = scenario, tenancy_id, %Date{} = today) do
-    agent = Agent.from_archetype(scenario.agent_archetype, scenario.overstay_days)
-
-    scenario.profile
-    |> WorldLine.events(schedule(scenario, tenancy_id), agent)
+    scenario
+    |> dated_events(tenancy_id)
     |> Enum.reject(fn {date, _step} -> Date.after?(date, today) end)
+  end
+
+  @doc """
+  The **complement** of `dated_timeline/3`: the scenario's world-line steps strictly
+  *after* `today`, each paired with its real-world date. This is the planner's slice
+  (`Latchkey.Simulation.Planner`, ADR 0011) — the not-yet-happened events it schedules
+  as Oban jobs — where `dated_timeline/3` is the seeder's backhistory. Same derivation,
+  one cut at a different date, so the two never overlap and together tile the world-line.
+  """
+  @spec future_timeline(Scenario.t(), String.t(), Date.t()) :: [{Date.t(), step()}]
+  def future_timeline(%Scenario{} = scenario, tenancy_id, %Date{} = today) do
+    scenario
+    |> dated_events(tenancy_id)
+    |> Enum.filter(fn {date, _step} -> Date.after?(date, today) end)
+  end
+
+  # The scenario's full dated world-line (uncut) — the shared source both the seeder's
+  # `≤ today` slice and the planner's `> today` slice are carved from.
+  defp dated_events(%Scenario{} = scenario, tenancy_id) do
+    agent = Agent.from_archetype(scenario.agent_archetype, scenario.overstay_days)
+    WorldLine.events(scenario.profile, schedule(scenario, tenancy_id), agent)
   end
 
   @doc """
