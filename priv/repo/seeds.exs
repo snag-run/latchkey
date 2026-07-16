@@ -8,7 +8,13 @@
 # real Accounts → ACL-1 → PM seam, so the seeded history is identical to what the live
 # loop would have produced. Re-running against an already-seeded store is a coarse
 # no-op: each already-commenced tenancy is skipped.
+#
+# Then the planner realizes the *future* (ADR 0011): it folds each tenancy's world-line
+# and enqueues the `> today` agent actions (notice/vacate) as scheduled Oban jobs, so
+# the board keeps evolving AFK. Idempotent on `{tenancy_id, event}`, so this is safe to
+# re-run.
 
+alias Latchkey.Simulation.Planner
 alias Latchkey.Simulation.Seeder
 
 results = Seeder.seed()
@@ -19,4 +25,6 @@ Enum.each(results, fn %{scenario: scenario, tenancy_id: tenancy_id, status: stat
   IO.puts("  [#{status}] #{scenario.label} (#{tenancy_id})")
 end)
 
-IO.puts("")
+scheduled = Planner.plan()
+
+IO.puts("\nScheduled #{length(scheduled)} future world-line event(s).\n")
