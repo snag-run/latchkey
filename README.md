@@ -16,7 +16,7 @@ The interesting problem is how a **payment fact born in Accounts crosses into PM
 and reconciles into arrears** (`arrears = expected − received`) — translated at an
 anti-corruption layer, never folded raw across the seam.
 
-**Thesis / deliverable:** a **tenancy timeline** — a complete, tamper-evident
+**Thesis / deliverable:** a **tenancy timeline** — a complete, hash-chained
 history of a tenancy (rent falling due, payments, notices, corrections) legible
 enough to serve as **evidence in an NCAT (tribunal) arrears case**. That timeline is
 the payoff of an append-only event log with correction-by-compensation (never
@@ -36,26 +36,45 @@ The model is worked out in `docs/` and is the spec to build against:
   the two ACLs, and value objects.
 - [`docs/context-map.md`](docs/context-map.md) — the subdomain map: what's core /
   supporting / generic, and where the seams (language flips) are.
+- [`CONTEXT.md`](CONTEXT.md) — the **ubiquitous language**: terms only (ledger,
+  arrears, property_ref, tenancy), the words the code and docs agree to use.
+- [`docs/adr/`](docs/adr/) — the **decision log**: why the model is shaped the way
+  it is (e.g. [ADR 0003](docs/adr/0003-es-foundation-bakeoff.md) chose raw
+  Commanded over Ash-native events). Read these before proposing a redesign.
 
 ## Status
 
-Domain modelling is captured in `docs/`. The application itself is currently the
-**Phoenix 1.8 + Ash 3 scaffold** — event store, aggregate, and projections are not
-yet implemented. Event sourcing will be **hand-rolled** (one append-only Postgres
-table) on purpose: the point is to feel the mechanics.
+The write side is live. Event sourcing runs on **raw Commanded + its Postgres
+EventStore** (chosen over Ash-native events in [ADR 0003](docs/adr/0003-es-foundation-bakeoff.md)),
+with **Ash for the read model**:
+
+- **Property Management** (`lib/latchkey/property_management/`) — the `Tenancy`
+  aggregate with its commands and events, the arrears projector/fold (the 14-day
+  gate), and the tenancy-timeline read model.
+- **Accounts** (`lib/latchkey/accounts/`) — the thin edge emitting payment facts,
+  translated into PM through the payment ACL.
+- **Simulation** (`lib/latchkey/simulation/`) — the seeded catalogue, a
+  deterministic world-line, tenant-behaviour profiles, and an **Oban**-driven sweep.
+  "Now" is wall-clock time (`Date.utc_today()`, Australia/Sydney — ADR 0005):
+  back-dated history is seeded and the sweep reveals events as they fall due, so
+  histories accrue realistically rather than all at once.
+- **Inspector** (`/inspector`, `lib/latchkey_web/live/inspector/`) — the app's front
+  door: a LiveView for browsing the event log, per-tenancy streams, the ledger, and
+  the timeline. It's the primary way to *see* the event sourcing at work.
 
 ## Stack
 
-Phoenix 1.8 · Ash 3 + AshPostgres · PostgreSQL (Ecto/Postgrex) · Bandit ·
-LiveView · Tailwind. (Scheduled-job driver for simulated time — Oban — is planned,
-not yet wired up.)
+Phoenix 1.8 · Ash 3 + AshPostgres (read model) · **Commanded 1.4 + EventStore**
+(write side) · **Oban** (simulated-time sweep) · PostgreSQL (Ecto/Postgrex) ·
+Bandit · LiveView · Tailwind.
 
 ## Getting started
 
 * `mix setup` — install deps, provision the Ash and EventStore databases, build assets, seed
 * `mix phx.server` (or `iex -S mix phx.server`) — start the server
 
-Then visit [`localhost:4000`](http://localhost:4000).
+Then visit [`localhost:4000`](http://localhost:4000) — the root redirects to
+**`/inspector`**, the event-log front door. Start there to see the model running.
 
 Run `mix precommit` before committing — it compiles with warnings-as-errors,
 prunes unused deps, formats, and runs the tests.
