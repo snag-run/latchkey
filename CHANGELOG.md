@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0](https://github.com/snag-run/latchkey/compare/v0.2.0...v0.3.0) (2026-07-16)
+
+
+### Features
+
+* **sim:** dumb runtime dispatch of planned agent commands ([#158](https://github.com/snag-run/latchkey/issues/158)) ([#166](https://github.com/snag-run/latchkey/issues/166)) ([08cde8b](https://github.com/snag-run/latchkey/commit/08cde8b5a92950c6580c89f604c34b759beabd5a))
+* **sim:** planner schedules future world-line events ([#157](https://github.com/snag-run/latchkey/issues/157)) ([#164](https://github.com/snag-run/latchkey/issues/164)) ([f94f05d](https://github.com/snag-run/latchkey/commit/f94f05d3785c1af2615afbc0e6d7e16cf6a40f2a))
+* **sim:** seeder derives agent events from world-line ([#163](https://github.com/snag-run/latchkey/issues/163)) ([e5fe08f](https://github.com/snag-run/latchkey/commit/e5fe08fc31456c12deb2f689f8655a0d4a35cbd7))
+* **sim:** world-line pure function + agent archetype ([#160](https://github.com/snag-run/latchkey/issues/160)) ([e3466cd](https://github.com/snag-run/latchkey/commit/e3466cd6b8e22320947efae0659ccece276ffd0d))
+
+
+### Bug Fixes
+
+* accept LiveView origins from latchkey.snag.run and fly.dev ([#152](https://github.com/snag-run/latchkey/issues/152)) ([f944d35](https://github.com/snag-run/latchkey/commit/f944d353e79df068970e5040a87452b7058f5db6))
+
 ## [0.2.0](https://github.com/snag-run/latchkey/compare/v0.1.1...v0.2.0) (2026-07-14)
 
 
