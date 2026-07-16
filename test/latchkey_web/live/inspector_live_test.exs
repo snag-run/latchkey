@@ -8,6 +8,8 @@ defmodule LatchkeyWeb.InspectorLiveTest do
 
   import Phoenix.LiveViewTest
 
+  alias EventStore.EventData
+  alias Latchkey.EventStore
   alias Latchkey.Inspector.Broadcaster
   alias Latchkey.PropertyManagement.Arrears
   alias Latchkey.PropertyManagement.Tenancy.Events.TenancyCommenced
@@ -284,6 +286,50 @@ defmodule LatchkeyWeb.InspectorLiveTest do
       # the stream-detail view it will eventually scrub to doesn't exist yet (#86)
       view |> element("#firehose-1") |> render_click()
       assert has_element?(view, "#inspector")
+    end
+  end
+
+  describe "firehose backlog on mount" do
+    # The backlog reads the real EventStore (Commanded is disabled in :test); start it
+    # here so mount pre-populates today's events. The store is shared/accumulating, so
+    # assertions target the specific global event number this test appended.
+    setup do
+      start_supervised!(Latchkey.EventStore)
+      :ok
+    end
+
+    defp append_commenced!(stream_id, %mod{} = event) do
+      data = [%EventData{event_type: Atom.to_string(mod), data: event, metadata: %{}}]
+      :ok = EventStore.append_to_stream(stream_id, :any_version, data)
+
+      {:ok, events} = EventStore.read_all_streams_backward(-1, 5_000)
+
+      events
+      |> Enum.find(&(&1.stream_uuid == stream_id))
+      |> Map.fetch!(:event_number)
+    end
+
+    test "today's already-recorded events pre-populate the feed on mount", %{conn: conn} do
+      tid = "backlog-#{System.unique_integer([:positive])}"
+      stream = "tenancy-" <> tid
+
+      event = %TenancyCommenced{
+        tenancy_id: tid,
+        occurred_on: ~D[2026-01-01],
+        recorded_on: ~D[2026-01-01],
+        rent_amount_cents: 50_000,
+        cycle: :weekly,
+        first_due_date: ~D[2026-01-08]
+      }
+
+      n = append_commenced!(stream, event)
+
+      {:ok, view, _html} = live(conn, ~p"/inspector")
+
+      # The just-appended event (recorded today, at the store head) lands as a row
+      # without any live broadcast.
+      assert has_element?(view, "#firehose-#{n}", "TenancyCommenced")
+      assert has_element?(view, "#firehose-#{n}", stream)
     end
   end
 end

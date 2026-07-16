@@ -33,6 +33,7 @@ defmodule LatchkeyWeb.InspectorLive do
   alias LatchkeyWeb.Inspector.Docs
   alias LatchkeyWeb.Inspector.Glossary
 
+  alias Latchkey.Clock
   alias Latchkey.EventStore
   alias Latchkey.Inspector.Broadcaster
   alias Latchkey.Inspector.Log
@@ -107,10 +108,17 @@ defmodule LatchkeyWeb.InspectorLive do
     contexts = [tenancy_context, @accounts_context]
 
     # Connected mount only (spec D5) — the static render on initial HTTP GET
-    # doesn't need a live subscription, only the socket that survives.
-    if connected?(socket) do
-      :ok = Phoenix.PubSub.subscribe(Latchkey.PubSub, Broadcaster.global_topic())
-    end
+    # doesn't need a live subscription or backlog, only the socket that survives.
+    # Subscribe *before* reading the backlog so an event that lands in the gap is
+    # delivered live; it's keyed by event_number, so a row already in the backlog
+    # is deduped by `stream_insert` rather than doubled.
+    firehose_backlog =
+      if connected?(socket) do
+        :ok = Phoenix.PubSub.subscribe(Latchkey.PubSub, Broadcaster.global_topic())
+        firehose_backlog()
+      else
+        []
+      end
 
     socket =
       socket
@@ -158,7 +166,7 @@ defmodule LatchkeyWeb.InspectorLive do
       |> assign(:log_range, nil)
       |> assign(:log_newer_cursor, nil)
       |> assign(:log_older_cursor, nil)
-      |> stream(:firehose, [])
+      |> stream(:firehose, firehose_backlog)
       |> stream(:log_rows, [])
 
     {:ok, socket}
@@ -325,6 +333,24 @@ defmodule LatchkeyWeb.InspectorLive do
       position: Map.get(metadata, :stream_version),
       event_type: event_type(event),
       timestamp: Map.get(metadata, :created_at)
+    }
+  end
+
+  # Today's already-recorded events (newest-first), mapped to the same row shape the
+  # live path emits so the seeded backlog and the live tail are indistinguishable.
+  defp firehose_backlog do
+    Clock.today()
+    |> Log.recorded_today(limit: @firehose_limit)
+    |> Enum.map(&recorded_to_firehose_row/1)
+  end
+
+  defp recorded_to_firehose_row(recorded) do
+    %{
+      id: recorded.event_number,
+      stream_id: recorded.stream_uuid,
+      position: recorded.stream_version,
+      event_type: event_type(recorded.data),
+      timestamp: recorded.created_at
     }
   end
 
