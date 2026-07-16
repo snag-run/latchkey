@@ -74,10 +74,11 @@ defmodule Latchkey.Simulation.Seeder.CatalogueTest do
     end
 
     test "builds every scenario valid-by-construction on any today (incl. month-end clamps)" do
-      # Projection.derive/2 raises on a domain-invalid planted step (e.g. a notice that
-      # fails the L7 gate). The cadence-aware `back_periods` placement must keep every
-      # generated notice/exit valid on every cadence, for any `today` — month-end anchors
-      # are where a monthly clamp could otherwise erode the L7 margin.
+      # Projection.derive/2 raises on a domain-invalid step (e.g. a notice that fails the
+      # L7 gate). The derived notice fires at the threshold crossing (≥ 14 days behind), so
+      # it clears L7 by construction; the cadence-aware `back_periods` placement must keep
+      # that true on every cadence, for any `today` — month-end anchors are where a monthly
+      # clamp could otherwise erode the arrears margin the placement leaves.
       todays =
         for month <- 1..12 do
           last = Date.end_of_month(Date.new!(2026, month, 1))

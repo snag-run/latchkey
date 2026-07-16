@@ -3,11 +3,14 @@ defmodule Latchkey.Simulation.Seeder.Scenario do
   One entry in the seed **scenario catalogue** (ADR 0005 decision 9 / ADR 0007) — a
   tenancy engineered to sit at a chosen, legible arrears/exit state **today**.
 
-  A scenario is pure data: it names an archetype
+  A scenario is pure data: it names a tenant archetype
   (`Latchkey.Simulation.Behaviour.Profile`), a backdated commence date, how many
-  payment periods the tenant engages with, and any **planted agent events** (a
-  termination `notice` and/or an `exit`/keys-return the human agent would have
-  recorded). `Latchkey.Simulation.Seeder` replays it through the *live* command →
+  payment periods the tenant engages with, and an **agent archetype** (`:strict` /
+  `:lenient`) plus a per-tenant `overstay_days`. Its agent events — a termination
+  notice and the tenant's keys-return — are **derived**, not planted: the world-line
+  (`Latchkey.Simulation.WorldLine`, ADR 0011) folds `(tenant archetype × agent
+  archetype × commence date)` into the full dated event list, and
+  `Latchkey.Simulation.Seeder` replays the `≤ today` slice through the *live* command →
   read-model seam so the seeded output is identical to what the live loop would have
   produced.
 
@@ -16,10 +19,11 @@ defmodule Latchkey.Simulation.Seeder.Scenario do
   `:expected` is the intended as-of-today read-model state
   (`%{status, oldest_unpaid_due_date, days_behind, balance_cents}`), asserted
   post-seed. It is **computed** by `Latchkey.Simulation.Seeder.Projection` — which
-  folds the scenario's own reconstructed events through the *real* `Tenancy` domain —
-  rather than hand-authored, so a scenario's stated state can never silently drift
-  from what the domain actually produces. A scenario is built with `expected: nil`;
-  the catalogue fills it.
+  folds the scenario's own reconstructed events (payments + the derived notice/exit
+  from the world-line's `≤ today` slice) through the *real* `Tenancy` domain — rather
+  than hand-authored, so a scenario's stated state can never silently drift from what
+  the domain actually produces. A scenario is built with `expected: nil`; the catalogue
+  fills it.
 
   ## Fields
 
@@ -38,15 +42,20 @@ defmodule Latchkey.Simulation.Seeder.Scenario do
       generated scenarios (featured headliners stay weekly).
     * `:profile` — the tenant behaviour archetype (+ any scripted overrides) the
       engine folds over the payment schedule.
-    * `:schedule_count` — how many cadence periods the payment schedule spans.
-    * `:notice` — `nil`, or a planted `%{given_on, termination_date, as_of}` the agent
-      issues at a historical date (a `GiveTerminationNotice`).
-    * `:exit` — `nil`, or a planted `%{keys_on}` the agent records once the tenancy is
-      ending (a `ReturnKeys`, settling the tenancy to `:terminal`).
+    * `:schedule_count` — how many cadence periods the payment schedule spans. For a
+      scenario whose agent reacts, this must span far enough for the world-line to
+      *see* the arrears cross the agent's threshold (i.e. past the first unpaid period).
+    * `:agent_archetype` — the simulated agent's notice threshold (`:strict` = notice
+      at 14 days behind, `:lenient` = 30; `Latchkey.Simulation.WorldLine.Agent`). A
+      tenant who never crosses it is never noticed.
+    * `:overstay_days` — the tenant's deterministic hold-over offset past the
+      termination date `E`; the derived vacate date is `V = E + overstay_days`. `0` is a
+      compliant departer (vacates on `E`).
     * `:expected` — the derived as-of-today read-model state (filled by the catalogue).
   """
 
   alias Latchkey.Simulation.Behaviour.Profile
+  alias Latchkey.Simulation.WorldLine.Agent
 
   @enforce_keys [
     :label,
@@ -64,13 +73,9 @@ defmodule Latchkey.Simulation.Seeder.Scenario do
             cycle: :weekly,
             profile: nil,
             schedule_count: nil,
-            notice: nil,
-            exit: nil,
+            agent_archetype: :strict,
+            overstay_days: 0,
             expected: nil
-
-  @type notice :: %{given_on: Date.t(), termination_date: Date.t(), as_of: Date.t()}
-
-  @type exit_step :: %{keys_on: Date.t()}
 
   @type expected :: %{
           status: :active | :ending | :terminal,
@@ -90,8 +95,8 @@ defmodule Latchkey.Simulation.Seeder.Scenario do
           cycle: :weekly | :fortnightly | :monthly,
           profile: Profile.t(),
           schedule_count: pos_integer(),
-          notice: notice() | nil,
-          exit: exit_step() | nil,
+          agent_archetype: Agent.archetype(),
+          overstay_days: non_neg_integer(),
           expected: expected() | nil
         }
 end

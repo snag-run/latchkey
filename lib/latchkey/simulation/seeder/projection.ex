@@ -6,11 +6,20 @@ defmodule Latchkey.Simulation.Seeder.Projection do
   It reconstructs the scenario's events by driving the *real* `Tenancy` domain
   (`decide_*` + `evolve`, framework-free) through exactly the command sequence the
   live seeder dispatches — commence → the tenant's engine payments (translated by the
-  real ACL-1) merged with any planted notice/exit → a closing sweep as-of `today` —
+  real ACL-1) merged with the **derived** notice/exit → a closing sweep as-of `today` —
   then derives `{status, balance_cents, oldest_unpaid_due_date, days_behind}` off the
   folded state. Because it reuses the same domain functions the aggregate runs, the
   derived `expected` **cannot drift** from what the live seam produces; the seeder
   integration test proves the two agree on a representative sample.
+
+  ## Agent events are derived, cut at `today`
+
+  The notice and keys-return are not planted on the scenario — they fall out of
+  `Latchkey.Simulation.WorldLine.events/3` `(tenant profile × agent archetype ×
+  commence date)`, ADR 0011. This projection takes the world-line's **`≤ today` slice**
+  (backhistory), exactly as the seeder replays it and the planner (later) schedules the
+  `> today` slice. So a notice whose `E`/`V` lie in the future simply does not appear in
+  the slice — the tenancy folds to `:ending`, not `:terminal`, with no special-casing.
 
   It also owns the scenario **timeline** — the chronological merge of payments, notice
   and exit — which the live seeder consumes for its dispatch order, so ordering lives
@@ -21,62 +30,51 @@ defmodule Latchkey.Simulation.Seeder.Projection do
   alias Latchkey.PropertyManagement.PaymentAcl
   alias Latchkey.PropertyManagement.Tenancy
   alias Latchkey.PropertyManagement.Tenancy.Commands.RecordPayment
-  alias Latchkey.Simulation.Behaviour
   alias Latchkey.Simulation.Schedule
   alias Latchkey.Simulation.Seeder.Scenario
+  alias Latchkey.Simulation.WorldLine
+  alias Latchkey.Simulation.WorldLine.Agent
 
   @typedoc "A non-commence, non-sweep timeline step, ordered by real-world date."
   @type step ::
           {:payment, PaymentReceived.t()}
-          | {:notice, Scenario.notice()}
-          | {:exit, Scenario.exit_step()}
+          | {:notice, WorldLine.notice()}
+          | {:exit, WorldLine.exit_step()}
 
   @doc """
-  The chronologically-ordered timeline of the scenario's engine payments (by received
-  date) merged with any planted notice (by given date) and exit (by keys-return date).
+  The chronologically-ordered `≤ today` timeline of the scenario's engine payments (by
+  received date) merged with the world-line's derived notice (by given date) and exit
+  (by keys-return date). Only steps on or before `today` are included — the future slice
+  is the planner's, not the seeder's backhistory.
 
   On a shared date the order is notice → payment → exit, so a notice folds before a
-  same-day payment and keys are returned after a same-day payment (defensive; the
-  catalogue plants no such ties). `tenancy_id` is the (already-prefixed) id whose
-  `tenancy_ref` the engine attributes payments to.
+  same-day payment and keys are returned after a same-day payment. `tenancy_id` is the
+  (already-prefixed) id whose `tenancy_ref` the engine attributes payments to.
   """
-  @spec timeline(Scenario.t(), String.t()) :: [step()]
-  def timeline(%Scenario{} = scenario, tenancy_id) do
+  @spec timeline(Scenario.t(), String.t(), Date.t()) :: [step()]
+  def timeline(%Scenario{} = scenario, tenancy_id, %Date{} = today) do
     scenario
-    |> dated_timeline(tenancy_id)
+    |> dated_timeline(tenancy_id, today)
     |> Enum.map(fn {_date, step} -> step end)
   end
 
   @doc """
-  The scenario's `timeline/2` paired with the **real-world date each step is ordered
+  The scenario's `timeline/3` paired with the **real-world date each step is ordered
   by** — a payment's received date, a notice's given date, an exit's keys-return date.
-  Same chronological order as `timeline/2` (oldest first), but it keeps the sort date so
+  Same chronological order as `timeline/3` (oldest first), but it keeps the sort date so
   a caller merging *many* tenancies' timelines into one pass — the interleaved seeder
   replay (issue #115) — can order steps *across* streams while each tenancy's own steps
   keep their intra-stream order.
+
+  Derived from `Latchkey.Simulation.WorldLine.events/3` and cut to the `≤ today` slice.
   """
-  @spec dated_timeline(Scenario.t(), String.t()) :: [{Date.t(), step()}]
-  def dated_timeline(%Scenario{} = scenario, tenancy_id) do
-    payment_steps =
-      scenario.profile
-      |> Behaviour.payments(schedule(scenario, tenancy_id))
-      |> Enum.map(fn %PaymentReceived{} = p -> {p.occurred_on, 1, {:payment, p}} end)
+  @spec dated_timeline(Scenario.t(), String.t(), Date.t()) :: [{Date.t(), step()}]
+  def dated_timeline(%Scenario{} = scenario, tenancy_id, %Date{} = today) do
+    agent = Agent.from_archetype(scenario.agent_archetype, scenario.overstay_days)
 
-    notice_steps =
-      case scenario.notice do
-        nil -> []
-        %{given_on: given_on} = notice -> [{given_on, 0, {:notice, notice}}]
-      end
-
-    exit_steps =
-      case scenario.exit do
-        nil -> []
-        %{keys_on: keys_on} = exit -> [{keys_on, 2, {:exit, exit}}]
-      end
-
-    (payment_steps ++ notice_steps ++ exit_steps)
-    |> Enum.sort_by(fn {date, tiebreak, _step} -> {Date.to_erl(date), tiebreak} end)
-    |> Enum.map(fn {date, _tiebreak, step} -> {date, step} end)
+    scenario.profile
+    |> WorldLine.events(schedule(scenario, tenancy_id), agent)
+    |> Enum.reject(fn {date, _step} -> Date.after?(date, today) end)
   end
 
   @doc """
@@ -98,7 +96,7 @@ defmodule Latchkey.Simulation.Seeder.Projection do
   @doc """
   Derive the scenario's intended as-of-`today` read-model state by folding its
   reconstructed events through the real `Tenancy` domain. Raises with context if any
-  planted step is domain-invalid (e.g. a notice that fails the L7 arrears gate) — so a
+  step is domain-invalid (e.g. a notice that fails the L7 arrears gate) — so a
   mis-generated scenario fails loudly at catalogue-build time rather than crashing the
   live seed.
   """
@@ -107,7 +105,7 @@ defmodule Latchkey.Simulation.Seeder.Projection do
     core =
       Tenancy.initial_state()
       |> apply_commence(scenario)
-      |> apply_steps(timeline(scenario, scenario.tenancy_id))
+      |> apply_steps(timeline(scenario, scenario.tenancy_id, today))
       |> apply_sweep(today)
 
     %{

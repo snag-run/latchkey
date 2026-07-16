@@ -2,7 +2,8 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
   @moduledoc """
   Unit tests for the **pure** projection that derives a scenario's as-of-today
   read-model state (ADR 0007). It drives the real `Tenancy` domain, so these assert
-  the derivation is faithful and that a domain-invalid planted step fails loudly.
+  the derivation is faithful and that the agent's notice/keys-return are **derived**
+  from the world-line's `≤ today` slice (ADR 0011), not planted.
   """
   use ExUnit.Case, async: true
 
@@ -122,48 +123,35 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
       assert derived.balance_cents == 200_000
     end
 
-    test "raises with context on a domain-invalid planted step (notice below the L7 gate)" do
-      # A paid-up tenant is not in arrears, so the planted notice fails the L7 gate.
-      scenario = %Scenario{
-        label: "bad-notice",
-        tenancy_id: "bad-notice",
-        property_ref: "prop-bad-notice",
-        rent_amount_cents: 50_000,
-        first_due_date: Date.add(@today, -28),
-        profile: Profile.reliable(),
-        schedule_count: 4,
-        notice: %{
-          given_on: Date.add(@today, -1),
-          as_of: Date.add(@today, -1),
-          termination_date: Date.add(@today, 7)
-        }
-      }
+    test "derives a notice + keys-return for a silent, deeply-behind tenant (terminal)" do
+      # Pays two weeks then goes silent; a strict agent notices at 14 days behind, and
+      # with the notice/E/V all in the past the derived keys-return lands in the ≤today
+      # slice — the tenancy settles to terminal, no dates planted.
+      scenario = silent_scenario("terminal", first_due: Date.add(@today, -70), overstay: 0)
 
-      assert_raise ArgumentError, ~r/domain-invalid step/, fn ->
-        Projection.derive(scenario, @today)
-      end
+      derived = Projection.derive(scenario, @today)
+
+      assert derived.status == :terminal
+    end
+
+    test "a future termination/vacate date keeps a noticed tenant ending, not terminal" do
+      # Same silent tenant, but recently enough that the derived notice is served while
+      # its termination date E (and V) are still in the future — so no keys-return is in
+      # the ≤today slice and the tenancy is ending today.
+      scenario = silent_scenario("ending", first_due: Date.add(@today, -35), overstay: 0)
+
+      derived = Projection.derive(scenario, @today)
+
+      assert derived.status == :ending
+      assert derived.days_behind >= 14
     end
   end
 
-  describe "timeline/2" do
-    test "orders payments, notice and exit chronologically" do
-      scenario = %Scenario{
-        label: "ordered",
-        tenancy_id: "ordered",
-        property_ref: "prop-ordered",
-        rent_amount_cents: 50_000,
-        first_due_date: Date.add(@today, -70),
-        profile: Profile.reliable(),
-        schedule_count: 2,
-        notice: %{
-          given_on: Date.add(@today, -40),
-          as_of: Date.add(@today, -40),
-          termination_date: Date.add(@today, -12)
-        },
-        exit: %{keys_on: Date.add(@today, -12)}
-      }
+  describe "timeline/3" do
+    test "orders derived payments, notice and exit chronologically (≤ today)" do
+      scenario = silent_scenario("ordered", first_due: Date.add(@today, -70), overstay: 0)
 
-      steps = Projection.timeline(scenario, scenario.tenancy_id)
+      steps = Projection.timeline(scenario, scenario.tenancy_id, @today)
 
       kinds = Enum.map(steps, &elem(&1, 0))
       assert kinds == [:payment, :payment, :notice, :exit]
@@ -177,31 +165,29 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
 
       assert dates == Enum.sort(dates, Date)
     end
+
+    test "excludes steps after today (the planner's future slice)" do
+      # Recently silent: the notice is served but E/V are still in the future, so the
+      # ≤today timeline carries the payments and the notice, but no keys-return.
+      scenario = silent_scenario("future-exit", first_due: Date.add(@today, -35), overstay: 0)
+
+      kinds =
+        scenario |> Projection.timeline(scenario.tenancy_id, @today) |> Enum.map(&elem(&1, 0))
+
+      assert :notice in kinds
+      refute :exit in kinds
+    end
   end
 
-  describe "dated_timeline/2" do
-    test "pairs each step with its own ordering date, oldest first, matching timeline/2" do
-      scenario = %Scenario{
-        label: "dated",
-        tenancy_id: "dated",
-        property_ref: "prop-dated",
-        rent_amount_cents: 50_000,
-        first_due_date: Date.add(@today, -70),
-        profile: Profile.reliable(),
-        schedule_count: 2,
-        notice: %{
-          given_on: Date.add(@today, -40),
-          as_of: Date.add(@today, -40),
-          termination_date: Date.add(@today, -12)
-        },
-        exit: %{keys_on: Date.add(@today, -12)}
-      }
+  describe "dated_timeline/3" do
+    test "pairs each step with its own ordering date, oldest first, matching timeline/3" do
+      scenario = silent_scenario("dated", first_due: Date.add(@today, -70), overstay: 0)
 
-      dated = Projection.dated_timeline(scenario, scenario.tenancy_id)
+      dated = Projection.dated_timeline(scenario, scenario.tenancy_id, @today)
 
-      # Same steps, same order as timeline/2 — just carrying the sort date.
+      # Same steps, same order as timeline/3 — just carrying the sort date.
       assert Enum.map(dated, fn {_date, step} -> step end) ==
-               Projection.timeline(scenario, scenario.tenancy_id)
+               Projection.timeline(scenario, scenario.tenancy_id, @today)
 
       # The paired date is exactly the step's own real-world date.
       for {date, step} <- dated do
@@ -219,5 +205,22 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
       dates = Enum.map(dated, fn {date, _step} -> date end)
       assert dates == Enum.sort(dates, Date)
     end
+  end
+
+  # A weekly tenant who pays two periods on time then goes silent — the arrears
+  # trajectory a strict agent reacts to. Where the derived notice/E/V land (past vs
+  # future) is set by `first_due` and `overstay`, so a caller can steer the ≤today slice.
+  defp silent_scenario(id, opts) do
+    %Scenario{
+      label: id,
+      tenancy_id: id,
+      property_ref: "prop-#{id}",
+      rent_amount_cents: 50_000,
+      first_due_date: Keyword.fetch!(opts, :first_due),
+      profile: Profile.deteriorating(grace_periods: 2, step_days: 100, period_length_days: 7),
+      schedule_count: 4,
+      agent_archetype: :strict,
+      overstay_days: Keyword.get(opts, :overstay, 0)
+    }
   end
 end

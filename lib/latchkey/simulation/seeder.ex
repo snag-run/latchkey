@@ -17,8 +17,9 @@ defmodule Latchkey.Simulation.Seeder do
 
     * the tenant **behaviour engine** produces the `PaymentReceived` facts, appended to
       the **Accounts** stream and crossing **ACL-1** exactly as a live payment does;
-    * the human agent's **notice** / **keys-return** are dispatched as the real
-      `GiveTerminationNotice` / `ReturnKeys` commands; and
+    * the simulated agent's **notice** / **keys-return** — **derived** from the
+      world-line's `≤ today` slice (ADR 0011), not hand-planted — are dispatched as the
+      real `GiveTerminationNotice` / `ReturnKeys` commands; and
     * the **sweep** (`Sweep` `CatchUp`) books the owed `RentFellDue`s for non-payers,
       revealing their arrears.
 
@@ -119,7 +120,7 @@ defmodule Latchkey.Simulation.Seeder do
     await_ms = Keyword.get(opts, :await_ms, @default_await_ms)
     max_concurrency = Keyword.get(opts, :max_concurrency, @default_max_concurrency)
 
-    contexts = commence_all(scenarios, prefix, max_concurrency)
+    contexts = commence_all(scenarios, prefix, today, max_concurrency)
     replay_interleaved(contexts, accounts_stream, await_ms)
     reveal_arrears(contexts, today, max_concurrency)
 
@@ -129,10 +130,11 @@ defmodule Latchkey.Simulation.Seeder do
   # ── pass 1: commence + identity (concurrent) ──────────────────────────────────
 
   # Commence every tenancy and fill its Directory identity, capturing the scenario's
-  # dated timeline for the interleaved replay. Independent per tenancy, so concurrent.
-  defp commence_all(scenarios, prefix, max_concurrency) do
+  # dated timeline (the world-line's `≤ today` slice) for the interleaved replay.
+  # Independent per tenancy, so concurrent.
+  defp commence_all(scenarios, prefix, today, max_concurrency) do
     scenarios
-    |> Task.async_stream(&commence_scenario(&1, prefix),
+    |> Task.async_stream(&commence_scenario(&1, prefix, today),
       max_concurrency: max_concurrency,
       ordered: true,
       timeout: :infinity
@@ -140,13 +142,13 @@ defmodule Latchkey.Simulation.Seeder do
     |> Enum.map(fn {:ok, context} -> context end)
   end
 
-  defp commence_scenario(%Scenario{} = scenario, prefix) do
+  defp commence_scenario(%Scenario{} = scenario, prefix, today) do
     tenancy_id = prefix <> scenario.tenancy_id
 
     {status, steps} =
       case commence(scenario, tenancy_id) do
         :ok ->
-          {:seeded, Projection.dated_timeline(scenario, tenancy_id)}
+          {:seeded, Projection.dated_timeline(scenario, tenancy_id, today)}
 
         :already_commenced ->
           Logger.info("Seeder skipped #{inspect(tenancy_id)}: already commenced")

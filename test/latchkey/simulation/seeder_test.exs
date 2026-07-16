@@ -7,7 +7,6 @@ defmodule Latchkey.Simulation.SeederTest do
   """
   use ExUnit.Case, async: true
 
-  alias Latchkey.Accounts.Events.PaymentReceived
   alias Latchkey.Simulation.Behaviour
   alias Latchkey.Simulation.Schedule
   alias Latchkey.Simulation.Seeder
@@ -60,20 +59,21 @@ defmodule Latchkey.Simulation.SeederTest do
     test "20-days-behind expects 20 days past the oldest unpaid due date, no notice" do
       behind = fetch(@today, "20-days-behind-no-notice")
 
-      assert behind.notice == nil
+      # A lenient agent (30-day threshold) — the arrears cross it only in the future, so
+      # no notice is derived into the ≤today slice and the tenancy stays active.
+      assert behind.agent_archetype == :lenient
       assert behind.expected.status == :active
       assert behind.expected.oldest_unpaid_due_date == Date.add(@today, -20)
       assert behind.expected.days_behind == 20
       assert behind.expected.balance_cents > 0
     end
 
-    test "notice-then-paid plants a notice and expects a paid-up, still-ending tenancy" do
+    test "notice-then-paid derives a notice and expects a paid-up, still-ending tenancy" do
       void = fetch(@today, "notice-issued-then-tenant-paid")
 
-      assert %{given_on: given_on, termination_date: termination_date} = void.notice
-      assert given_on == Date.add(@today, -21)
-      assert termination_date == Date.add(@today, 7)
-
+      # No planted dates — the strict agent's notice falls out of the arrears trajectory,
+      # its future vacate date keeping the paid-off tenancy ending, not terminal.
+      assert void.agent_archetype == :strict
       assert void.expected.status == :ending
       assert void.expected.oldest_unpaid_due_date == nil
       assert void.expected.days_behind == 0
@@ -94,12 +94,17 @@ defmodule Latchkey.Simulation.SeederTest do
       end
     end
 
-    test "the void candidate pays a single lump equal to the whole accrued debt" do
+    test "the void candidate clears the whole accrued debt so it is square today" do
       void = fetch(@today, "notice-issued-then-tenant-paid")
 
-      assert [%PaymentReceived{amount_cents: amount}] = engine_payments(void)
-      # Seven weekly charges accrue before the notice's end date clamps accrual.
-      assert amount == 7 * void.rent_amount_cents
+      # It misses the opening weeks (building the arrears the notice reacts to), then a
+      # lump covering those missed weeks, and keeps current — netting to square today.
+      payments = engine_payments(void)
+      paid_total = payments |> Enum.map(& &1.amount_cents) |> Enum.sum()
+
+      assert Enum.any?(payments, &(&1.amount_cents == 3 * void.rent_amount_cents))
+      assert paid_total == 4 * void.rent_amount_cents
+      assert void.expected.balance_cents == 0
     end
   end
 
@@ -127,18 +132,18 @@ defmodule Latchkey.Simulation.SeederTest do
       assert length(Enum.uniq(labels)) == length(labels)
     end
 
-    test "exited scenarios plant a keys-return and settle to terminal" do
+    test "exited scenarios derive a keys-return and settle to terminal" do
       exited =
         @today |> Seeder.catalogue() |> Enum.filter(&(&1.expected.status == :terminal))
 
       assert exited != []
 
-      for %Scenario{notice: notice, exit: exit} <- exited do
-        # A settled tenancy was noticed first (needs an effective end date), then had
-        # keys returned on or after that end date.
-        assert %{termination_date: e} = notice
-        assert %{keys_on: v} = exit
-        assert Date.compare(v, e) != :lt
+      for %Scenario{} = scenario <- exited do
+        # No planted dates — a silent tenant deep enough in arrears that the derived
+        # notice → E → V all fall in the past, so the keys-return is in the ≤today slice
+        # and the tenancy has settled. Deeply behind by construction (cleared L7 long ago).
+        assert scenario.expected.status == :terminal
+        assert scenario.profile.archetype == :deteriorating
       end
     end
 
@@ -161,11 +166,11 @@ defmodule Latchkey.Simulation.SeederTest do
         # Distinct tenancies: different ids → different tenants.
         assert prior.tenancy_id != current.tenancy_id
 
-        # Prior is terminal (keys returned in the past); current is live, commencing
-        # after the prior keys-return.
+        # Prior is terminal (derived keys-return in the past); current is live,
+        # commencing after the prior tenancy's own start.
         assert prior.expected.status == :terminal
         assert current.expected.status == :active
-        assert Date.compare(current.first_due_date, prior.exit.keys_on) == :gt
+        assert Date.after?(current.first_due_date, prior.first_due_date)
       end
     end
 

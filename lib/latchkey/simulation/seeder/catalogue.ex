@@ -10,6 +10,28 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   stable slugs and every date is an offset from `today`, so a re-seed of a fresh store
   reproduces the same catalogue byte-for-byte (ADR 0005 decision 8).
 
+  ## Agent events are derived, not planted (ADR 0011)
+
+  The catalogue no longer hand-authors termination notices or keys-returns. It chooses,
+  per scenario, a **tenant archetype**, an **agent archetype** (`:strict` = notice at 14
+  days behind / `:lenient` = 30) and an **overstay** — and the world-line
+  (`Latchkey.Simulation.WorldLine`) *derives* the notice date (the day arrears cross the
+  agent's threshold), the termination date `E = notice + 14`, and the vacate date
+  `V = E + overstay` from that tuple. `Latchkey.Simulation.Seeder.Projection` replays the
+  world-line's `≤ today` slice, so a scenario sits at its intended state today by the
+  **placement** of its commence date and threshold, not by planted dates:
+
+    * **under-notice** (`:ending`) — a silent tenant whose derived notice is already
+      served but whose `E`/`V` are still in the future, so today it is under an active
+      notice, not yet vacated.
+    * **exited** (`:terminal`) — a silent tenant whose derived `V` is already in the
+      past, so the keys-return is in the `≤ today` slice and the tenancy has settled.
+    * **notice-then-paid** — a tenant noticed on arrears who then paid the whole debt in
+      one lump; square today, its future vacate date keeping it `:ending`.
+
+  A scenario whose tenant never crosses its agent's threshold (a healthy tenant, or a
+  mildly-behind one under a lenient agent) derives no agent events at all.
+
   ## Payment cadences (ADR 0009)
 
   Generated tenancies pay on a mix of cadences — **60 % weekly / 30 % fortnightly /
@@ -28,28 +50,33 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
 
   A **re-let** is a genuinely **new tenancy** (new `tenancy_id`, new tenants) on the
   **same premises** (a **shared `property_ref`**), commencing after a prior tenancy
-  reached terminal. Each re-let is a **pair**: a `-prior` leg (noticed, keys returned
-  well in the past — the existing exited pattern) and a `-current` leg sharing its
-  `property_ref`, commencing ~2–4 weeks after the prior keys-return and landing active
-  today. Because `property_address` derives from `property_ref` and `tenant_name` from
-  `tenancy_id` (`Latchkey.Simulation.Identity`), the two legs show the **same address**
-  but **different tenants** — the whole reason `property_ref` is on the log. A
-  co-tenant change is **not** a re-let (it stays within one tenancy) and is never
+  reached terminal. Each re-let is a **pair**: a `-prior` leg (a silent tenant whose
+  derived keys-return is well in the past — the exited pattern) and a `-current` leg
+  sharing its `property_ref`, commencing ~2–4 weeks after the derived keys-return and
+  landing active today. Because `property_address` derives from `property_ref` and
+  `tenant_name` from `tenancy_id` (`Latchkey.Simulation.Identity`), the two legs show the
+  **same address** but **different tenants** — the whole reason `property_ref` is on the
+  log. A co-tenant change is **not** a re-let (it stays within one tenancy) and is never
   modelled as a second stream.
 
-  Generated scenarios are **valid by construction**: each planted notice clears the
-  L7 arrears gate at its assessment date and each keys-return is dated on/after the
-  effective end date, so `Latchkey.Simulation.Seeder.Projection.derive/2` never raises
-  and the live seed never rejects a planted step. `:expected` is filled by that
-  projection, so a scenario's stated state is the one the real domain produces.
+  Generated scenarios are **valid by construction**: the derived notice fires exactly
+  when arrears cross the agent's threshold (≥ 14 days behind), so it always clears the L7
+  gate and each keys-return is dated on/after the effective end date — so
+  `Latchkey.Simulation.Seeder.Projection.derive/2` never raises. `:expected` is filled by
+  that projection, so a scenario's stated state is the one the real domain produces.
   """
 
   alias Latchkey.Simulation.Behaviour.Profile
   alias Latchkey.Simulation.Seeder.Projection
   alias Latchkey.Simulation.Seeder.Scenario
+  alias Latchkey.Simulation.WorldLine.Agent
 
   @week 7
   @base_rent_cents 50_000
+
+  # E = notice + 14 (s88); mirrors WorldLine so the catalogue can place a scenario's
+  # commence date relative to where its derived notice/E/V will land.
+  @statutory_notice_days 14
 
   # The generated split (the 3 featured scenarios headline on top → ~106-tenancy
   # board). Six of the terminal tenancies are re-let priors (each with a live
@@ -96,13 +123,14 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
       rent_amount_cents: @base_rent_cents,
       first_due_date: days_before(today, 30),
       profile: Profile.reliable(),
-      schedule_count: 5,
-      notice: nil
+      schedule_count: 5
     }
   end
 
   # Paid two weeks on time, then went silent. The first unpaid period fell due 20 days
-  # ago, so `days_behind` is 20 today — eligible under L7, but no notice is planted.
+  # ago, so `days_behind` is 20 today — eligible under L7, but the assigned agent is
+  # `:lenient` (30-day threshold), so no notice is derived: the arrears cross 30 only in
+  # the future, past the `≤ today` slice.
   defp twenty_days_behind(today) do
     %Scenario{
       label: "20-days-behind-no-notice",
@@ -111,36 +139,32 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
       first_due_date: days_before(today, 34),
       profile: Profile.reliable(),
       schedule_count: 2,
-      notice: nil
+      agent_archetype: :lenient
     }
   end
 
-  # Missed the opening weeks; the agent issued a termination notice 21 days ago; then
-  # the tenant paid the entire debt in one lump. The notice's end date is a week out,
-  # so no more rent accrues past it — the tenant is square today, still `:ending`.
+  # Missed the opening two weeks, so a termination notice was derived the day arrears
+  # crossed the strict L7 gate (14 days behind); the tenant then paid the whole accrued
+  # debt in a single lump and stayed current. The vacate date the notice sets in motion
+  # is still weeks out (overstay 21), so the tenancy is square today yet still `:ending`.
   defp notice_then_paid(today) do
-    lump_cents = 7 * @base_rent_cents
+    rent = @base_rent_cents
 
     profile =
       Profile.reliable()
       |> Profile.with_override(0, :miss)
       |> Profile.with_override(1, :miss)
-      |> Profile.with_override(2, :miss)
-      |> Profile.with_override(3, :miss)
-      |> Profile.with_override(4, {:pay, amount_cents: lump_cents})
+      |> Profile.with_override(2, {:pay, amount_cents: 3 * rent})
 
     %Scenario{
       label: "notice-issued-then-tenant-paid",
       tenancy_id: "notice-then-paid",
-      rent_amount_cents: @base_rent_cents,
-      first_due_date: days_before(today, 42),
+      rent_amount_cents: rent,
+      first_due_date: days_before(today, 21),
       profile: profile,
-      schedule_count: 5,
-      notice: %{
-        given_on: days_before(today, 21),
-        as_of: days_before(today, 21),
-        termination_date: Date.add(today, @week)
-      }
+      schedule_count: 4,
+      agent_archetype: :strict,
+      overstay_days: 21
     }
   end
 
@@ -172,13 +196,17 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
     end
   end
 
-  # Paid a few periods on time, then went silent — no notice. `days_behind` spreads
-  # from a couple of days to ~8 weeks so the board shows both pre- and post-L7 arrears.
+  # Paid a few periods on time, then went silent — `:active`, un-noticed today. The
+  # schedule ends at the paid periods, so the world-line's arrears trajectory never
+  # climbs and no notice is derived; the sweep alone reveals the debt. `days_behind`
+  # spreads a couple of days to ~4 weeks (both pre- and post-L7 but under 30), and the
+  # agent is `:lenient` so the intended reading is coherent: a recently-silent tenant not
+  # yet at its agent's threshold, rather than one the agent has simply failed to notice.
   defp arrears(today) do
     for idx <- 0..(@arrears_count - 1) do
       cycle = cycle_for(idx)
       paid = 1 + rem(idx, 3)
-      days_behind = 2 + rem(idx * 9 + 3, 55)
+      days_behind = 2 + rem(idx * 9 + 3, 27)
 
       %Scenario{
         label: "arrears-#{pad(idx + 1)}",
@@ -189,20 +217,26 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
         # cadence periods from there to the anchor, so `days_behind` holds on any cadence.
         first_due_date: back_periods(days_before(today, days_behind), cycle, paid),
         profile: Profile.reliable(),
-        schedule_count: paid
+        schedule_count: paid,
+        agent_archetype: :lenient
       }
     end
   end
 
-  # Fell into arrears, then the agent issued a still-standing termination notice whose
-  # end date is in the future — `:ending` today. The notice clears the L7 gate by
-  # construction (>= 21 days behind at its assessment date).
+  # Fell into arrears and the world-line derived a still-standing termination notice
+  # whose end date `E` is in the future — `:ending` today. The silent tenant's arrears
+  # cross the agent's threshold (`:strict`/`:lenient` alternating for demo variety) in the
+  # past, but `E` (and the compliant `V = E`) stay in the future, so no keys-return lands
+  # in the `≤ today` slice.
   defp under_notice(today) do
     for idx <- 0..(@under_notice_count - 1) do
       cycle = cycle_for(idx)
       paid = 1 + rem(idx, 3)
-      notice_age = @week + rem(idx, 3) * @week
-      first_unpaid_age = first_unpaid_age(idx, notice_age)
+      archetype = if rem(idx, 2) == 0, do: :strict, else: :lenient
+      # First unpaid `first_unpaid_age` days ago — a few days past the threshold (so the
+      # notice is served) but within `threshold + 14`, so `E = notice + 14` is still
+      # future and the tenancy has not yet crossed into vacate. `days_behind` == age.
+      first_unpaid_age = Agent.threshold_days(archetype) + 3 + rem(idx, 3) * 5
 
       %Scenario{
         label: "under-notice-#{pad(idx + 1)}",
@@ -210,30 +244,23 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
         rent_amount_cents: rent(idx),
         cycle: cycle,
         first_due_date: back_periods(days_before(today, first_unpaid_age), cycle, paid),
-        profile: Profile.reliable(),
-        schedule_count: paid,
-        notice: %{
-          given_on: days_before(today, notice_age),
-          as_of: days_before(today, notice_age),
-          termination_date: Date.add(today, 3 + rem(idx, 3) * 4)
-        }
+        profile: silent_after(paid),
+        schedule_count: paid + 2,
+        agent_archetype: archetype
       }
     end
   end
 
-  # Fell into arrears, was noticed with a now-past end date, and returned the keys —
-  # settled to `:terminal`. Some held over past the end date (V > E), some left on it.
+  # Fell into deep arrears, was noticed, and vacated — settled to `:terminal`. The
+  # strict notice, its end date `E`, and the derived vacate date `V` are all in the past,
+  # so the keys-return is in the `≤ today` slice. Some held over past `E` (overstay > 0),
+  # some left on it.
   defp exited(today) do
     for idx <- 0..(@exited_count - 1) do
       cycle = cycle_for(idx)
       paid = 1 + rem(idx, 3)
-      notice_age = 42 + rem(idx, 3) * @week
-      first_unpaid_age = first_unpaid_age(idx, notice_age)
-      end_age = notice_age - (14 + rem(idx, 2) * @week)
-      overstay = rem(idx, 3) * 3
-
-      %{notice: notice, exit: exit_step} =
-        terminal_steps(today, notice_age, end_age, end_age - overstay)
+      first_unpaid_age = 63 + rem(idx, 3) * @week
+      overstay = rem(idx, 3) * 4
 
       %Scenario{
         label: "exited-#{pad(idx + 1)}",
@@ -241,10 +268,10 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
         rent_amount_cents: rent(idx),
         cycle: cycle,
         first_due_date: back_periods(days_before(today, first_unpaid_age), cycle, paid),
-        profile: Profile.reliable(),
-        schedule_count: paid,
-        notice: notice,
-        exit: exit_step
+        profile: silent_after(paid),
+        schedule_count: paid + 2,
+        agent_archetype: :strict,
+        overstay_days: overstay
       }
     end
   end
@@ -252,8 +279,8 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   # ── re-lets (successive tenancies on the same premises, ADR 0008) ──────────────
 
   # Each re-let is a **pair** sharing one `property_ref`: a terminal `-prior` leg
-  # (keys returned well in the past) and a live `-current` leg commencing ~2–4 weeks
-  # after that keys-return. Same premises (shared ref ⇒ same address), different
+  # (derived keys-return well in the past) and a live `-current` leg commencing ~2–4
+  # weeks after that keys-return. Same premises (shared ref ⇒ same address), different
   # tenants (distinct ids ⇒ different names). Pure function of `today`.
   defp relets(today) do
     Enum.flat_map(0..(@relet_count - 1), &relet_pair(today, &1))
@@ -265,16 +292,14 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
     rent = rent(idx)
     cycle = cycle_for(idx)
 
-    # Prior leg (the existing exited/terminal pattern, but dated further back so the
-    # successor has room to run): noticed on arrears, keys returned 8–11 weeks ago.
-    prior_end_age = 63 + rem(idx, 3) * @week
-    prior_notice_age = prior_end_age + 21
-    prior_first_unpaid_age = first_unpaid_age(idx, prior_notice_age)
+    # Prior leg (the exited/terminal pattern, dated further back so the successor has
+    # room to run): a silent tenant, strict-noticed on arrears, keys returned 8–11 weeks
+    # ago. `prior_keys_age` is the *derived* vacate date `V` = first-unpaid − 14 (notice)
+    # − 14 (E) − overstay, computed here so the current leg can commence after it.
     prior_paid = 1 + rem(idx, 3)
-    prior_keys_age = prior_end_age - rem(idx, 2) * 4
-
-    %{notice: notice, exit: exit_step} =
-      terminal_steps(today, prior_notice_age, prior_end_age, prior_keys_age)
+    prior_first_unpaid_age = 91 + rem(idx, 3) * @week
+    prior_overstay = rem(idx, 2) * 4
+    prior_keys_age = prior_first_unpaid_age - 2 * @statutory_notice_days - prior_overstay
 
     prior = %Scenario{
       label: "relet-#{n}-prior",
@@ -283,15 +308,16 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
       rent_amount_cents: rent,
       cycle: cycle,
       first_due_date: back_periods(days_before(today, prior_first_unpaid_age), cycle, prior_paid),
-      profile: Profile.reliable(),
-      schedule_count: prior_paid,
-      notice: notice,
-      exit: exit_step
+      profile: silent_after(prior_paid),
+      schedule_count: prior_paid + 2,
+      agent_archetype: :strict,
+      overstay_days: prior_overstay
     }
 
     # Current leg: a new tenancy on the same premises, commencing 2–4 weeks after the
     # prior keys-return. Even indices land paid-up, odd indices a mild arrears — so the
-    # live re-lets spread across states like the rest of the board.
+    # live re-lets spread across states like the rest of the board. Reliable + a schedule
+    # ending at the paid periods ⇒ no arrears cross the world-line ⇒ no notice, `:active`.
     commence_age = prior_keys_age - (14 + rem(idx, 3) * @week)
     elapsed_weeks = max(1, div(commence_age, @week))
     mild_arrears? = rem(idx, 2) == 1
@@ -313,25 +339,13 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
 
   # ── helpers ───────────────────────────────────────────────────────────────────
 
-  # The shared terminal-leg steps: a now-past termination notice (served and assessed
-  # `notice_age` days ago, effective end date `end_age` days ago) plus the keys-return
-  # that settles the tenancy (`keys_age` days ago, on/after the end date). Reused by
-  # `exited/1` and `relet_pair/2`'s prior leg so the two terminal shapes can't drift.
-  defp terminal_steps(today, notice_age, end_age, keys_age) do
-    %{
-      notice: %{
-        given_on: days_before(today, notice_age),
-        as_of: days_before(today, notice_age),
-        termination_date: days_before(today, end_age)
-      },
-      exit: %{keys_on: days_before(today, keys_age)}
-    }
+  # A tenant who pays `paid` periods on time then goes silent, missing every period
+  # thereafter — the arrears trajectory the world-line folds to derive the agent's
+  # reaction. `step_days: 100` is larger than any cadence's period, so the first
+  # post-grace period is instantly a whole period behind and misses, on any cadence.
+  defp silent_after(paid) do
+    Profile.deteriorating(grace_periods: paid, step_days: 100, period_length_days: 7)
   end
-
-  # How long ago the first unpaid period fell due for a noticed tenancy: the notice
-  # landed `notice_age` days ago, by which point the tenant was 21..28 days in arrears
-  # (>= the L7 gate, so the planted notice is valid by construction).
-  defp first_unpaid_age(idx, notice_age), do: notice_age + 21 + rem(idx, 2) * @week
 
   # The deterministic 60/30/10 cadence draw (ADR 0009 decision 1): keyed on a
   # category's local `idx` via `rem(idx, 10)` — 0–5 weekly, 6–8 fortnightly, 9 monthly.

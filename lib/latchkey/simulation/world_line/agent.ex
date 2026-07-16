@@ -57,6 +57,23 @@ defmodule Latchkey.Simulation.WorldLine.Agent do
   @spec lenient(non_neg_integer()) :: t()
   def lenient(overstay_days \\ 0), do: build(:lenient, @lenient_threshold_days, overstay_days)
 
+  @doc """
+  The agent for `archetype` (`:strict` / `:lenient`), carrying `overstay_days` (default
+  `0`) — the one place callers turn a scenario's archetype tag into an `Agent`.
+  """
+  @spec from_archetype(archetype(), non_neg_integer()) :: t()
+  def from_archetype(archetype, overstay_days \\ 0)
+  def from_archetype(:strict, overstay_days), do: strict(overstay_days)
+  def from_archetype(:lenient, overstay_days), do: lenient(overstay_days)
+
+  @doc """
+  The `days_behind` at which `archetype` serves a notice (`:strict` 14 / `:lenient` 30) —
+  the canonical threshold, so callers never restate the numbers.
+  """
+  @spec threshold_days(archetype()) :: pos_integer()
+  def threshold_days(:strict), do: @strict_threshold_days
+  def threshold_days(:lenient), do: @lenient_threshold_days
+
   defp build(archetype, threshold_days, overstay_days) do
     validate_non_neg_int!(:overstay_days, overstay_days)
 
