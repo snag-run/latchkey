@@ -10,6 +10,7 @@ defmodule Latchkey.Simulation.SeederTest do
   alias Latchkey.Simulation.Behaviour
   alias Latchkey.Simulation.Schedule
   alias Latchkey.Simulation.Seeder
+  alias Latchkey.Simulation.Seeder.Projection
   alias Latchkey.Simulation.Seeder.Scenario
 
   @today ~D[2026-06-15]
@@ -166,11 +167,11 @@ defmodule Latchkey.Simulation.SeederTest do
         # Distinct tenancies: different ids → different tenants.
         assert prior.tenancy_id != current.tenancy_id
 
-        # Prior is terminal (derived keys-return in the past); current is live,
-        # commencing after the prior tenancy's own start.
+        # Prior is terminal; current is live, commencing after the prior tenancy's
+        # *derived* keys-return — no overlapping occupancy on the shared premises.
         assert prior.expected.status == :terminal
         assert current.expected.status == :active
-        assert Date.after?(current.first_due_date, prior.first_due_date)
+        assert Date.after?(current.first_due_date, prior_keys_on(prior))
       end
     end
 
@@ -188,7 +189,7 @@ defmodule Latchkey.Simulation.SeederTest do
 
     test "generated notices all clear the L7 arrears gate (no domain-invalid scenario)" do
       # `catalogue/1` derives every `:expected` through the real domain, which raises on
-      # an invalid planted step — so a clean build *is* the validity assertion. Assert it
+      # a domain-invalid step — so a clean build *is* the validity assertion. Assert it
       # explicitly so a future generator regression fails here, loudly.
       assert Seeder.catalogue(@today) |> Enum.all?(&match?(%{status: _}, &1.expected))
     end
@@ -196,6 +197,17 @@ defmodule Latchkey.Simulation.SeederTest do
 
   defp fetch(today, label) do
     today |> Seeder.catalogue() |> Enum.find(&(&1.label == label))
+  end
+
+  # The scenario's *derived* keys-return date (`V`) — pulled from the same world-line
+  # ≤today slice the seeder replays, so the assertion tracks the real vacate date.
+  defp prior_keys_on(%Scenario{} = scenario) do
+    scenario
+    |> Projection.dated_timeline(scenario.tenancy_id, @today)
+    |> Enum.find_value(fn
+      {_date, {:exit, %{keys_on: keys_on}}} -> keys_on
+      _step -> nil
+    end)
   end
 
   defp engine_payments(%Scenario{} = scenario) do
