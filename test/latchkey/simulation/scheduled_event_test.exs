@@ -10,9 +10,13 @@ defmodule Latchkey.Simulation.ScheduledEventTest do
   use Latchkey.DataCase, async: false
   use Oban.Testing, repo: Latchkey.Repo
 
+  alias Latchkey.Clock
   alias Latchkey.CommandedApp
+  alias Latchkey.EventStore
   alias Latchkey.PropertyManagement.Arrears
   alias Latchkey.PropertyManagement.Tenancy.Commands.CommenceTenancy
+  alias Latchkey.PropertyManagement.Tenancy.Events.KeysReturned
+  alias Latchkey.PropertyManagement.Tenancy.Events.TerminationNoticeGiven
   alias Latchkey.Simulation.ScheduledEvent
 
   require Ash.Query
@@ -41,6 +45,18 @@ defmodule Latchkey.Simulation.ScheduledEventTest do
     Arrears |> Ash.Query.filter(tenancy_id == ^tid) |> Ash.read_one!()
   end
 
+  # The first emitted event of the given struct type on the tenancy stream. Dates come
+  # back as ISO strings — the raw persisted form the store round-trips (JSON) — so
+  # callers assert against ISO strings.
+  defp emitted(tid, struct) do
+    ("tenancy-" <> tid)
+    |> EventStore.stream_forward()
+    |> Enum.map(& &1.data)
+    |> Enum.find(&(&1.__struct__ == struct))
+  end
+
+  defp today_iso, do: Date.to_iso8601(Clock.today())
+
   defp notice_args(tid) do
     %{
       "tenancy_id" => tid,
@@ -65,6 +81,14 @@ defmodule Latchkey.Simulation.ScheduledEventTest do
     # is exactly what makes the later ReturnKeys valid rather than :no_effective_end_date.
     proj = projection(tid)
     assert proj.status == :ending
+
+    # The pre-decided dates flow through: `occurred_on` is the planned served date, while
+    # `recorded_on` is left to default to today — a live same-day booking, not a backdate
+    # to `given_on` (contrast the seeder, which backdates to manufacture history).
+    notice = emitted(tid, TerminationNoticeGiven)
+    assert notice.occurred_on == "2026-02-02"
+    assert notice.termination_date == "2026-02-16"
+    assert notice.recorded_on == today_iso()
   end
 
   test "the notice → vacate → settle path runs end-to-end through the aggregate" do
@@ -79,6 +103,11 @@ defmodule Latchkey.Simulation.ScheduledEventTest do
     proj = projection(tid)
     assert proj.status == :terminal
     assert proj.final_balance_cents == 300_000
+
+    # The keys-return carries the planned date as `occurred_on`, booked live (today).
+    keys = emitted(tid, KeysReturned)
+    assert keys.occurred_on == "2026-02-16"
+    assert keys.recorded_on == today_iso()
   end
 
   test "a `vacate` job that overstays E fires ReturnKeys at the derived later date" do
@@ -92,5 +121,9 @@ defmodule Latchkey.Simulation.ScheduledEventTest do
     proj = projection(tid)
     assert proj.status == :terminal
     assert proj.final_balance_cents == 350_000
+
+    # The derived later vacate date is the one that fires as `occurred_on`.
+    keys = emitted(tid, KeysReturned)
+    assert keys.occurred_on == "2026-02-23"
   end
 end
