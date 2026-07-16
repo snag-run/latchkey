@@ -183,17 +183,25 @@ defmodule LatchkeyWeb.InspectorPerStreamLiveTest do
     test "the events-only edge view does not subscribe to its per-stream topic", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/inspector/streams/accounts")
 
+      # An event_number the firehose's today-backlog seed can't already hold, so
+      # the row we refute could only come from a (wrongful) per-stream
+      # subscription — not the seed, which shares the `#firehose-<n>` keyspace.
+      n =
+        System.unique_integer([:positive])
+        |> Stream.iterate(&(&1 + 1))
+        |> Enum.find(&(not has_element?(view, "#firehose-#{&1}")))
+
       # Broadcast only to the accounts *per-stream* topic (not the global firehose).
       # The edge folds no state, so it never subscribes here — the message reaches
       # nothing and no firehose row is inserted. (A subscribed view would have.)
       Phoenix.PubSub.broadcast(
         Latchkey.PubSub,
         Broadcaster.stream_topic("accounts"),
-        {:dev_event, %TenancyCommenced{tenancy_id: "x"}, meta("accounts", 1)}
+        {:dev_event, %TenancyCommenced{tenancy_id: "x"}, meta("accounts", n)}
       )
 
       assert has_element?(view, "#event-log")
-      refute has_element?(view, "#firehose-1")
+      refute has_element?(view, "#firehose-#{n}")
     end
   end
 end
