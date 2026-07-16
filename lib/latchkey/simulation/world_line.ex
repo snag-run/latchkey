@@ -43,10 +43,10 @@ defmodule Latchkey.Simulation.WorldLine do
   # s88 statutory minimum: the termination date E is 14 days after the notice is served.
   @statutory_notice_days 14
 
-  @typedoc "The termination notice the agent derives — mirrors `Seeder.Scenario.notice/0`."
+  @typedoc "The termination notice the agent derives — consumed as a `Seeder.Projection.step/0`."
   @type notice :: %{given_on: Date.t(), termination_date: Date.t(), as_of: Date.t()}
 
-  @typedoc "The keys-return the tenant derives — mirrors `Seeder.Scenario.exit_step/0`."
+  @typedoc "The keys-return the tenant derives — consumed as a `Seeder.Projection.step/0`."
   @type exit_step :: %{keys_on: Date.t()}
 
   @typedoc "A dated world-line step, in `Seeder.Projection.step/0` shape."
@@ -62,7 +62,7 @@ defmodule Latchkey.Simulation.WorldLine do
 
   On a shared date the order is notice → payment → exit (a notice folds before a
   same-day payment; keys are returned after one), matching
-  `Latchkey.Simulation.Seeder.Projection.dated_timeline/2`. When the tenant never
+  `Latchkey.Simulation.Seeder.Projection.dated_timeline/3`. When the tenant never
   crosses the agent's threshold, the result is payments only.
   """
   @spec events(Profile.t(), Schedule.t(), Agent.t()) :: [{Date.t(), step()}]
