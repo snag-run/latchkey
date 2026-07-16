@@ -151,6 +151,7 @@ playwright-cli run-code "async page => {
 
 # Write to clipboard
 playwright-cli run-code "async page => {
+  await page.context().grantPermissions(['clipboard-write']);
   await page.evaluate(text => navigator.clipboard.writeText(text), 'Hello clipboard!');
 }"
 ```

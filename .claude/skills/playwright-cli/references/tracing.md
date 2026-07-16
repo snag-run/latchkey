@@ -19,7 +19,7 @@ playwright-cli tracing-stop
 
 ## Trace Output Files
 
-When you start tracing, Playwright creates a `traces/` directory with several files:
+When you start tracing, Playwright creates a `.playwright-cli/traces/` directory with several files:
 
 ### `trace-{timestamp}.trace`
 
@@ -86,14 +86,16 @@ playwright-cli tracing-stop
 
 ### Capturing Evidence
 
+> **Warning:** Traces persist full request and response bodies (see the network log above). Never record real payment card numbers, credentials, or other secrets while tracing — use fake placeholder values like those below.
+
 ```bash
 # Record a complete user flow for documentation
 playwright-cli tracing-start
 
 playwright-cli open https://app.example.com/checkout
-playwright-cli fill e1 "4111111111111111"
-playwright-cli fill e2 "12/25"
-playwright-cli fill e3 "123"
+playwright-cli fill e1 "TEST_CARD_NUMBER"
+playwright-cli fill e2 "MM/YY"
+playwright-cli fill e3 "CVC"
 playwright-cli click e4
 
 playwright-cli tracing-stop

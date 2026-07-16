@@ -92,8 +92,12 @@ async page => {
   await annotation.dispose();
 
   // You can also highlight relevant locators and provide contextual annotations.
-  const bounds = await page.getByText('Walk the dog').boundingBox();
-  await page.screencast.showOverlay(`
+  const target = page.getByText('Walk the dog');
+  await target.waitFor({ state: 'visible' });
+  const bounds = await target.boundingBox();
+  // boundingBox() returns null for non-visible locators — guard before dereferencing.
+  if (bounds) {
+    await page.screencast.showOverlay(`
     <div style="position: absolute;
       top: ${bounds.y}px;
       left: ${bounds.x}px;
@@ -112,6 +116,7 @@ async page => {
       color: white;">Check it out, it is right above this text
     </div>
   `, { duration: 2000 });
+  }
 
   await page.screencast.stop();
 }

@@ -4,7 +4,7 @@ Manage cookies, localStorage, sessionStorage, and browser storage state.
 
 ## Storage State
 
-Save and restore complete browser state including cookies and storage.
+Save and restore cookies and localStorage. `state-save`/`state-load` persist cookies and localStorage only — sessionStorage and IndexedDB are not included and must be managed separately (see the sections below).
 
 ### Save Storage State
 
@@ -89,7 +89,7 @@ playwright-cli cookie-get session_id
 playwright-cli cookie-set session abc123
 
 # Cookie with options
-playwright-cli cookie-set session abc123 --domain=example.com --path=/ --httpOnly --secure --sameSite=Lax
+playwright-cli cookie-set session abc123 --domain=example.com --path=/ --http-only --secure --same-site=Lax
 
 # Cookie with expiration (Unix timestamp)
 playwright-cli cookie-set remember_me token123 --expires=1893456000
@@ -269,7 +269,7 @@ playwright-cli open https://example.com
 ## Security Notes
 
 - Never commit storage state files containing auth tokens
-- Add `*.auth-state.json` to `.gitignore`
+- Add generated state files to `.gitignore`, e.g. `auth.json`, `my-auth-state.json`, `my-session.json`, and `storage-state-*.json`
 - Delete state files after automation completes
 - Use environment variables for sensitive data
 - By default, sessions run in-memory mode which is safer for sensitive operations
