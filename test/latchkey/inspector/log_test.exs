@@ -14,6 +14,7 @@ defmodule Latchkey.Inspector.LogTest do
 
   alias EventStore.EventData
   alias Latchkey.Accounts.Events.PaymentReceived
+  alias Latchkey.Clock
   alias Latchkey.EventStore
   alias Latchkey.Inspector.Log
   alias Latchkey.PropertyManagement.Tenancy.Events.RentFellDue
@@ -193,6 +194,54 @@ defmodule Latchkey.Inspector.LogTest do
 
       refute Enum.find(rows, &(&1.event_number == n1)).divergent?
       assert Enum.find(rows, &(&1.event_number == n2)).divergent?
+    end
+  end
+
+  describe "recorded_today/2 (firehose backlog)" do
+    test "returns today's events newest-first, capped by :limit" do
+      tid = uniq()
+      stream = "tenancy-" <> tid
+
+      append!(stream, [
+        commenced(tid, "prop-" <> tid),
+        fell_due(tid, ~D[2026-01-08], ~D[2026-01-08]),
+        fell_due(tid, ~D[2026-01-15], ~D[2026-01-15])
+      ])
+
+      [n1, n2, n3] = global_numbers(stream)
+
+      # These three were just appended, so they carry today's recorded instant.
+      mine =
+        Clock.today()
+        |> Log.recorded_today(limit: 5_000)
+        |> Enum.filter(&(&1.stream_uuid == stream))
+        |> Enum.map(& &1.event_number)
+
+      # Newest-first, and the whole set is present (order within the stream is stable
+      # because the suite is async: false).
+      assert mine == [n3, n2, n1]
+    end
+
+    test "caps the backlog at :limit, keeping the newest" do
+      tid = uniq()
+      stream = "tenancy-" <> tid
+
+      append!(stream, [
+        commenced(tid, "prop-" <> tid),
+        fell_due(tid, ~D[2026-01-08], ~D[2026-01-08])
+      ])
+
+      backlog = Log.recorded_today(Clock.today(), limit: 1)
+
+      assert length(backlog) == 1
+      # The single kept row is the store's newest event (the backlog reads from head).
+      assert hd(backlog).event_number == Log.page(nil).head
+    end
+
+    test "a day with no recorded events yields an empty backlog" do
+      # The store's events are all recorded today; a past `today` stops the
+      # newest-first take_while on the very first (still-today) event.
+      assert Log.recorded_today(~D[2000-01-01], limit: 5_000) == []
     end
   end
 end

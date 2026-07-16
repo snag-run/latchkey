@@ -28,6 +28,7 @@ defmodule Latchkey.Inspector.Log do
   """
 
   alias EventStore.RecordedEvent
+  alias Latchkey.Clock
   alias Latchkey.EventStore
   alias Latchkey.Inspector.Resolver
 
@@ -94,6 +95,32 @@ defmodule Latchkey.Inspector.Log do
       newer_cursor: if(newest && newest < head, do: newest),
       older_cursor: if(oldest && oldest > 1, do: oldest)
     }
+  end
+
+  @doc """
+  The `RecordedEvent`s recorded **today** (Australia/Sydney), newest-first — the
+  firehose's initial backlog so the live tail (D5) lands pre-populated rather than
+  empty.
+
+  `$all` is monotonic in `created_at`, so we read one backward page from the head
+  and `take_while` the Sydney date is still today; the first older event ends it.
+  Bounded by `:limit` (defaults to the page size) — the firehose only retains a
+  capped tail anyway, so there is no need to page past it. Reads only.
+  """
+  @spec recorded_today(Date.t(), keyword()) :: [RecordedEvent.t()]
+  def recorded_today(today \\ Clock.today(), opts \\ []) do
+    limit = Keyword.get(opts, :limit, @default_page_size)
+
+    -1
+    |> read_backward(limit)
+    |> Enum.take_while(fn %RecordedEvent{created_at: created_at} ->
+      Clock.today(created_at) == today
+    end)
+  rescue
+    # The backlog is a best-effort primer for a non-critical live tail. If the store
+    # is unreachable, degrade to an empty backlog (the firehose then fills live) —
+    # never take down the inspector mount over it.
+    _ -> []
   end
 
   # ── Store reads ─────────────────────────────────────────────────────────────
