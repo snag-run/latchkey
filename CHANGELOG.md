@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/snag-run/latchkey/compare/v0.3.0...v0.4.0) (2026-07-16)
+
+
+### Features
+
+* **inspector:** pre-load today's events into the firehose on mount ([#167](https://github.com/snag-run/latchkey/issues/167)) ([5be7332](https://github.com/snag-run/latchkey/commit/5be7332240f6291d809c2087c195fd1899569721))
+
 ## [0.3.0](https://github.com/snag-run/latchkey/compare/v0.2.0...v0.3.0) (2026-07-16)
 
 
