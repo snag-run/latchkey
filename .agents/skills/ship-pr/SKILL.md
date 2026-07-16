@@ -37,7 +37,7 @@ If you only want the fast pieces while iterating, run them individually — but 
 - **One push per batch** to save cycles. Stage deliberately; don't push WIP.
 - PR body: repeat `Closes #N` before **each** issue number (only the first auto-closes otherwise).
 - **No `Co-Authored-By` / "Generated with" trailer** in commits or PR body — it biases the LLM reviewer.
-- Trivial PRs (see step 4's summon test) stay **draft** and untriggered.
+- Trivial PRs (see step 4's summon test) stay **draft** and untriggered *through review* — but a draft can't be squash-merged, so **mark it ready (`gh pr ready <n>`) as part of the step 5 handoff**.
 
 ## 4. Babysit CodeRabbit to green
 
@@ -48,13 +48,14 @@ If you only want the fast pieces while iterating, run them individually — but 
 
 **Always summon, regardless of size,** when the diff touches any of: `lib/**`, `priv/repo/migrations/**`, `config/runtime.exs`, or the **decision docs** — `docs/adr/**`, `docs/spec/**`, `docs/brief/**`, `CONTEXT.md` — or `test/**`. Line count is *not* a proxy for triviality in this domain: a 10-line ledger/money change or a 40-line ADR is exactly what most needs review, while a 200-line README refresh needs none. Decision docs and domain code are always reviewed by *path*; the ≤150 cap only guards a large mechanical dump. `test/**` is always reviewed because a wrong assertion locks in wrong behavior (mirrors the pre-push gate, which treats test changes as gate-worthy). **When in doubt, summon — an unrecognized path is "review", not "skip".**
 
-Check the diff before deciding:
+Check the diff before deciding — classify against the **full** changed-path list (a lockfile bump like `mix.lock` is *not* a mechanical README, so it must show up here and force a summon), and exclude lockfiles/generated files **only** from the line-count total:
 
 ```bash
-git diff --numstat "origin/main...HEAD" -- . ':(exclude)mix.lock'
+git diff --name-only "origin/main...HEAD"                          # classification: every path counts
+git diff --numstat "origin/main...HEAD" -- . ':(exclude)mix.lock'  # line-count total only
 ```
 
-If every changed path is mechanical and the summed lines ≤ 150, leave the PR as **draft** and skip to step 5. Otherwise:
+If every changed path is mechanical **and** the summed lines ≤ 150, leave the PR as **draft** and skip to step 5. Otherwise:
 
 - CodeRabbit auto-review is OFF (`.coderabbit.yaml`, summon-only). Trigger it explicitly: comment `@coderabbitai review` on the PR. (A push dismisses approvals — re-trigger after pushes.)
 - For each CodeRabbit comment: fix it, or skip with a brief justification when not warranted. Then **reply in-thread** referencing the fix/skip rationale and **resolve** the thread.
@@ -62,9 +63,10 @@ If every changed path is mechanical and the summed lines ≤ 150, leave the PR a
 
 ## 5. Hand off the merge (do not self-merge)
 
-The harness denies `gh pr merge` to protected `main` even with verbal OK. Drive the PR to merge-ready, then hand David the squash command:
+The harness denies `gh pr merge` to protected `main` even with verbal OK. Drive the PR to merge-ready, then hand David the squash command. If the PR is still a **draft** (the trivial-PR path), mark it ready first — a draft can't be merged:
 
 ```bash
+gh pr ready <n>                          # only if it's still a draft
 gh pr merge <n> --squash --delete-branch
 ```
 

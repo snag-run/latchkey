@@ -17,8 +17,9 @@ jobs advancing time to build histories realistically. The timeline *is* the even
 log's payoff — which is why the design leans on immutable, posted events and
 correction-by-compensation. **Priority:** the domain model (the tenancy lifecycle,
 the arrears gate, the ACL seam) is the first-class deliverable; event sourcing is
-the *enabling* implementation — built Ash-native — not the goal itself (see §2 and
-ADR 0001).
+the *enabling* implementation — built on raw Commanded + its Postgres EventStore
+(ADR 0003), not the goal itself. The domain-first priority set in ADR 0001 still
+stands; only the earlier Ash-native mechanism was superseded (see §2).
 
 We model the **seam between two bounded contexts**:
 

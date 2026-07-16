@@ -54,8 +54,10 @@ with **Ash for the read model**:
 - **Accounts** (`lib/latchkey/accounts/`) — the thin edge emitting payment facts,
   translated into PM through the payment ACL.
 - **Simulation** (`lib/latchkey/simulation/`) — the seeded catalogue, a
-  deterministic world-line, tenant-behaviour profiles, and an **Oban**-driven sweep
-  that advances *simulated* time so histories accrue realistically.
+  deterministic world-line, tenant-behaviour profiles, and an **Oban**-driven sweep.
+  "Now" is wall-clock time (`Date.utc_today()`, Australia/Sydney — ADR 0005):
+  back-dated history is seeded and the sweep reveals events as they fall due, so
+  histories accrue realistically rather than all at once.
 - **Inspector** (`/inspector`, `lib/latchkey_web/live/inspector/`) — the app's front
   door: a LiveView for browsing the event log, per-tenancy streams, the ledger, and
   the timeline. It's the primary way to *see* the event sourcing at work.

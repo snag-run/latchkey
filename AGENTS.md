@@ -7,8 +7,10 @@ This is a web application written using the Phoenix web framework.
 **Latchkey is a learning project in event sourcing + DDD**, built as a *simulation*
 of the payments seam in residential property management (NSW). The deliverable is a
 **tenancy timeline** — a hash-chained history legible enough to serve as evidence in
-an NCAT (tribunal) arrears case. It is a simulation, **not production**: events are
-seeded and an Oban-driven sweep advances *simulated* time.
+an NCAT (tribunal) arrears case. It is a simulation, **not production**: "now" is
+wall-clock time (`Date.utc_today()`, Australia/Sydney — ADR 0005), back-dated
+history is seeded, and an Oban sweep advances the simulated world in that
+wall-clock context (revealing events as they fall due).
 
 Before touching code, get grounded in this order:
 
@@ -27,7 +29,9 @@ Codebase map (event sourcing runs on **raw Commanded + Postgres EventStore**, wi
 - `lib/latchkey/accounts/` — the thin **supporting edge**: payment facts, crossed
   into PM through the payment ACL (`payment_acl.ex`) — never folded raw.
 - `lib/latchkey/simulation/` — the world simulation: seeded catalogue, deterministic
-  world-line, behaviour profiles, and the Oban sweep that advances simulated time.
+  world-line, behaviour profiles, and the Oban sweep that advances the simulated
+  world in wall-clock time (`Date.utc_today()` is "now"; the sweep reveals events as
+  they fall due).
 - `lib/latchkey_web/live/inspector/` — the **`/inspector`** LiveView, the app's front
   door for *seeing* the event log, streams, ledger, and timeline.
 
@@ -62,8 +66,11 @@ decision in them resolves.
 Before implementing any issue or ticket, **re-establish ground truth first** —
 handoffs and memory go stale, and a design can be superseded between sessions:
 
-- `git fetch origin` and branch off fresh `origin/main` (never build on a
-  stale base or a merged branch).
+- `git fetch origin` and, **for new feature work**, branch off fresh `origin/main`
+  (never build on a stale base or a merged branch). Persistent worktree lanes
+  (`lane/wt*`, `lane/docs`) are the exception — resync those in place per the
+  `worktree-doctor` skill (verify no unique work, then reset to `origin/main`)
+  rather than cutting a new branch.
 - **Re-read the live issue text** on the tracker as it is *now*. If a handoff
   note, plan, or memory conflicts with the live issue, **the live issue wins** —
   do not implement from the handoff's description of the work.
