@@ -9,7 +9,7 @@
 
 ## 1. Purpose & scope
 
-**Thesis.** The deliverable is a **tenancy timeline** — a complete, tamper-evident
+**Thesis.** The deliverable is a **tenancy timeline** — a complete, hash-chained
 history of a tenancy (rent falling due, payments, notices, corrections) legible
 enough to serve as **evidence in a tribunal (NCAT) arrears case**. This is a
 learning **simulation**, not production: events are simulated and seeded, with Oban
