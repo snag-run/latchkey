@@ -22,6 +22,7 @@ defmodule Latchkey.Simulation.ResetIntegrationTest do
   alias Latchkey.CommandedApp
   alias Latchkey.CommandedSupervisor
   alias Latchkey.PropertyManagement.Arrears
+  alias Latchkey.PropertyManagement.ArrearsProjector
   alias Latchkey.PropertyManagement.Tenancy.Commands.CommenceTenancy
   alias Latchkey.Simulation.Reset
 
@@ -74,7 +75,34 @@ defmodule Latchkey.Simulation.ResetIntegrationTest do
     assert arrears(tenancy_id).status == :active
   end
 
+  test "recovers a half-completed reset (a subtree child left terminated)" do
+    tenancy_id = unique_id()
+
+    assert :ok = commence(tenancy_id)
+
+    # Simulate a reset that died partway: an out-of-band terminate leaves the
+    # ArrearsProjector registered-but-`:undefined` in the supervisor — the interrupted
+    # state. `ordered_child_ids/0` must still resolve every child's id from a tree with
+    # some children already down, and the primitive must recover from it.
+    :ok = Supervisor.terminate_child(CommandedSupervisor, child_id_for(ArrearsProjector))
+
+    # Re-running the reset (the "re-run, not repair" contract) recovers to a cleanly
+    # reseedable store: the reseed's CommenceTenancy succeeds and the board rebuilds.
+    assert :ok = Reset.reset_event_store!()
+
+    assert :ok = commence(tenancy_id)
+    assert arrears(tenancy_id).status == :active
+  end
+
   # ── helpers ───────────────────────────────────────────────────────────────────
+
+  # The live supervisor child id whose callback module is `module`. Commanded's handler
+  # ids are opaque `{module, opts}` tuples, so resolve from the running tree.
+  defp child_id_for(module) do
+    Enum.find_value(Supervisor.which_children(CommandedSupervisor), fn {id, _pid, _type, mods} ->
+      if module in List.wrap(mods), do: id
+    end)
+  end
 
   # A healthy weekly tenancy commenced today. Returns `:ok` or `{:error, :already_commenced}`.
   defp commence(tenancy_id) do

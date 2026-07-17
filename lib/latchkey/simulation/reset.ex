@@ -90,8 +90,16 @@ defmodule Latchkey.Simulation.Reset do
     ids = ordered_child_ids()
 
     Enum.each(Enum.reverse(ids), &terminate!/1)
-    truncate_store!()
-    Enum.each(ids, &restart!/1)
+
+    # The restart pass runs in an `after`, so a truncate (or restart) failure leaves the
+    # write side **up** over the un-wiped store — operational, not stranded DOWN — and the
+    # error still propagates. That is the "re-run, not repair" contract in the moduledoc:
+    # a reset that dies partway is recovered by simply running it again.
+    try do
+      truncate_store!()
+    after
+      Enum.each(ids, &restart!/1)
+    end
 
     :ok
   end
