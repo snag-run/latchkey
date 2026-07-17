@@ -80,6 +80,42 @@ defmodule Latchkey.PropertyManagement.TenancyExitIntegrationTest do
     :ok
   end
 
+  # Drive a tenancy whose daily sweep booked the final week WHOLE **before** a backdated
+  # mid-week notice — the #64 over-charge scenario. Six whole weeks 01-05..02-09 are booked
+  # by an explicit CatchUp (standing in for the #41 sweep), THEN E = 02-12 is set mid the
+  # already-booked [02-09, 02-16) week.
+  defp prebooked_midweek_tenancy(tid) do
+    :ok =
+      CommandedApp.dispatch(
+        %C.CommenceTenancy{
+          tenancy_id: tid,
+          property_ref: "prop-" <> tid,
+          rent_amount_cents: 50_000,
+          cycle: :weekly,
+          first_due_date: ~D[2026-01-05]
+        },
+        consistency: :strong
+      )
+
+    :ok =
+      CommandedApp.dispatch(%C.CatchUp{tenancy_id: tid, as_of: ~D[2026-02-15]},
+        consistency: :strong
+      )
+
+    :ok =
+      CommandedApp.dispatch(
+        %C.GiveTerminationNotice{
+          tenancy_id: tid,
+          termination_date: ~D[2026-02-12],
+          given_on: ~D[2026-02-11],
+          as_of: ~D[2026-02-15]
+        },
+        consistency: :strong
+      )
+
+    :ok
+  end
+
   defp projection(tid) do
     Arrears |> Ash.Query.filter(tenancy_id == ^tid) |> Ash.read_one!()
   end
@@ -297,6 +333,26 @@ defmodule Latchkey.PropertyManagement.TenancyExitIntegrationTest do
     assert proj.status == :terminal
     assert proj.balance_cents == -100_000
     assert proj.final_balance_cents == 300_000
+  end
+
+  test "a pre-booked final week over-charged by a backdated mid-week exit is reconciled through the seam (#64)" do
+    tid = "exit-#{System.unique_integer([:positive])}"
+    prebooked_midweek_tenancy(tid)
+
+    assert :ok =
+             CommandedApp.dispatch(
+               %C.ReturnKeys{tenancy_id: tid, keys_on: ~D[2026-02-12]},
+               consistency: :strong
+             )
+
+    proj = projection(tid)
+    # 5 whole weeks (250_000) + reconciled boundary [02-09, 02-12) (21_429) = 271_429 — the
+    # pre-booked [02-12, 02-16) tail is clawed back, so the tenant is not over-charged. Same
+    # figure the lazily-accrued mid-week exit settles at.
+    assert proj.status == :terminal
+    assert proj.final_balance_cents == 271_429
+    assert proj.balance_cents == 271_429
+    assert proj.oldest_unpaid_due_date == ~D[2026-01-05]
   end
 
   test "keys-return is refused on a live tenancy that has no effective end date" do

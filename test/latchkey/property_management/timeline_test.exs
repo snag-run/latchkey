@@ -115,6 +115,27 @@ defmodule Latchkey.PropertyManagement.TimelineTest do
     assert entry.recorded_on == ~D[2026-01-05]
   end
 
+  test "a negative rent charge renders as a rent adjustment credit and nets the balance (#64)" do
+    # The #64 pre-booked-period correction is a negative RentFellDue: it must re-expand into
+    # the CREDIT column (never a negative debit) and claw the running balance back down.
+    entries =
+      Timeline.fold([
+        {0, commenced(~D[2026-01-05])},
+        {1, rent_span(~D[2026-01-05], 50_000, ~D[2026-01-05], ~D[2026-01-12])},
+        {2, rent_span(~D[2026-01-12], -28_571, ~D[2026-01-12], ~D[2026-01-16])}
+      ])
+
+    adjustment = List.last(entries)
+    assert adjustment.kind == :rent_fell_due
+    assert adjustment.debit_cents == nil
+    assert adjustment.credit_cents == 28_571
+    assert adjustment.description == "Rent adjustment — pre-booked period reconciled to end date"
+    assert adjustment.period_from == ~D[2026-01-12]
+    assert adjustment.period_to == ~D[2026-01-16]
+    # 50_000 debit − 28_571 credit = 21_429 net.
+    assert adjustment.balance_snapshot_cents == 21_429
+  end
+
   test "a whole monthly charge renders its real period span, not a hardcoded 7 days" do
     # A monthly RentFellDue carries a full calendar-month span (ADR 0009). The timeline
     # must read `[period_from, period_to)` straight off the event — a 31-day January
