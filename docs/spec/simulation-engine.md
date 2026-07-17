@@ -68,7 +68,33 @@ a deterministic agent archetype. The existing midnight sweep continues to advanc
   Oban jobs. It does not decide anything at job-run time.
 - **Midnight sweep unchanged.** The built `Sweep.CronWorker` → `TenancyWorker` →
   `CatchUp` still advances `RentFellDue` at `@daily`. All same-midnight booking is
-  acceptable.
+  acceptable — a planned **payment** job and the midnight sweep may target the same
+  tenancy on the same date, and it does not matter which books first. Two independent
+  reasons make the order immaterial (issue #161):
+  - **Decisions are pre-made, never read at runtime.** Notice/vacate are derived at
+    *plan time* by the deterministic world-line, not from a runtime arrears read — so
+    a runtime job is a **dumb dispatch** of a pre-decided command. No same-day booking
+    order can change any agent decision, because nothing at runtime consults the
+    balance to decide.
+  - **The fold is order-independent for the reads that matter.** A `RentPaymentRecorded`
+    and a `RentFellDue` write to **disjoint** aggregate-state fields: the charge writes
+    the `charges` list **and** the `due_through` pointer, while the payment touches
+    neither — it writes `payments_total_cents`/`applied_payment_ids`. So their two
+    `evolve/2` steps commute, and the folded state — and therefore `balance_cents`, the
+    FIFO `oldest_unpaid_due_date`, and `days_behind` — is identical whether the charge
+    or the payment folds first. `balance_cents` is a sum-of-charges minus payments, and
+    the FIFO oldest-unpaid walks the `charges` list (which the payment never touches);
+    `days_behind` is derived from that oldest-unpaid date (via `Tenancy.days_behind/2`),
+    so an order-independent oldest-unpaid makes `days_behind` order-independent too. The
+    booked **arrears** come out the same either way. (Regression:
+    `test/latchkey/simulation/same_day_ordering_test.exs`.)
+
+  Because both hold, the runtime needs **no** explicit per-day dispatch sequence; the
+  implicit "same-midnight acceptable" is safe as-is. The world-line still pins the
+  intra-day order it *derives* against (a period's charge is included on its due date,
+  `due_on <= date`; a payment folds after a same-day notice, `occurred_on <
+  notice_date`) — that is a plan-time ordering of the derivation, separate from and
+  unaffected by the runtime dispatch order this bullet concerns.
 - **B2 — derived reactive agent (un-defers ADR 0005 §10).** The simulated agent
   has a deterministic archetype (e.g. `strict` = notice at L7 eligibility / 14
   days behind, `lenient` = 30). Its notice/vacate dates are **derived from the
