@@ -26,7 +26,7 @@ defmodule Latchkey.CommandedApp do
   `:ok` returns `:ok`; a business error whose reason is listed in `expected` is returned
   as `{:error, reason}` for the caller to handle; any other `{:error, reason}` raises.
   """
-  @spec dispatch_strong(struct(), [atom()]) :: :ok | {:error, atom()}
+  @spec dispatch_strong(struct(), [atom()]) :: :ok | {:error, term()}
   def dispatch_strong(command, expected \\ []) do
     command
     |> dispatch(consistency: :strong)
@@ -39,8 +39,8 @@ defmodule Latchkey.CommandedApp do
   An error reason not in `expected` (e.g. `:consistency_timeout`) is never swallowed:
   it raises, because the event may already have appended.
   """
-  @spec handle_strong_result(:ok | {:error, atom()}, struct(), [atom()]) ::
-          :ok | {:error, atom()}
+  @spec handle_strong_result(:ok | {:error, term()}, struct(), [atom()]) ::
+          :ok | {:error, term()}
   def handle_strong_result(result, command, expected \\ []) do
     case result do
       :ok ->
