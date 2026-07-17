@@ -76,6 +76,12 @@ if config_env() == :prod do
     pool_size: String.to_integer(System.get_env("EVENTSTORE_POOL_SIZE") || "5"),
     socket_options: maybe_ipv6
 
+  # Demo reset guard (ADR 0007 decision 3, issue #174): the monthly destructive
+  # reset-to-healthy stays a hard no-op unless the deployed demo env sets
+  # `DEMO_RESET_ENABLED=true`. Only the demo instance carries this secret, so the reset can
+  # never fire on any other deployment.
+  config :latchkey, :demo_reset_enabled, System.get_env("DEMO_RESET_ENABLED") in ~w(true 1)
+
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
   # want to use a different value for prod and you most likely don't want

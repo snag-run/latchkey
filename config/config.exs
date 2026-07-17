@@ -10,14 +10,27 @@ import Config
 config :latchkey, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,
-  # Daily sweep (ADR 0005 decision 5): the visibility backstop for non-payers.
+  # Crons: the daily sweep (ADR 0005 decision 5) reveals non-payers' arrears; the monthly
+  # reset-to-healthy (ADR 0007 decision 3, issue #174) recurates the demo store. The reset
+  # is a hard no-op unless `:demo_reset_enabled` is set (below / runtime.exs), so wiring it
+  # globally is safe — it fires only in the demo env.
   plugins: [
-    {Oban.Plugins.Cron, crontab: [{"@daily", Latchkey.PropertyManagement.Sweep.CronWorker}]}
+    {Oban.Plugins.Cron,
+     crontab: [
+       {"@daily", Latchkey.PropertyManagement.Sweep.CronWorker},
+       {"@monthly", Latchkey.Simulation.ResetWorker}
+     ]}
   ],
   # `:default` runs the daily sweep fan-out; `:simulation` runs the planner's scheduled
   # world-line events (notice/vacate), isolated for observability (ADR 0011).
   queues: [default: 10, simulation: 10],
   repo: Latchkey.Repo
+
+# Demo reset guard (ADR 0007 decision 3, issue #174): the monthly destructive
+# reset-to-healthy is a hard no-op unless this flag is explicitly enabled. Fails closed
+# everywhere by default; the deployed demo env flips it on in `config/runtime.exs` (from
+# `DEMO_RESET_ENABLED`), so a mis-scoped deploy or config regression can never fire it.
+config :latchkey, :demo_reset_enabled, false
 
 # Event-sourcing foundation (ADR 0003): raw Commanded + its Postgres EventStore.
 config :latchkey, ash_domains: [Latchkey.PropertyManagement, Latchkey.Simulation]
