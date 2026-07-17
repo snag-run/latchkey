@@ -14,6 +14,7 @@ defmodule Latchkey.Simulation.PlannerTest do
   alias Latchkey.Simulation.Seeder
   alias Latchkey.Simulation.Seeder.Projection
   alias Latchkey.Simulation.Seeder.Scenario
+  alias Latchkey.Simulation.SeedGeneration
 
   @first_due ~D[2026-01-05]
   @rent 50_000
@@ -126,6 +127,46 @@ defmodule Latchkey.Simulation.PlannerTest do
       assert length(all_enqueued(worker: ScheduledEvent)) == 2
       assert length(all_enqueued(worker: ScheduledEvent, args: %{event: "notice"})) == 1
       assert length(all_enqueued(worker: ScheduledEvent, args: %{event: "vacate"})) == 1
+    end
+  end
+
+  describe "plan/1 — generation-aware uniqueness (issue #162)" do
+    test "every planned job carries the current seed generation stamp" do
+      Planner.plan(scenarios: [exiting_scenario()], today: ~D[2026-01-20])
+
+      generations =
+        all_enqueued(worker: ScheduledEvent) |> Enum.map(& &1.args["generation"])
+
+      # Both jobs stamped with the live generation (0 — nothing has reset).
+      assert generations == [0, 0]
+    end
+
+    test "a lingering old-generation job does not block a fresh, post-reset enqueue" do
+      opts = [scenarios: [exiting_scenario()], today: ~D[2026-01-20]]
+
+      # Plan the board at generation 0, then a reset advances the generation and replans.
+      # The old jobs still sit in the queue (a claimed one is past deletion) — the fresh
+      # enqueue must not collide with them on {tenancy_id, event}.
+      Planner.plan(opts)
+      assert SeedGeneration.advance() == 1
+      Planner.plan(opts)
+
+      notices = all_enqueued(worker: ScheduledEvent, args: %{event: "notice"})
+
+      # Not collapsed onto the generation-0 job: the generation-1 notice enqueued alongside
+      # it, one per generation — the race the atomic protocol closes.
+      assert length(notices) == 2
+      assert notices |> Enum.map(& &1.args["generation"]) |> Enum.sort() == [0, 1]
+    end
+
+    test "a re-plan under the same generation still inserts no duplicates" do
+      opts = [scenarios: [exiting_scenario()], today: ~D[2026-01-20]]
+
+      # No advance between runs → same generation → uniqueness still collapses the replan.
+      Planner.plan(opts)
+      Planner.plan(opts)
+
+      assert length(all_enqueued(worker: ScheduledEvent, args: %{event: "notice"})) == 1
     end
   end
 

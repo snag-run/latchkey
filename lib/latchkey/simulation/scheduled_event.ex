@@ -28,29 +28,51 @@ defmodule Latchkey.Simulation.ScheduledEvent do
 
   ## Idempotency lives on the enqueue
 
-  Uniqueness (`{tenancy_id, event}`, no duplicate per plan-run) is enforced by the
-  planner at insert time (`Latchkey.Simulation.Planner`), not here — a fired job is
+  Uniqueness (`{tenancy_id, event, generation}`, no duplicate per plan-run) is enforced by
+  the planner at insert time (`Latchkey.Simulation.Planner`), not here — a fired job is
   free to run once its scheduled instant arrives.
 
-  ## Not yet: the reset-generation staleness guard
+  ## The reset-generation staleness guard (issue #162)
 
-  The spec's generation stamp/guard (no-op a job planned under an older seed generation
-  than the current one) is coupled to the reset-to-healthy cron (#92) that owns the
-  generation lifecycle — no generation is stamped on jobs yet, so there is nothing to
-  guard against. It lands with #92.
+  Each job is stamped with the **seed generation** it was planned under
+  (`Latchkey.Simulation.SeedGeneration`). Reset advances the generation *before* it purges
+  + replans — but a job Oban has already **claimed** (`executing`) is past deletion, so it
+  still fires. Before dispatching, this worker compares the job's stamped generation to
+  the live one and **no-ops if the stamp is behind**: the command was decided against a
+  now-superseded seed, so dispatching it would inject stale work into the fresh world.
+  This is the backstop for the already-claimed job; the planner's generation-aware
+  uniqueness handles the not-yet-claimed ones. A job whose stamp is current dispatches
+  normally, and an unstamped job (none planned before #162 existed) dispatches too.
   """
   use Oban.Worker, queue: :simulation, max_attempts: 3
 
   alias Latchkey.CommandedApp
   alias Latchkey.PropertyManagement.Tenancy.Commands.GiveTerminationNotice
   alias Latchkey.PropertyManagement.Tenancy.Commands.ReturnKeys
+  alias Latchkey.Simulation.SeedGeneration
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
-    args
-    |> command()
-    |> CommandedApp.dispatch(consistency: :strong)
+    if stale?(args) do
+      # Planned under a superseded seed generation (a reset advanced past it while this
+      # job was already claimed): drop the stale command rather than inject it into the
+      # fresh world. The completed no-op leaves the fresh generation's replan untouched.
+      :ok
+    else
+      args
+      |> command()
+      |> CommandedApp.dispatch(consistency: :strong)
+    end
   end
+
+  # A job is stale iff its stamped generation is *behind* the live one — the generation
+  # only ever advances, so anything below current is superseded. An unstamped job (planned
+  # before the generation existed) is treated as live.
+  defp stale?(%{"generation" => generation}) when is_integer(generation) do
+    generation < SeedGeneration.current()
+  end
+
+  defp stale?(_args), do: false
 
   # Reconstitute the pre-decided command from the job's args — dates parsed back from the
   # ISO strings the planner stamped in. No arrears read, no decision: the args *are* the
