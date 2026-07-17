@@ -93,6 +93,6 @@ so it points to the code rather than a live pane.
 
 Concepts without a dedicated code symbol or live surface — links to the canonical docs:
 
-- **Snapshot** — a saved fold you resume from, so replay reads only the recent tail instead of the whole stream. **Deliberately not built here:** replay cost is a function of stream *length* (event rate × lifespan), and rent is low-rate — even a decades-long tenancy stays in the low thousands of events, so no stream ever grows long enough to need one (gated on fold-on-read latency) — [ADR 0006 §6 ↗](https://github.com/snag-run/latchkey/blob/main/docs/adr/0006-tenancy-timeline-read-model.md)
+- **Snapshot** — saved state you resume replay from instead of re-folding a whole stream; **deliberately not built here** — rent is low-rate so tenancy streams stay short, leaving it a deferred lever for if fold-on-read latency ever warrants it — [ADR 0006 §6 ↗](https://github.com/snag-run/latchkey/blob/main/docs/adr/0006-tenancy-timeline-read-model.md)
 - **Checkpoint · optimistic concurrency** — [domain-model.md ↗](https://github.com/snag-run/latchkey/blob/main/docs/domain-model.md)
 - **Consistency (strong vs eventual)** — [ADR 0003 ↗](https://github.com/snag-run/latchkey/tree/main/docs/adr)
