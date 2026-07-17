@@ -64,8 +64,10 @@ if config_env() == :prod do
   # Commanded EventStore — same database as the Repo, isolated in the
   # `event_store` schema, so a single DATABASE_URL provisions both. Unlike Ecto,
   # EventStore's URL parser rejects unknown query params (e.g. Neon's `sslmode`),
-  # so strip the query string — TLS is enabled explicitly via `ssl: true` below.
-  event_store_url = URI.to_string(%{URI.parse(database_url) | query: nil})
+  # so the query string is stripped — TLS is enabled explicitly via `ssl: true`
+  # below. `derive!/1` also guards against a pooled (PgBouncer) DATABASE_URL,
+  # which cannot hold the LISTEN that projector delivery depends on (ADR 0003).
+  event_store_url = Latchkey.EventStore.Url.derive!(database_url)
 
   config :latchkey, Latchkey.EventStore,
     url: event_store_url,
