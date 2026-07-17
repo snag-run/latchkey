@@ -105,7 +105,54 @@ defmodule Latchkey.Simulation.SameDayOrderingTest do
       assert sweep_then_payment.oldest_unpaid_due_date == ~D[2025-01-15]
       assert payment_then_sweep.oldest_unpaid_due_date == ~D[2025-01-15]
 
-      assert sweep_then_payment.days_behind == payment_then_sweep.days_behind
+      # days_behind is elapsed days from the oldest-unpaid due date as-at `as_of`:
+      # 2025-01-22 − 2025-01-15 = 7, and it is order-independent because the
+      # oldest-unpaid date it derives from is.
+      assert sweep_then_payment.days_behind == 7
+      assert payment_then_sweep.days_behind == 7
+    end
+  end
+
+  describe "same-day payment that exactly clears the outstanding balance" do
+    # Four whole periods booked (200_000); a same-day payment of exactly that amount
+    # lands, driving the tenant fully paid up — exercising the `nil`/empty oldest-unpaid
+    # path and confirming it too is order-independent.
+    @same_day ~D[2025-01-22]
+
+    setup do
+      prior_charges = [
+        rent_fell_due(~D[2025-01-01]),
+        rent_fell_due(~D[2025-01-08]),
+        rent_fell_due(~D[2025-01-15])
+      ]
+
+      same_day_charge = rent_fell_due(@same_day)
+      # Exactly four periods' worth: clears everything, leaving no oldest unpaid.
+      same_day_payment = payment(@same_day, 200_000, "pay-1")
+
+      base = [commenced() | prior_charges]
+
+      %{
+        sweep_then_payment: base ++ [same_day_charge, same_day_payment],
+        payment_then_sweep: base ++ [same_day_payment, same_day_charge]
+      }
+    end
+
+    test "clears to paid-up (nil oldest-unpaid, zero balance) regardless of order", ctx do
+      sweep_then_payment = ArrearsFold.fold_and_derive(ctx.sweep_then_payment, @same_day)
+      payment_then_sweep = ArrearsFold.fold_and_derive(ctx.payment_then_sweep, @same_day)
+
+      assert sweep_then_payment == payment_then_sweep
+
+      assert sweep_then_payment.balance_cents == 0
+      assert payment_then_sweep.balance_cents == 0
+
+      assert sweep_then_payment.oldest_unpaid_due_date == nil
+      assert payment_then_sweep.oldest_unpaid_due_date == nil
+
+      # Paid up ⇒ nobody is behind.
+      assert sweep_then_payment.days_behind == 0
+      assert payment_then_sweep.days_behind == 0
     end
   end
 end

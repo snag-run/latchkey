@@ -77,13 +77,16 @@ a deterministic agent archetype. The existing midnight sweep continues to advanc
     order can change any agent decision, because nothing at runtime consults the
     balance to decide.
   - **The fold is order-independent for the reads that matter.** A `RentPaymentRecorded`
-    and a `RentFellDue` write to **disjoint** aggregate-state fields
-    (`payments_total_cents`/`applied_payment_ids` vs the `charges` list), so their two
-    `evolve/2` steps commute: the folded state — and therefore `balance_cents`, the
+    and a `RentFellDue` write to **disjoint** aggregate-state fields: the charge writes
+    the `charges` list **and** the `due_through` pointer, while the payment touches
+    neither — it writes `payments_total_cents`/`applied_payment_ids`. So their two
+    `evolve/2` steps commute, and the folded state — and therefore `balance_cents`, the
     FIFO `oldest_unpaid_due_date`, and `days_behind` — is identical whether the charge
     or the payment folds first. `balance_cents` is a sum-of-charges minus payments, and
-    the FIFO oldest-unpaid walks the `charges` list (which the payment never touches),
-    so the booked **arrears** come out the same either way. (Regression:
+    the FIFO oldest-unpaid walks the `charges` list (which the payment never touches);
+    `days_behind` is derived from that oldest-unpaid date (via `Tenancy.days_behind/2`),
+    so an order-independent oldest-unpaid makes `days_behind` order-independent too. The
+    booked **arrears** come out the same either way. (Regression:
     `test/latchkey/simulation/same_day_ordering_test.exs`.)
 
   Because both hold, the runtime needs **no** explicit per-day dispatch sequence; the
