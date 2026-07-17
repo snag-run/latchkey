@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/snag-run/latchkey/compare/v0.4.0...v0.5.0) (2026-07-17)
+
+
+### Features
+
+* **sim:** atomic reset-generation protocol for planned jobs ([#162](https://github.com/snag-run/latchkey/issues/162)) ([#182](https://github.com/snag-run/latchkey/issues/182)) ([c9a8ee9](https://github.com/snag-run/latchkey/commit/c9a8ee95981526a67981340d539dabbeb5803bc1))
+* **sim:** Commanded reset primitive for a reseedable store ([#173](https://github.com/snag-run/latchkey/issues/173)) ([#184](https://github.com/snag-run/latchkey/issues/184)) ([bde9adf](https://github.com/snag-run/latchkey/commit/bde9adf583467a3cfd9ccc82965d17a84ad99873))
+* **sim:** config-guarded destructive reset cron ([#174](https://github.com/snag-run/latchkey/issues/174)) ([#185](https://github.com/snag-run/latchkey/issues/185)) ([20da679](https://github.com/snag-run/latchkey/commit/20da6799efdcd5c7e9a583454d1e24eb2011e05c))
+* **tenancy:** reconcile pre-booked periods over-charged by a mid-period exit ([#178](https://github.com/snag-run/latchkey/issues/178)) ([63f50ab](https://github.com/snag-run/latchkey/commit/63f50ab124dc7c3c3ca04f67e56b08e4edfe6526))
+
+
+### Bug Fixes
+
+* guard prod EventStore against a pooled DATABASE_URL ([#175](https://github.com/snag-run/latchkey/issues/175)) ([d69837a](https://github.com/snag-run/latchkey/commit/d69837ad123d88b12224f56cb131b81c21ff7f1c)), closes [#150](https://github.com/snag-run/latchkey/issues/150)
+* **sim:** surface strong-dispatch failures instead of CaseClauseError ([#179](https://github.com/snag-run/latchkey/issues/179)) ([4ce96ea](https://github.com/snag-run/latchkey/commit/4ce96eaa3f16971773dd74e2899edcf81a354c84))
+
 ## [0.4.0](https://github.com/snag-run/latchkey/compare/v0.3.0...v0.4.0) (2026-07-16)
 
 
