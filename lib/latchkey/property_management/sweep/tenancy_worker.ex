@@ -9,7 +9,10 @@ defmodule Latchkey.PropertyManagement.Sweep.TenancyWorker do
   same tenancy sees the advanced pointer and emits nothing. Never issues notices.
 
   Dispatches with `consistency: :strong` so the job completes only once the `Arrears`
-  read model reflects the catch-up — the sweep's job is *visibility*.
+  read model reflects the catch-up — the sweep's job is *visibility*. Routed through
+  `CommandedApp.dispatch_strong/2`, so a `:consistency_timeout` (or any dispatch
+  failure) raises a clear, actionable error rather than returning an opaque
+  `{:error, reason}` that Oban would silently retry with no signal (issue #149).
   """
   use Oban.Worker, queue: :default, max_attempts: 3
 
@@ -19,6 +22,6 @@ defmodule Latchkey.PropertyManagement.Sweep.TenancyWorker do
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"tenancy_id" => tenancy_id, "as_of" => as_of}}) do
     command = Sweep.catch_up_command(tenancy_id, Date.from_iso8601!(as_of))
-    CommandedApp.dispatch(command, consistency: :strong)
+    CommandedApp.dispatch_strong(command)
   end
 end
