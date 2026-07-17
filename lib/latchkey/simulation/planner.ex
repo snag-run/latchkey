@@ -23,14 +23,25 @@ defmodule Latchkey.Simulation.Planner do
   future payments as real time passes is a separate concern the reset-to-healthy cron,
   issue #92, owns; the planner deliberately does not manufacture them.)
 
-  ## Idempotent on `{tenancy_id, event}`
+  ## Idempotent on `{tenancy_id, event, generation}`
 
-  The enqueue is idempotent on `{tenancy_id, event}` via Oban uniqueness (`period:
-  :infinity`, `states: :all`): a re-plan (a reset replan, a re-run) inserts **no
-  duplicates**. Because each event kind is unique per tenancy in v1, `{tenancy_id,
-  event}` uniquely identifies its single occurrence; the aggregate's own dedupe
-  backstops it. *Extension point:* if a later change makes an event kind recur, the key
-  must gain a stable per-occurrence world-line event id (spec).
+  The enqueue is idempotent on `{tenancy_id, event, generation}` via Oban uniqueness
+  (`period: :infinity`, `states: :all`): a re-plan under the **same** seed generation (a
+  re-run) inserts **no duplicates**. Because each event kind is unique per tenancy in v1,
+  `{tenancy_id, event}` uniquely identifies its single occurrence *within a generation*;
+  the aggregate's own dedupe backstops it. *Extension point:* if a later change makes an
+  event kind recur, the key must gain a stable per-occurrence world-line event id (spec).
+
+  ## Generation-aware uniqueness (issue #162)
+
+  The `generation` in the key is what makes the reset protocol atomic. Oban enforces
+  uniqueness at **insert time** and matches **incomplete** jobs too (`states: :all`) — so
+  a stale job Oban has already claimed (`executing`) under the *old* generation would,
+  without generation in the key, collide with and **block** the fresh replan's enqueue,
+  even though it is semantically a superseded occurrence. Reset advances the generation
+  *before* replanning (`Latchkey.Simulation.SeedGeneration.advance/0`), so the new jobs
+  carry a new generation and never collide with the lingering old-generation ones. The
+  runtime dispatch's generation guard then no-ops that lingering claimed job.
   """
   use Oban.Worker, queue: :simulation, max_attempts: 3
 
@@ -39,13 +50,15 @@ defmodule Latchkey.Simulation.Planner do
   alias Latchkey.Simulation.Seeder
   alias Latchkey.Simulation.Seeder.Projection
   alias Latchkey.Simulation.Seeder.Scenario
+  alias Latchkey.Simulation.SeedGeneration
 
   @time_zone "Australia/Sydney"
 
-  # Idempotency: one job per {tenancy_id, event}, forever, across every job state — so a
-  # re-plan never double-schedules regardless of whether the prior job is still
-  # scheduled, already ran, or was cancelled.
-  @unique [keys: [:tenancy_id, :event], period: :infinity, states: :all]
+  # Idempotency: one job per {tenancy_id, event, generation}, forever, across every job
+  # state — so a re-plan under the same generation never double-schedules regardless of
+  # whether the prior job is still scheduled, already ran, or was cancelled. `generation`
+  # keeps a lingering old-generation job from blocking a post-reset replan (issue #162).
+  @unique [keys: [:tenancy_id, :event, :generation], period: :infinity, states: :all]
 
   @doc """
   Runs the planner as a top-level Oban job: plans the full catalogue as of `today`
@@ -82,27 +95,33 @@ defmodule Latchkey.Simulation.Planner do
     scenarios = Keyword.get_lazy(opts, :scenarios, fn -> Seeder.catalogue(today) end)
     prefix = Keyword.get(opts, :id_prefix, "")
 
+    # Read the live seed generation once and stamp every job planned this run with it, so
+    # the whole plan is one atomic generation (issue #162). A reset advances the
+    # generation *before* it calls the planner, so a replan stamps the new generation.
+    generation = SeedGeneration.current()
+
     scenarios
-    |> Enum.flat_map(&changesets(&1, prefix, today))
+    |> Enum.flat_map(&changesets(&1, prefix, today, generation))
     |> Enum.map(&Oban.insert!/1)
   end
 
   # The scheduled-job changesets for one scenario's future slice.
-  defp changesets(%Scenario{} = scenario, prefix, today) do
+  defp changesets(%Scenario{} = scenario, prefix, today, generation) do
     tenancy_id = prefix <> scenario.tenancy_id
 
     scenario
     |> Projection.future_timeline(tenancy_id, today)
-    |> Enum.flat_map(fn {date, step} -> changeset(step, tenancy_id, date) end)
+    |> Enum.flat_map(fn {date, step} -> changeset(step, tenancy_id, date, generation) end)
   end
 
   # `notice` and `vacate` are scheduled; a future payment (if any) is not — see moduledoc.
-  defp changeset({:notice, notice}, tenancy_id, date) do
+  defp changeset({:notice, notice}, tenancy_id, date, generation) do
     [
       new_job(
         %{
           tenancy_id: tenancy_id,
           event: "notice",
+          generation: generation,
           given_on: Date.to_iso8601(notice.given_on),
           termination_date: Date.to_iso8601(notice.termination_date),
           as_of: Date.to_iso8601(notice.as_of)
@@ -112,12 +131,13 @@ defmodule Latchkey.Simulation.Planner do
     ]
   end
 
-  defp changeset({:exit, exit}, tenancy_id, date) do
+  defp changeset({:exit, exit}, tenancy_id, date, generation) do
     [
       new_job(
         %{
           tenancy_id: tenancy_id,
           event: "vacate",
+          generation: generation,
           keys_on: Date.to_iso8601(exit.keys_on)
         },
         date
@@ -125,7 +145,7 @@ defmodule Latchkey.Simulation.Planner do
     ]
   end
 
-  defp changeset({:payment, _payment}, _tenancy_id, _date), do: []
+  defp changeset({:payment, _payment}, _tenancy_id, _date, _generation), do: []
 
   defp new_job(args, %Date{} = date) do
     ScheduledEvent.new(args, scheduled_at: scheduled_at(date), unique: @unique)

@@ -18,6 +18,7 @@ defmodule Latchkey.Simulation.ScheduledEventTest do
   alias Latchkey.PropertyManagement.Tenancy.Events.KeysReturned
   alias Latchkey.PropertyManagement.Tenancy.Events.TerminationNoticeGiven
   alias Latchkey.Simulation.ScheduledEvent
+  alias Latchkey.Simulation.SeedGeneration
 
   require Ash.Query
 
@@ -125,5 +126,37 @@ defmodule Latchkey.Simulation.ScheduledEventTest do
     # The derived later vacate date is the one that fires as `occurred_on`.
     keys = emitted(tid, KeysReturned)
     assert keys.occurred_on == "2026-02-23"
+  end
+
+  describe "reset-generation staleness guard (issue #162)" do
+    test "a job stamped with a superseded generation no-ops — dispatches no command" do
+      tid = "sched-#{System.unique_integer([:positive])}"
+      commence(tid)
+
+      # The job was planned under generation 0; a reset then advanced the world to 1 while
+      # this job was already claimed. It fires, but its stamp is now behind current.
+      args = Map.put(notice_args(tid), "generation", SeedGeneration.current())
+      assert SeedGeneration.advance() == 1
+
+      assert :ok = perform_job(ScheduledEvent, args)
+
+      # No command reached the aggregate: no notice was appended and the tenancy is not
+      # :ending — the stale decision was dropped, not injected into the fresh seed.
+      assert emitted(tid, TerminationNoticeGiven) == nil
+      refute projection(tid).status == :ending
+    end
+
+    test "a job stamped with the current generation dispatches normally" do
+      tid = "sched-#{System.unique_integer([:positive])}"
+      commence(tid)
+
+      # Stamp matches the live generation (nothing has reset) → the guard lets it through.
+      args = Map.put(notice_args(tid), "generation", SeedGeneration.current())
+
+      assert :ok = perform_job(ScheduledEvent, args)
+
+      assert projection(tid).status == :ending
+      assert emitted(tid, TerminationNoticeGiven).occurred_on == "2026-02-02"
+    end
   end
 end
