@@ -93,5 +93,6 @@ so it points to the code rather than a live pane.
 
 Concepts without a dedicated code symbol or live surface — links to the canonical docs:
 
+- **Snapshot** — saved state you resume replay from instead of re-folding a whole stream; **deliberately not built here** — rent is low-rate so tenancy streams stay short, leaving it a deferred lever for if fold-on-read latency ever warrants it — [ADR 0006 §6 ↗](https://github.com/snag-run/latchkey/blob/main/docs/adr/0006-tenancy-timeline-read-model.md)
 - **Checkpoint · optimistic concurrency** — [domain-model.md ↗](https://github.com/snag-run/latchkey/blob/main/docs/domain-model.md)
 - **Consistency (strong vs eventual)** — [ADR 0003 ↗](https://github.com/snag-run/latchkey/tree/main/docs/adr)
