@@ -556,13 +556,14 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   end
 
   # E needs a correction only when it lands **strictly inside** a period (`period_from < E <
-  # period_to`) that was already booked whole — its start is on/before the last booked due
-  # date (`period_from <= due_through`). A boundary-aligned E over-charges nothing; an
-  # unbooked period is pro-rated live by `catch_up_events` (#31).
+  # period_to`) that was already booked whole — i.e. the period is *not* fresh to the resume
+  # filter (`not booked_after?/2`, the one home for "already booked"). A boundary-aligned E
+  # over-charges nothing; an unbooked period is pro-rated live by `catch_up_events` (#31).
+  # `due_through` is non-nil here (the caller's nil clause returns early).
   defp boundary_prebooked?(%State{due_through: due_through}, period_from, period_to, e) do
     Date.compare(period_from, e) == :lt and
       Date.compare(e, period_to) == :lt and
-      Date.compare(period_from, due_through) != :gt
+      not booked_after?(due_through, period_from)
   end
 
   # The **last scheduled period** for the overstay denominator (ADR 0009 decision 3): the
