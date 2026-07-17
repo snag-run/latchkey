@@ -194,7 +194,7 @@ defmodule Latchkey.Simulation.Seeder do
       recorded_on: scenario.first_due_date
     }
 
-    case CommandedApp.dispatch(command, consistency: :strong) do
+    case CommandedApp.dispatch_strong(command, [:already_commenced]) do
       :ok -> :ok
       {:error, :already_commenced} -> :already_commenced
     end
@@ -258,10 +258,7 @@ defmodule Latchkey.Simulation.Seeder do
     |> Enum.filter(&(&1.status == :seeded))
     |> Task.async_stream(
       fn %{tenancy_id: tenancy_id} ->
-        :ok =
-          CommandedApp.dispatch(Sweep.catch_up_command(tenancy_id, today),
-            consistency: :strong
-          )
+        :ok = CommandedApp.dispatch_strong(Sweep.catch_up_command(tenancy_id, today))
       end,
       max_concurrency: max_concurrency,
       ordered: false,
@@ -284,7 +281,7 @@ defmodule Latchkey.Simulation.Seeder do
       recorded_on: notice.given_on
     }
 
-    :ok = CommandedApp.dispatch(command, consistency: :strong)
+    :ok = CommandedApp.dispatch_strong(command)
   end
 
   defp run_step({:exit, exit}, tenancy_id, _accounts_stream, _await_ms) do
@@ -294,7 +291,7 @@ defmodule Latchkey.Simulation.Seeder do
       recorded_on: exit.keys_on
     }
 
-    :ok = CommandedApp.dispatch(command, consistency: :strong)
+    :ok = CommandedApp.dispatch_strong(command)
   end
 
   # Block until ACL-1 has translated the appended payment into a RentPaymentRecorded on
