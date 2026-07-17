@@ -23,6 +23,16 @@ defmodule Latchkey.Simulation.ResetWorker do
 
   The reset is idempotent (re-run, not repair), so an Oban retry after a partial failure
   simply re-runs it to a cleanly reseeded store.
+
+  ## Subscription lifetime — one job process per reset
+
+  `reset_to_healthy!/1` reseeds *after* it restarts the write side, and the seeder opens
+  transient `EventStore.subscribe` subscriptions in the calling process. Because each
+  monthly cron firing runs `perform/1` in its **own fresh Oban job process**, those
+  subscriptions live and die with that one job — they are gone before the next reset ever
+  terminates the `CommandedApp`, so they can never cascade a `:shutdown` into a subsequent
+  reset. (The integration test reproduces this per-reset process boundary with an
+  `isolated/1` task, mirroring production rather than papering over a linkage bug.)
   """
   use Oban.Worker, queue: :simulation, max_attempts: 3
 

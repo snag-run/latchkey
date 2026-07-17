@@ -118,6 +118,50 @@ defmodule Latchkey.Simulation.ResetToHealthyIntegrationTest do
     end
   end
 
+  test "wipe is exactly allowlist-scoped at the store level (foreign stream survives)", %{
+    opts: opts,
+    results: results,
+    sample: sample
+  } do
+    # A non-allowlisted stream written directly to the store (neither `tenancy-*` nor the
+    # Accounts stream). It must survive the wipe untouched.
+    keep = "keepme-#{System.unique_integer([:positive])}"
+    :ok = Latchkey.EventStore.append_to_stream(keep, :any_version, [canary_event()])
+    keep_before = event_ids(keep)
+    assert length(keep_before) == 1
+
+    # A representative allowlisted stream — one seeded tenancy — and its current event
+    # instances, captured by their globally-unique event ids.
+    tenancy_stream = "tenancy-" <> hd(results).tenancy_id
+    tenancy_before = event_ids(tenancy_stream)
+    assert tenancy_before != []
+
+    assert :ok = isolated(fn -> Reset.reset_to_healthy!(opts) end)
+
+    # The foreign stream is byte-for-byte intact: the allowlist never touched it.
+    assert event_ids(keep) == keep_before
+
+    # The allowlisted stream's pre-reset events were hard-deleted — the reseed created a
+    # fresh set of event instances, so the old ids share nothing with the new ones.
+    assert MapSet.disjoint?(MapSet.new(tenancy_before), MapSet.new(event_ids(tenancy_stream)))
+
+    # `$all` is clean: the projector, rebuilt from :origin, folded ONLY the reseeded streams
+    # (no ghost events from the wiped ones survive), so Arrears has exactly the reseeded
+    # tenancies — and none from the foreign `keepme` stream.
+    assert length(Ash.read!(Arrears)) == length(sample)
+  end
+
+  test "rejects a non-Accounts accounts_stream before any mutation" do
+    before = SeedGeneration.current()
+
+    assert_raise ArgumentError, fn ->
+      Reset.reset_to_healthy!(accounts_stream: "users")
+    end
+
+    # It failed fast: the generation was not advanced, so nothing was wiped or reseeded.
+    assert SeedGeneration.current() == before
+  end
+
   test "the allowlist boundary keeps only tenancy-* and the Accounts stream" do
     assert Reset.simulation_stream?("tenancy-abc-01", "accounts")
     assert Reset.simulation_stream?("accounts", "accounts")
@@ -133,6 +177,23 @@ defmodule Latchkey.Simulation.ResetToHealthyIntegrationTest do
 
   defp arrears(tenancy_id) do
     Arrears |> Ash.Query.filter(tenancy_id == ^tenancy_id) |> Ash.read_one!()
+  end
+
+  # The globally-unique event ids currently stored on a stream, in order.
+  defp event_ids(stream_uuid) do
+    stream_uuid |> Latchkey.EventStore.stream_forward() |> Enum.map(& &1.event_id)
+  end
+
+  # A minimal event on a non-simulation stream, used purely as a deletion-scope canary. Its
+  # `event_type` maps to a real struct (`Date`) so it deserialises cleanly for the `$all`
+  # handlers, none of which match it — Commanded's default `handle/2` no-ops it.
+  defp canary_event do
+    %EventStore.EventData{
+      event_id: Ecto.UUID.generate(),
+      event_type: "Elixir.Date",
+      data: %{},
+      metadata: %{}
+    }
   end
 
   # Run `fun` in a short-lived task that completes before we return, so its transient

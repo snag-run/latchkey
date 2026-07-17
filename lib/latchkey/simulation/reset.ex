@@ -88,6 +88,12 @@ defmodule Latchkey.Simulation.Reset do
   recovery is re-run, not repair). Hard-deleting an already-gone stream is tolerated, and a
   truncate/reseed over a fresh store is a no-op-then-rebuild.
 
+  This means a reset that dies **after the wipe but before the reseed finishes** leaves the
+  board momentarily **empty**, not half-repaired — an intentional consequence of re-run-not-
+  repair, and safe because the board is a pure function of `today`: the retried run (a fresh
+  Oban attempt, `max_attempts: 3`) rebuilds it whole. An empty demo board is a self-healing
+  transient, never a state anyone hand-mends.
+
   > ### Neon `-pooler` gotcha
   > The transient wipe connection (and any later `consistency: :strong` reseed dispatch)
   > must use the **direct**, non-pooler EventStore endpoint. A PgBouncer (`-pooler`) URL
@@ -142,11 +148,15 @@ defmodule Latchkey.Simulation.Reset do
   """
   @spec reset_to_healthy!(keyword()) :: :ok
   def reset_to_healthy!(opts \\ []) do
+    # Validate the destructive target FIRST, before any mutation (before even advancing the
+    # generation): the Accounts stream is a caller-supplied hard-delete target, and it must
+    # be an Accounts stream — never a durable/non-simulation name (issue #174 hardening).
+    accounts_stream = Keyword.get(opts, :accounts_stream, @default_accounts_stream)
+    validate_accounts_stream!(accounts_stream)
+
     # Generation-safe (issue #162): advance BEFORE the purge/replan, so any job Oban has
     # already claimed under the old generation is left stale and no-ops on dispatch.
     _new_generation = SeedGeneration.advance()
-
-    accounts_stream = Keyword.get(opts, :accounts_stream, @default_accounts_stream)
 
     with_write_side_down(fn -> wipe_simulation_data!(accounts_stream) end)
 
@@ -239,6 +249,24 @@ defmodule Latchkey.Simulation.Reset do
   @spec simulation_stream?(String.t(), String.t()) :: boolean()
   def simulation_stream?(stream_uuid, accounts_stream) do
     String.starts_with?(stream_uuid, "tenancy-") or stream_uuid == accounts_stream
+  end
+
+  # Guard the one caller-supplied hard-delete target. `tenancy-*` is a fixed prefix, but the
+  # Accounts stream name is an option, so constrain it to an Accounts stream — the fixed
+  # production `"accounts"` or a test-prefixed `"accounts-*"` — so a caller can never aim the
+  # destructive wipe at a durable/non-simulation stream (e.g. `"users"`). Raises before any
+  # mutation; the production `ResetWorker` never forwards this, so it always hits the default.
+  defp validate_accounts_stream!(@default_accounts_stream), do: :ok
+
+  defp validate_accounts_stream!(accounts_stream) when is_binary(accounts_stream) do
+    if String.starts_with?(accounts_stream, @default_accounts_stream <> "-") do
+      :ok
+    else
+      raise ArgumentError,
+            "reset_to_healthy!/1 refuses to hard-delete #{inspect(accounts_stream)} as the " <>
+              "Accounts stream: expected #{inspect(@default_accounts_stream)} or an " <>
+              "#{inspect(@default_accounts_stream <> "-")}… stream, never a non-simulation name."
+    end
   end
 
   # Wipe only the simulation-owned data (issue #174), run while the write side is down:
@@ -334,13 +362,27 @@ defmodule Latchkey.Simulation.Reset do
     end
   end
 
-  # Delete every subscription checkpoint so the cold-restarted handlers re-subscribe from
-  # their `start_from` (`:origin` for the projector/ACL) and refold the reseeded store.
+  # Delete the handlers' subscription checkpoints so the cold-restarted handlers re-subscribe
+  # from their `start_from` (`:origin` for the projector/ACL) and refold the reseeded store.
+  #
+  # Enforced, not assumed: every checkpoint found must belong to a known write-side handler
+  # (the `CommandedSupervisor` children — Commanded stores each subscription under
+  # `inspect(handler_module)`). An unexpected subscriber makes the reset **raise loudly**
+  # rather than silently clobber a checkpoint it does not own — the store is ES-dedicated
+  # (ADR 0003), so a foreign subscription would be a real surprise worth stopping on.
   defp clear_subscription_checkpoints!(conn, schema) do
     {:ok, subscriptions} = EventStore.Storage.subscriptions(conn, schema: schema)
+    known = MapSet.new(CommandedSupervisor.child_ids(), &inspect/1)
 
     Enum.each(subscriptions, fn %{stream_uuid: stream_uuid, subscription_name: name} ->
-      :ok = EventStore.Storage.delete_subscription(conn, stream_uuid, name, schema: schema)
+      if MapSet.member?(known, name) do
+        :ok = EventStore.Storage.delete_subscription(conn, stream_uuid, name, schema: schema)
+      else
+        raise "Reset refusing to clear an unrecognised subscription #{inspect(name)} on " <>
+                "#{inspect(stream_uuid)}: not a known write-side handler " <>
+                "(#{inspect(Enum.sort(MapSet.to_list(known)))}). The simulation store is " <>
+                "event-sourcing-dedicated (ADR 0003), so a foreign subscriber is unexpected."
+      end
     end)
 
     :ok
