@@ -17,8 +17,10 @@ defmodule Latchkey.PropertyManagement.Tenancy do
   fires at most once). Exit catch-up books whole periods until a full period no longer
   fits before the effective end date E, then pro-rates the boundary period daily to E
   (issue #31); an overstay (`V > E`) appends the `[E, V)` hold-over span as one
-  crystallised daily-rate `RentFellDue` at keys-return (issue #32, ADR 0004). See
-  `docs/adr/0003-es-foundation-bakeoff.md`.
+  crystallised daily-rate `RentFellDue` at keys-return (issue #32, ADR 0004). When a
+  backdated notice sets E inside a period the sweep already booked whole, a single
+  compensating `RentFellDue` nets that period back down to the #31 pro-rata (issue #64).
+  See `docs/adr/0003-es-foundation-bakeoff.md`.
   """
   alias Latchkey.PropertyManagement.Tenancy.State
 
@@ -413,7 +415,15 @@ defmodule Latchkey.PropertyManagement.Tenancy do
         termination_date: cmd.termination_date
       }
 
-      {:ok, catch_up ++ [notice]}
+      # Reconcile a rent period the sweep already booked *whole* that E now cuts short
+      # (issue #64). Appended after the notice — the notice is what sets E, so the
+      # correction reads as its consequence. The **original** `s` (pre-catch-up) is the
+      # right basis: this call's catch-up is E-aware and never books a fresh boundary
+      # whole, so the only whole booking of E's period is a prior sweep, recorded in
+      # `s.due_through`.
+      correction = prebooked_boundary_correction(s, cmd.termination_date, nil)
+
+      {:ok, catch_up ++ [notice] ++ correction}
     end
   end
 
@@ -505,6 +515,54 @@ defmodule Latchkey.PropertyManagement.Tenancy do
     else
       []
     end
+  end
+
+  # The pre-booked boundary reconciliation (issue #64). When the effective end date E lands
+  # strictly inside a rent period the daily sweep (#41) already booked **whole** — the sweep
+  # books each period in advance, before any notice sets E — the days `[E, period_to)` were
+  # over-charged. #31 only pro-rates a boundary period the catch-up reaches *unbooked*; a
+  # pre-booked one slips past the `due_through` resume filter and is never corrected. Emit
+  # **one** compensating `rent_fell_due` that nets the whole charge down to the #31 boundary
+  # pro-rata `[period_from, E)` — an event-sourced correction, never a mutation, preserving
+  # double-entry fidelity (ADR 0004). Nothing fires when the sweep never ran (`due_through`
+  # nil), when E is a period boundary (over-charges nothing), or when E's period is still
+  # unbooked (catch-up pro-rates it live, #31) — the last two would otherwise double-correct.
+  defp prebooked_boundary_correction(%State{due_through: nil}, _e, _recorded_on), do: []
+
+  defp prebooked_boundary_correction(%State{} = s, %Date{} = e, recorded_on) do
+    {period_from, period_to} = scheduled_period_containing(s, e)
+
+    if boundary_prebooked?(s, period_from, period_to, e) do
+      # `boundary_prorata − full_rent` (negative): `full + correction` equals the #31
+      # boundary charge exactly, so a pre-booked exit and a lazily-accrued one settle to the
+      # identical figure with no rounding drift (one half-up, Money §9). `occurred_on = E`:
+      # the reconciliation takes effect at the end date, keeping `occurred_on == period_from`
+      # (the charge invariant) while the span `[E, period_to)` names the clawed-back tail.
+      prorata = daily_rate_amount(s, period_from, e, Date.diff(period_to, period_from))
+
+      [
+        %{
+          type: :rent_fell_due,
+          occurred_on: e,
+          recorded_on: recorded_on || e,
+          amount_cents: prorata - s.rent_amount_cents,
+          period_from: e,
+          period_to: period_to
+        }
+      ]
+    else
+      []
+    end
+  end
+
+  # E needs a correction only when it lands **strictly inside** a period (`period_from < E <
+  # period_to`) that was already booked whole — its start is on/before the last booked due
+  # date (`period_from <= due_through`). A boundary-aligned E over-charges nothing; an
+  # unbooked period is pro-rated live by `catch_up_events` (#31).
+  defp boundary_prebooked?(%State{due_through: due_through}, period_from, period_to, e) do
+    Date.compare(period_from, e) == :lt and
+      Date.compare(e, period_to) == :lt and
+      Date.compare(period_from, due_through) != :gt
   end
 
   # The **last scheduled period** for the overstay denominator (ADR 0009 decision 3): the

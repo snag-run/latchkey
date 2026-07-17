@@ -157,6 +157,11 @@ defmodule Latchkey.PropertyManagement.Timeline do
 
   # ── per-kind rendering ───────────────────────────────────────────────────────
 
+  # A positive rent charge is a debit; a **negative** one is the #64 pre-booked-period
+  # correction and re-expands into the credit column as a positive magnitude — the mirror
+  # of a payment reversal's debit re-expansion (ADR 0006 §7), so the exhibit never shows a
+  # nonsensical "negative debit".
+  defp money(%{kind: :rent_fell_due, amount_cents: amount}) when amount < 0, do: {nil, -amount}
   defp money(%{kind: :rent_fell_due, amount_cents: amount}), do: {amount, nil}
   defp money(%{kind: :payment, amount_cents: amount}), do: {nil, amount}
   # A reversal's `amount_cents` is negative; sign picks the column (ADR 0006 §7) — it
@@ -193,6 +198,14 @@ defmodule Latchkey.PropertyManagement.Timeline do
   defp describe(n, _balance), do: describe(n)
 
   defp describe(%{kind: :commenced}), do: "Tenancy commenced"
+
+  # A negative rent charge is the #64 pre-booked-period correction: a mid-period exit cuts a
+  # week the sweep already booked whole, clawing the over-charged tail back to the pro-rated
+  # end date. Rendered as a credit (see `money/1`), described as an adjustment — a visible
+  # correcting entry, never a silent one.
+  defp describe(%{kind: :rent_fell_due, amount_cents: amount}) when amount < 0,
+    do: "Rent adjustment — pre-booked period reconciled to end date"
+
   defp describe(%{kind: :rent_fell_due}), do: "Rent due"
   defp describe(%{kind: :payment}), do: "Payment received"
   defp describe(%{kind: :keys_returned}), do: "Keys returned — possession recovered"

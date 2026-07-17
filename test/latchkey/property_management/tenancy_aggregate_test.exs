@@ -1048,6 +1048,126 @@ defmodule Latchkey.PropertyManagement.Tenancy.AggregateTest do
     end
   end
 
+  describe "pre-booked period over-charge — a backdated mid-period E reconciles the week (issue #64)" do
+    # The daily sweep (#41) books each weekly period whole, in advance. Here a real CatchUp
+    # books six whole weeks 01-05..02-09 (incl. [02-09, 02-16)) BEFORE any notice; a
+    # **backdated** notice then sets E = 02-12, mid the already-booked [02-09, 02-16) week.
+    # Replayed through the real aggregate (CatchUp → GiveTerminationNotice), so the
+    # over-charge is produced by the actual sweep, not a hand-built %State{} (issue #120).
+    defp prebooked_midweek_agg do
+      agg = commenced_agg()
+
+      swept =
+        Agg.execute(agg, %C.CatchUp{
+          tenancy_id: "t1",
+          as_of: ~D[2026-02-15],
+          recorded_on: ~D[2026-02-15]
+        })
+
+      apply_all(agg, swept)
+    end
+
+    defp backdated_midweek_notice(agg) do
+      Agg.execute(agg, %C.GiveTerminationNotice{
+        tenancy_id: "t1",
+        termination_date: ~D[2026-02-12],
+        given_on: ~D[2026-02-11],
+        as_of: ~D[2026-02-15],
+        recorded_on: ~D[2026-02-15]
+      })
+    end
+
+    test "the notice emits one compensating RentFellDue that claws back [E, period_to)" do
+      events = backdated_midweek_notice(prebooked_midweek_agg())
+
+      assert [correction] = Enum.filter(events, &match?(%RentFellDue{}, &1))
+
+      # Nets the whole [02-09, 02-16) week down to the 3-day [02-09, 02-12) pro-rata:
+      # 21_429 (#31 boundary) − 50_000 full = −28_571. Span names the clawed-back tail.
+      assert correction.amount_cents == 21_429 - 50_000
+      assert correction.amount_cents == -28_571
+      assert correction.occurred_on == ~D[2026-02-12]
+      assert correction.period_from == ~D[2026-02-12]
+      assert correction.period_to == ~D[2026-02-16]
+      # #118: books same-day (recorded_on == occurred_on).
+      assert correction.recorded_on == correction.occurred_on
+      # The notice is still emitted (the correction is appended after it).
+      assert %TerminationNoticeGiven{termination_date: ~D[2026-02-12]} =
+               Enum.find(events, &match?(%TerminationNoticeGiven{}, &1))
+    end
+
+    test "the reconciled balance equals a never-pre-booked (lazy) mid-week exit — no over-charge" do
+      agg = prebooked_midweek_agg()
+      agg = apply_all(agg, backdated_midweek_notice(agg))
+
+      exit_events =
+        Agg.execute(agg, %C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-02-12],
+          recorded_on: ~D[2026-02-12]
+        })
+
+      # 5 whole weeks 01-05..02-02 (250_000) + [02-09, 02-12) boundary (21_429) − 0 paid =
+      # 271_429 — identical to the lazy midweek exit; the pre-booking left no residue.
+      assert %TenancySettled{final_balance_cents: 271_429} = List.last(exit_events)
+
+      folded = apply_all(agg, exit_events)
+      assert folded.core.status == :terminal
+      assert Tenancy.balance_cents(folded.core) == 271_429
+    end
+
+    test "an overstay past the backdated E composes with the correction (boundary + overstay)" do
+      agg = prebooked_midweek_agg()
+      agg = apply_all(agg, backdated_midweek_notice(agg))
+
+      settled =
+        Agg.execute(agg, %C.ReturnKeys{
+          tenancy_id: "t1",
+          keys_on: ~D[2026-02-19],
+          recorded_on: ~D[2026-02-19]
+        })
+        |> List.last()
+
+      # 5 whole weeks (250_000) + boundary [02-09, 02-12) (21_429) + overstay [02-12, 02-19)
+      # (50_000) = 321_429 — the same figure the lazy path settles at.
+      assert settled.final_balance_cents == 321_429
+    end
+
+    test "a forward-dated boundary E books whole and emits NO correction" do
+      # E = 02-16 is a period boundary; the [02-09, 02-16) week booked to E is fully within
+      # the tenancy, and [02-16, …) is unbooked — nothing is over-charged.
+      events =
+        Agg.execute(prebooked_midweek_agg(), %C.GiveTerminationNotice{
+          tenancy_id: "t1",
+          termination_date: ~D[2026-02-16],
+          given_on: ~D[2026-02-15],
+          as_of: ~D[2026-02-15],
+          recorded_on: ~D[2026-02-15]
+        })
+
+      assert Enum.filter(events, &match?(%RentFellDue{}, &1)) == []
+    end
+
+    test "an unbooked mid-period E is pro-rated live by catch-up, never double-corrected (#31 vs #64)" do
+      # Booked only through 02-09; E = 02-20 lands mid the still-**unbooked** [02-16, 02-23)
+      # week. Catch-up pro-rates [02-16, 02-20) (#31, a positive charge); #64 must NOT fire.
+      events =
+        Agg.execute(prebooked_midweek_agg(), %C.GiveTerminationNotice{
+          tenancy_id: "t1",
+          termination_date: ~D[2026-02-20],
+          given_on: ~D[2026-02-22],
+          as_of: ~D[2026-02-22],
+          recorded_on: ~D[2026-02-22]
+        })
+
+      assert [boundary] = Enum.filter(events, &match?(%RentFellDue{}, &1))
+      assert boundary.period_from == ~D[2026-02-16]
+      assert boundary.period_to == ~D[2026-02-20]
+      # [02-16, 02-20) = 4 days at $500/week: round_half_up(50_000 × 4 ÷ 7) = 28_571 (> 0).
+      assert boundary.amount_cents == 28_571
+    end
+  end
+
   describe "payment cadences — fortnightly & monthly accrual (ADR 0009)" do
     # An **active** tenancy reached by replaying just the commence event (no notice),
     # sweepable from `first_due_date` — event-folded, not hand-built (issue #120).
