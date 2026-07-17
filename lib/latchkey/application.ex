@@ -27,16 +27,13 @@ defmodule Latchkey.Application do
     Supervisor.start_link(children, opts)
   end
 
-  # The event-sourcing write side. Disabled in :test (see config/test.exs) so the
-  # sandboxed suite doesn't boot Commanded; integration tests start it explicitly.
+  # The event-sourcing write side, grouped under one supervisor so the simulation reset
+  # primitive can cold-start it as a subtree (issue #173, ADR 0007 decision 3). Disabled
+  # in :test (see config/test.exs) so the sandboxed suite doesn't boot Commanded;
+  # integration tests start `Latchkey.CommandedSupervisor` explicitly.
   defp commanded_children do
     if Application.get_env(:latchkey, :start_commanded, true) do
-      [
-        Latchkey.CommandedApp,
-        Latchkey.PropertyManagement.ArrearsProjector,
-        Latchkey.PropertyManagement.PaymentAcl,
-        Latchkey.Inspector.Broadcaster
-      ]
+      [Latchkey.CommandedSupervisor]
     else
       []
     end
