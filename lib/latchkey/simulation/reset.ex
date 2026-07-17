@@ -168,20 +168,50 @@ defmodule Latchkey.Simulation.Reset do
   end
 
   # Terminate the write-side subtree in reverse start order (discarding every cached
-  # aggregate process), run `wipe_fun` over the down store, then restart in start order so
-  # the handlers re-subscribe from their `start_from` and rebuild. The restart runs in an
-  # `after`, so a wipe (or restart) failure leaves the write side **up** over the un-wiped
-  # store — operational, not stranded DOWN — and the error still propagates. That is the
-  # "re-run, not repair" contract: a reset that dies partway is recovered by re-running.
+  # aggregate process), run `wipe_fun` over the down store, then restart every child in
+  # start order so the handlers re-subscribe from their `start_from` and rebuild.
+  #
+  # Fault-tolerant on both halves, so one failure can never strand the rest of the subtree
+  # down (the write side comes back **up** — operational, not stranded DOWN — whatever fails):
+  #
+  #   * teardown + wipe run under `attempt/1`, so if a `terminate!/1` (or the wipe) raises
+  #     partway, the restart pass still runs and brings the already-stopped children back;
+  #   * the restart pass attempts **every** child even if an individual `restart!/1` raises,
+  #     rather than aborting on the first failure.
+  #
+  # The first error is re-raised only *after* every restart has been attempted, with teardown/
+  # wipe taking precedence over a restart failure (it is the root cause, and it comes first).
+  # That is the "re-run, not repair" contract: a reset that dies partway is recovered by
+  # re-running.
   defp with_write_side_down(wipe_fun) do
     ids = ordered_child_ids()
 
-    Enum.each(Enum.reverse(ids), &terminate!/1)
+    teardown =
+      attempt(fn ->
+        Enum.each(Enum.reverse(ids), &terminate!/1)
+        wipe_fun.()
+      end)
 
-    try do
-      wipe_fun.()
-    after
-      Enum.each(ids, &restart!/1)
+    restart = ids |> Enum.map(fn id -> attempt(fn -> restart!(id) end) end) |> first_error()
+
+    reraise_first!([teardown, restart])
+  end
+
+  # Run `fun`, returning `:ok` or `{:error, {exception, stacktrace}}` instead of raising — so
+  # callers can attempt every step and decide which error to surface once all have run.
+  defp attempt(fun) do
+    fun.()
+    :ok
+  rescue
+    error -> {:error, {error, __STACKTRACE__}}
+  end
+
+  defp first_error(results), do: Enum.find(results, :ok, &match?({:error, _}, &1))
+
+  defp reraise_first!(results) do
+    case first_error(results) do
+      :ok -> :ok
+      {:error, {error, stacktrace}} -> reraise(error, stacktrace)
     end
   end
 
@@ -220,8 +250,9 @@ defmodule Latchkey.Simulation.Reset do
 
   # Truncate events/streams/subscriptions/snapshots over a transient Postgrex connection,
   # mirroring `test/test_helper.exs`. Runs while the write-side subtree (and its pooled
-  # store connection) is down, so nothing contends. The connection is unlinked before it
-  # is shut down so a wipe failure can never take the caller down with it.
+  # store connection) is down, so nothing contends. The connection is unlinked **immediately**
+  # (before the wipe) so an abnormal conn exit mid-wipe can never kill the caller before the
+  # `after` cleanup runs.
   defp truncate_store! do
     config = EventStore.Config.parsed(Latchkey.EventStore, :latchkey)
 
@@ -230,10 +261,11 @@ defmodule Latchkey.Simulation.Reset do
       |> EventStore.Config.default_postgrex_opts()
       |> Postgrex.start_link()
 
+    true = Process.unlink(conn)
+
     try do
       {:ok, _} = EventStore.Storage.Initializer.reset!(conn, config)
     after
-      true = Process.unlink(conn)
       true = Process.exit(conn, :shutdown)
     end
 
@@ -285,8 +317,8 @@ defmodule Latchkey.Simulation.Reset do
   # checkpoint clear is the narrowed reset's equivalent of the coarse primitive's
   # subscription truncate — without it a cold-restarted handler would resume mid-`$all` over
   # the wiped store and never rebuild (see moduledoc). All subscriptions are the simulation
-  # handlers' own Commanded bookkeeping. The connection is unlinked before shutdown so a
-  # wipe failure can never take the caller down with it.
+  # handlers' own Commanded bookkeeping. The connection is unlinked **immediately** (before
+  # the wipe) so an abnormal conn exit mid-wipe can never kill the caller before cleanup runs.
   defp delete_simulation_streams!(accounts_stream) do
     config = EventStore.Config.parsed(Latchkey.EventStore, :latchkey)
     schema = Keyword.get(config, :schema, "public")
@@ -295,6 +327,8 @@ defmodule Latchkey.Simulation.Reset do
       config
       |> EventStore.Config.default_postgrex_opts()
       |> Postgrex.start_link()
+
+    true = Process.unlink(conn)
 
     try do
       # Run the whole wipe in one transaction so the session setting and the deletes share a
@@ -318,7 +352,6 @@ defmodule Latchkey.Simulation.Reset do
           timeout: :infinity
         )
     after
-      true = Process.unlink(conn)
       true = Process.exit(conn, :shutdown)
     end
 
