@@ -27,9 +27,7 @@ defmodule LatchkeyWeb.LandingLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.flash_group flash={@flash} />
-
-    <div class="landing">
+    <Layouts.landing flash={@flash}>
       <header class="topbar">
         <div class="row">
           <div class="brand">
@@ -432,7 +430,7 @@ defmodule LatchkeyWeb.LandingLive do
           github.com/snag-run/latchkey
         </a>
       </footer>
-    </div>
+    </Layouts.landing>
     """
   end
 end
