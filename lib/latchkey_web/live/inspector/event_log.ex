@@ -1,156 +1,142 @@
 defmodule LatchkeyWeb.Inspector.EventLog do
   @moduledoc """
-  The read-only **event-log pane** (`LatchkeyWeb.InspectorLive`, spec
-  `docs/spec/developer-view.md`, issue #81, decisions D3/D7): for a selected
-  stream it renders the raw, immutable events in commit order with their **full
-  stored payloads**.
+  The read-only **vertical evidence log** — the full-detail lens on a stream's raw,
+  immutable events (`LatchkeyWeb.InspectorLive`, spec `docs/spec/developer-view.md`
+  D3/D7, issue #81). Rendered in the editorial "stream-detail" visual language.
 
-  It doubles as the **Accounts edge** view (D3): the single `accounts` stream
-  renders through this same pane, **events-only**, captioned as an edge context
-  that folds no aggregate state (no aggregate / read-model panes, by design).
+  It is the **evidence** lens: unlike the horizontal filmstrip (the narrative lens,
+  which shows only type + date + amount), each row here is **self-describing out of
+  context** for the tribunal-evidence goal — the **property** (leading) and
+  **tenant**, **both envelope dates** (`occurred_on` / `recorded_on`) with a visible
+  **divergence flag** when they differ (D7), and the **full stored payload**.
 
-  Each row is **self-describing out of context** (the tribunal-evidence goal): it
-  names the **property** (leading — the primary PM identifier) and **tenant**, and
-  shows **both envelope dates** (`occurred_on` / `recorded_on`) with a visible
-  **divergence flag** when they differ (D7 — for `RentFellDue`, an imported/rebuilt
-  tenancy (#117), since organic accrual books same-day; or a forward-dated fact).
-  Identity is resolved upstream in `LatchkeyWeb.InspectorLive`; accounts
-  rows honestly show an `UNKNOWN` sentinel when the payment holder is unresolvable.
+  It serves two callers:
 
-  Presentational only. It renders the pre-built rows it is handed — it reads no
-  store, folds no state, and exposes **no** create/update/delete affordance. The
-  log is **append-only / immutable** (never "tamper-evident" — issue #16).
+  - the **deep** (tenancy) stream, as the vertical toggle of the filmstrip — rows are
+    dimmed past the current prefix and the row at `k` is highlighted + `aria-current`
+    (so the fold-flow animation pulses it), and each row is a scrub target;
+  - the **Accounts edge** (D3), events-only, captioned as an edge context that folds
+    no aggregate state (no filmstrip, no scrub — the *absence* is the teaching point).
+
+  Presentational only. It renders the pre-built rows it is handed — it reads no store,
+  folds no state, and exposes **no** create/update/delete affordance. The log is
+  **append-only / immutable** (never "tamper-evident" — issue #16).
   """
   use LatchkeyWeb, :html
 
-  import LatchkeyWeb.InspectorComponents, only: [caption: 1, read_more: 1]
-
   @doc """
-  The event-log pane for one stream. `rows` are the pre-resolved event rows (see
-  `LatchkeyWeb.InspectorLive`), `kind` is `:deep` (a tenancy stream) or `:edge`
-  (the `accounts` stream), and `docs` carries the canonical "read more" URLs.
+  The vertical evidence log for one stream. `rows` are pre-resolved event rows in
+  commit order. When `scrubbable?` (the deep stream), `k` dims rows past the prefix,
+  `highlight_version` marks the current row, and rows are scrub targets; the edge
+  passes `scrubbable?: false` (no dim, no highlight, no click).
   """
   attr :stream_id, :string, required: true
   attr :context_name, :string, required: true
   attr :kind, :atom, required: true, doc: ":deep (tenancy) or :edge (accounts)"
   attr :rows, :list, required: true, doc: "pre-resolved event rows in commit order"
   attr :docs, :map, required: true, doc: "canonical doc URLs for read-more links"
+  attr :scrubbable?, :boolean, default: false, doc: "deep streams scrub; the edge does not"
+  attr :k, :integer, default: nil, doc: "current prefix length — dims rows past it (deep)"
 
   attr :highlight_version, :integer,
     default: nil,
-    doc: "stream_version of the replay scrubber's current event (D4), or nil when unscrubbed"
+    doc: "stream_version of the row at the current prefix (deep), else nil"
 
-  def events_pane(assigns) do
+  def vertical_log(assigns) do
     ~H"""
-    <section id="event-log" class="max-w-3xl">
-      <div id="stream-view">
-        <div id={"stream-view-#{@stream_id}"}>
-          <header class="mb-3">
-            <p class="text-[11px] font-semibold uppercase tracking-widest text-base-content/50">
-              {@context_name} · events
-            </p>
-            <h2 class="mt-1 text-lg font-semibold font-mono">{@stream_id}</h2>
-          </header>
+    <section id="event-log">
+      <p :if={@kind == :edge} id="accounts-edge-caption" class="sd-note">
+        <b>Edge context.</b>
+        Accounts emits payment facts and <b>folds no aggregate state</b>
+        — so there is no aggregate or read-model pane here, only this raw log. The <i>absence</i>
+        of those panes is the teaching point.
+      </p>
 
-          <%!-- Thin, interaction-anchored teaching captions (spec D2 altitude split). --%>
-          <div class="mb-4 space-y-2">
-            <.caption :if={@kind == :edge} id="accounts-edge-caption">
-              <b>Edge context.</b>
-              Accounts emits payment facts and <b>folds no aggregate state</b>
-              —
-              so there is no aggregate or read-model pane here, only this raw log. The <i>absence</i>
-              of those panes is the teaching point.
-            </.caption>
+      <p id="bitemporal-caption" class="sd-note">
+        Every event carries two dates — <b>occurred_on</b>
+        (when the fact became true) and <b>recorded_on</b>
+        (when it was booked). When they diverge it is flagged: an imported/rebuilt
+        tenancy or a forward-dated fact — organic accrual books same-day.
+        <.link
+          navigate={"#{@docs.domain_model}#3-events-producers"}
+          class="sd-readmore"
+        >
+          domain-model.md §3
+        </.link>
+      </p>
 
-            <.caption id="bitemporal-caption">
-              Every event carries two dates — <b>occurred_on</b>
-              (when the fact became true) and <b>recorded_on</b>
-              (when it was booked). When they diverge it is flagged: an
-              imported/rebuilt tenancy or a forward-dated fact — organic accrual
-              books same-day.
-              <.read_more href={"#{@docs.domain_model}#3-events-producers"}>
-                domain-model.md §3
-              </.read_more>
-            </.caption>
+      <p id="immutability-note" class="sd-note">
+        This log is <b>append-only / immutable</b> — events are never edited or
+        deleted; corrections are compensating appends.
+      </p>
 
-            <p id="immutability-note" class="text-xs leading-relaxed text-base-content/60">
-              This log is <b class="text-base-content/80">append-only / immutable</b> — events are
-              never edited or deleted; corrections are compensating appends.
-            </p>
-          </div>
+      <div id={"stream-view-#{@stream_id}"} class="sd-vlog" phx-hook=".LogScroll">
+        <script :type={Phoenix.LiveView.ColocatedHook} name=".LogScroll">
+          // Keep the folded-to row in view as the prefix moves, scrolling this log
+          // pane (deep vertical lens); on the edge there is no current row, so no-op.
+          export default {
+            mounted() { this.follow() },
+            updated() { this.follow() },
+            follow() {
+              const cur = this.el.querySelector('[aria-current="step"]')
+              if (cur) cur.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" })
+            }
+          }
+        </script>
+        <p :if={@rows == []} id="event-log-empty" class="sd-note">
+          No events on this stream yet.
+        </p>
 
-          <ol id="event-log-rows" class="relative border-l border-base-300 ml-1.5">
-            <li
-              :if={@rows == []}
-              id="event-log-empty"
-              class="pl-5 py-3 text-xs text-base-content/50 italic"
-            >
-              No events on this stream yet.
-            </li>
-
-            <li
-              :for={row <- @rows}
-              id={"event-row-#{@stream_id}-#{row.version}"}
-              aria-current={row.version == @highlight_version && "step"}
-              class={[
-                "relative pl-5 pb-5",
-                row.version == @highlight_version &&
-                  "-ml-px rounded-r-md border-l-2 border-accent bg-accent/5"
-              ]}
-            >
+        <%= for row <- @rows do %>
+          <% dimmed? = @scrubbable? and @k != nil and row.version > @k %>
+          <% here? = row.version == @highlight_version %>
+          <div
+            id={"event-row-#{@stream_id}-#{row.version}"}
+            aria-current={here? && "step"}
+            phx-click={@scrubbable? && "scrub"}
+            phx-value-k={@scrubbable? && row.version}
+            role={@scrubbable? && "button"}
+            tabindex={@scrubbable? && "0"}
+            class={[
+              "sd-vrow",
+              @scrubbable? && "cursor-pointer",
+              here? && "sd-here",
+              dimmed? && "sd-dim"
+            ]}
+          >
+            <div class="sd-vhead">
+              <span class="sd-vtype">{row.type}</span>
+              <span class="sd-vver">#{row.version}</span>
               <span
-                class={[
-                  "absolute -left-[5px] top-1.5 size-2.5 rounded-full",
-                  if(row.version == @highlight_version, do: "bg-accent", else: "bg-primary")
-                ]}
-                aria-hidden="true"
-              />
-
-              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <span class="font-mono text-sm font-semibold">{row.type}</span>
-                <span class="font-mono text-[11px] text-base-content/40">#{row.version}</span>
-
-                <span
-                  :if={row.divergent?}
-                  id={"event-divergence-#{@stream_id}-#{row.version}"}
-                  class="badge badge-sm badge-warning gap-1"
-                  title="occurred_on and recorded_on differ (bitemporal divergence)"
-                >
-                  occurred ≠ recorded
-                </span>
-              </div>
-
-              <%!-- Property-leading identity line: self-describing out of context (#81). --%>
-              <p
-                id={"event-identity-#{@stream_id}-#{row.version}"}
-                class="mt-0.5 text-[11px] text-base-content/60"
+                :if={row.divergent?}
+                id={"event-divergence-#{@stream_id}-#{row.version}"}
+                class="sd-flag"
+                title="occurred_on and recorded_on differ (bitemporal divergence)"
               >
-                <span class="font-medium text-base-content/80">{row.identity.property}</span>
-                <span aria-hidden="true">·</span>
-                <span>{row.identity.tenant}</span>
-                <span class="font-mono text-base-content/40">{row.identity.ref}</span>
-              </p>
+                occurred ≠ recorded
+              </span>
+            </div>
 
-              <%!-- Two-date bitemporal display (D7). --%>
-              <dl class="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 text-[11px]">
-                <dt class="text-base-content/50">occurred_on</dt>
-                <dd class="font-mono">{fmt(row.occurred_on)}</dd>
-                <dt class="text-base-content/50">recorded_on</dt>
-                <dd class={["font-mono", row.divergent? && "text-warning"]}>
-                  {fmt(row.recorded_on)}
-                </dd>
-              </dl>
+            <p id={"event-identity-#{@stream_id}-#{row.version}"} class="sd-vident">
+              <b>{row.identity.property}</b>
+              <span aria-hidden="true">·</span>
+              <span>{row.identity.tenant}</span>
+              <span class="sd-mono" style="color:var(--sd-muted)">{row.identity.ref}</span>
+            </p>
 
-              <%!-- Full stored payload. --%>
-              <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 rounded-lg bg-base-200/60 p-2.5 text-[11px]">
-                <div :for={{key, value} <- row.payload} class="contents">
-                  <dt class="font-mono text-base-content/50">{key}</dt>
-                  <dd class="font-mono break-all">{fmt(value)}</dd>
-                </div>
-              </dl>
-            </li>
-          </ol>
-        </div>
+            <dl class="sd-payload">
+              <dt>occurred_on</dt>
+              <dd>{fmt(row.occurred_on)}</dd>
+              <dt>recorded_on</dt>
+              <dd class={[row.divergent? && "sd-diverge"]}>{fmt(row.recorded_on)}</dd>
+
+              <div :for={{key, value} <- row.payload} class="contents">
+                <dt>{key}</dt>
+                <dd>{fmt(value)}</dd>
+              </div>
+            </dl>
+          </div>
+        <% end %>
       </div>
     </section>
     """

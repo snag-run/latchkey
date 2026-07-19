@@ -134,6 +134,10 @@ defmodule LatchkeyWeb.InspectorLive do
       # "Guided tour" button.
       |> assign(:tour_active?, false)
       |> assign(:tour_step, 0)
+      # Which lens the deep-stream event section shows: `:horizontal` (the filmstrip,
+      # the narrative lens) or `:vertical` (the full evidence log). A UI preference
+      # that persists across streams; toggled by `set_event_view`.
+      |> assign(:event_view, :horizontal)
       # Nav-rail legibility state (~100 streams): a filter query and the set of
       # expanded scenario groups. Both are server-side; the rail collapses all
       # groups by default so the map lands compact.
@@ -289,6 +293,12 @@ defmodule LatchkeyWeb.InspectorLive do
     prev = socket.assigns.scrubber_k
     socket = socket |> cancel_play() |> assign_prefix(socket.assigns.scrubber_n)
     {:noreply, maybe_push_fold(socket, prev)}
+  end
+
+  # Flip the deep-stream event lens between the horizontal filmstrip and the vertical
+  # evidence log. Purely a view preference — it does not touch the prefix `k`.
+  def handle_event("set_event_view", %{"view" => view}, socket) do
+    {:noreply, assign(socket, :event_view, event_view(view))}
   end
 
   # ── Nav-rail filter + group collapse (server-side) ──────────────────────────
@@ -801,6 +811,10 @@ defmodule LatchkeyWeb.InspectorLive do
     end
   end
 
+  # Map the client's view param to a known atom (never `String.to_atom/1` on input).
+  defp event_view("vertical"), do: :vertical
+  defp event_view(_), do: :horizontal
+
   defp base_row(recorded, identity) do
     data = recorded.data
     {occurred_on, recorded_on, divergent?} = Resolver.bitemporal(data)
@@ -882,11 +896,11 @@ defmodule LatchkeyWeb.InspectorLive do
                   <span aria-hidden="true">/</span>
                   <span class="font-mono text-base-content">{@active_stream}</span>
                 </nav>
-                <%!-- Deep (tenancy) streams render the numbered fold pipeline with the --%>
-                <%!-- opt-in guided tour (LatchkeyWeb.Inspector.GuidedStream): the log, --%>
-                <%!-- then everything it folds into (replay → aggregate state, read model, --%>
-                <%!-- ledger), top to bottom. The Accounts edge (events only, no fold — D3) --%>
-                <%!-- stays a single full-width column. --%>
+                <%!-- Deep (tenancy) streams render the editorial fold stage with the --%>
+                <%!-- opt-in guided tour (LatchkeyWeb.Inspector.GuidedStream): the log --%>
+                <%!-- (filmstrip or evidence log), then everything it folds into (write & --%>
+                <%!-- read models, ledger). The Accounts edge (events only, no fold — D3) --%>
+                <%!-- renders the vertical evidence log alone. --%>
                 <%= if @stream_kind == :deep do %>
                   <.deep_stream
                     tour_active?={@tour_active?}
@@ -894,6 +908,7 @@ defmodule LatchkeyWeb.InspectorLive do
                     active_stream={@active_stream}
                     context_name={@context_name}
                     event_rows={@event_rows}
+                    event_view={@event_view}
                     docs={@docs}
                     highlight_version={@highlight_version}
                     scrubber_k={@scrubber_k}
@@ -906,14 +921,14 @@ defmodule LatchkeyWeb.InspectorLive do
                     ledger_entries={@ledger_entries}
                   />
                 <% else %>
-                  <div id="stream-events-col" class="min-w-0">
-                    <.events_pane
+                  <div id="stream-events-col" class="stream-detail min-w-0 max-w-3xl">
+                    <.vertical_log
                       stream_id={@active_stream}
                       context_name={@context_name}
                       kind={@stream_kind}
                       rows={@event_rows}
                       docs={@docs}
-                      highlight_version={@highlight_version}
+                      scrubbable?={false}
                     />
                   </div>
                 <% end %>

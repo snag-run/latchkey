@@ -1,39 +1,35 @@
 defmodule LatchkeyWeb.Inspector.StatePanes do
   @moduledoc """
-  The read-only **aggregate-state + read-model panes** — the write-vs-read
-  money-shot (`LatchkeyWeb.InspectorLive`, spec `docs/spec/developer-view.md`,
-  issue #83, decisions **D1/D2**): beside a tenancy stream's event log, what the
-  log *folds into*.
+  The read-only **write-vs-read duel** — the money-shot of the tenancy stream view
+  (`LatchkeyWeb.InspectorLive`, spec `docs/spec/developer-view.md`, issue #83,
+  decisions **D1/D2**), in the editorial "stream-detail" language: what the log *folds
+  into*, with the two folds facing each other.
 
-  Two panes, one fold:
+  Two panes, one fold, with the **consistency check as the seam** between them:
 
-  - the **aggregate-state pane** renders the folded `%Tenancy.State{}` core — the
-    write model's consistency boundary (status, charges, `due_through`,
-    `effective_end_date`, …);
+  - the **aggregate-state pane** (write model) renders the folded `%Tenancy.State{}`
+    core — the consistency boundary that guards the invariants;
   - the **read-model pane** renders the `Arrears` fields (balance, oldest-unpaid,
     `days_behind`, status) **derived off that same core**.
 
-  Both come from `Latchkey.PropertyManagement.ArrearsFold.fold_and_derive/1` at
-  full history — the **one shared fold** the operational `ArrearsProjector` also
-  runs (D1), so what the inspector teaches is the real fold, not a lookalike. A
-  **consistency check** then shows the full-prefix recompute equalling the live
-  `Arrears` row: *the read model is just a fold of the log.*
+  Both come from `Latchkey.PropertyManagement.ArrearsFold.fold_and_derive/1` (the
+  **one shared fold** the operational `ArrearsProjector` also runs, D1), so what the
+  inspector teaches is the real fold. The **consistency check** shows the full-prefix
+  recompute equalling the live `Arrears` row, field for field: *two folds, do they
+  agree?*
 
   Presentational only. It renders the pre-folded state it is handed — it reads no
-  store, writes nothing, and exposes **no** create/update/delete affordance. The
-  log is **append-only / immutable** (never "tamper-evident" — issue #16); the
-  live read-model row is **read** for the check, never rewound (brief cut #4).
+  store, writes nothing, and exposes **no** create/update/delete affordance. The log
+  is **append-only / immutable** (never "tamper-evident" — issue #16); the live
+  read-model row is **read** for the check, never rewound (brief cut #4).
   """
   use LatchkeyWeb, :html
 
-  import LatchkeyWeb.InspectorComponents, only: [caption: 1, read_more: 1]
-
   @doc """
-  The aggregate-state + read-model panes and the consistency check for one
-  tenancy stream. `state` is the folded `%Tenancy.State{}` core, `derived` the
-  `ArrearsFold` struct off that core, and `consistency` either an
-  `ArrearsFold.reconcile/2` report or `:no_live_row` when the stream has no
-  projected `Arrears` row to check against.
+  The write-vs-read duel and the consistency check for one tenancy stream. `state`
+  is the folded `%Tenancy.State{}` core, `derived` the `ArrearsFold` struct off that
+  core, and `consistency` either an `ArrearsFold.reconcile/2` report or `:no_live_row`
+  when the stream has no projected `Arrears` row to check against.
   """
   attr :stream_id, :string, required: true
   attr :state, :map, required: true, doc: "the folded %Tenancy.State{} core"
@@ -43,150 +39,114 @@ defmodule LatchkeyWeb.Inspector.StatePanes do
 
   def fold_panes(assigns) do
     ~H"""
-    <section id="fold-panes" class="mt-8 max-w-3xl space-y-6">
-      <%!-- ── Aggregate-state pane (write model) ────────────────────────────── --%>
-      <div id="aggregate-state-pane" class="rounded-xl border border-primary/50 bg-base-100 p-4">
-        <header class="mb-2 flex items-center gap-2">
-          <span class="badge badge-sm badge-primary">write model</span>
-          <h3 class="text-sm font-semibold">Aggregate state</h3>
-          <span class="ml-auto font-mono text-[11px] text-base-content/40" phx-no-curly-interpolation>%Tenancy.State{}</span>
-        </header>
+    <section id="fold-panes">
+      <div class="sd-duel">
+        <%!-- ── Aggregate-state pane (write model) ──────────────────────────── --%>
+        <div id="aggregate-state-pane" class="sd-pane sd-write">
+          <h3><span class="sd-badge sd-write">write model</span> Aggregate</h3>
+          <p id="aggregate-caption" class="sd-note">
+            the consistency boundary — folds events, guards invariants, never read by
+            reports.
+            <.link navigate={"#{@docs.domain_model}#4-the-tenancy-aggregate"} class="sd-readmore">
+              domain-model.md §4
+            </.link>
+          </p>
+          <dl class="sd-fields">
+            <.field id="aggregate-status" label="status">
+              <.status_spill status={@state.status} />
+            </.field>
+            <.field id="aggregate-rent-amount" label="rent_amount">
+              {money(@state.rent_amount_cents)}
+            </.field>
+            <.field id="aggregate-charges" label="charges">
+              {length(@state.charges)} booked
+            </.field>
+            <.field id="aggregate-due-through" label="due_through">
+              {fmt(@state.due_through)}
+            </.field>
+            <.field id="aggregate-payments-total" label="payments_total" count>
+              {money(@state.payments_total_cents)}
+            </.field>
+          </dl>
+        </div>
 
-        <.caption id="aggregate-caption" class="mb-3">
-          The <b>aggregate</b>
-          — the consistency boundary that <b>folds from the events on the
-          left</b>
-          (<code class="font-mono">Tenancy.evolve/2</code>). It holds the state the write
-          model needs to enforce its invariants; it is <b>never</b>
-          read by reports, only by the
-          aggregate's own decisions.
-          <.read_more href={"#{@docs.domain_model}#4-the-tenancy-aggregate"}>
-            domain-model.md §4
-          </.read_more>
-        </.caption>
+        <%!-- ── The seam: the balance both folds must agree on ──────────────── --%>
+        <div class="sd-seam">
+          <div class="sd-conn"></div>
+          <div class="sd-eq">balance<br />=<br />{money(@derived.balance_cents)}<br />=</div>
+          <div class="sd-conn"></div>
+        </div>
 
-        <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[11px]">
-          <.field id="aggregate-status" label="status">
-            <span class="badge badge-sm badge-ghost font-mono">{@state.status}</span>
-          </.field>
-          <.field id="aggregate-rent-amount" label="rent_amount_cents">
-            {money(@state.rent_amount_cents)}
-          </.field>
-          <.field id="aggregate-cycle" label="cycle">{fmt(@state.cycle)}</.field>
-          <.field id="aggregate-first-due-date" label="first_due_date">
-            {fmt(@state.first_due_date)}
-          </.field>
-          <.field id="aggregate-due-through" label="due_through">{fmt(@state.due_through)}</.field>
-          <.field id="aggregate-charges" label="charges">
-            {length(@state.charges)} booked · {money(charges_total(@state.charges))}
-          </.field>
-          <.field id="aggregate-payments-total" label="payments_total_cents" count>
-            {money(@state.payments_total_cents)}
-          </.field>
-          <.field id="aggregate-applied-payments" label="applied_payment_ids">
-            {MapSet.size(@state.applied_payment_ids)} applied
-          </.field>
-          <.field id="aggregate-effective-end-date" label="effective_end_date">
-            {fmt(@state.effective_end_date)}
-          </.field>
-          <.field id="aggregate-keys-returned-on" label="keys_returned_on">
-            {fmt(@state.keys_returned_on)}
-          </.field>
-          <.field id="aggregate-final-balance" label="final_balance_cents">
-            {money(@state.final_balance_cents)}
-          </.field>
-        </dl>
+        <%!-- ── Read-model pane (derived off the same core) ─────────────────── --%>
+        <div id="read-model-pane" class="sd-pane sd-read">
+          <h3><span class="sd-badge sd-read">read model</span> Arrears</h3>
+          <p id="read-model-caption" class="sd-note">
+            a disposable projection off the same core — rebuildable from the log at any
+            time.
+            <.link navigate={"#{@docs.domain_model}#7-arrears"} class="sd-readmore">
+              domain-model.md §7
+            </.link>
+          </p>
+          <dl class="sd-fields">
+            <.field id="read-model-status" label="status">
+              <.status_spill status={@derived.status} />
+            </.field>
+            <.field id="read-model-balance" label="balance" count>
+              {money(@derived.balance_cents)}
+            </.field>
+            <.field id="read-model-oldest-unpaid" label="oldest_unpaid">
+              {fmt(@derived.oldest_unpaid_due_date)}
+            </.field>
+            <.field id="read-model-days-behind" label="days_behind" count>
+              {@derived.days_behind} days
+            </.field>
+          </dl>
+        </div>
       </div>
 
-      <%!-- ── Read-model pane (derived off the same core) ───────────────────── --%>
-      <div id="read-model-pane" class="rounded-xl border border-info/50 bg-base-100 p-4">
-        <header class="mb-2 flex items-center gap-2">
-          <span class="badge badge-sm badge-info">read model</span>
-          <h3 class="text-sm font-semibold">Arrears</h3>
-          <span class="ml-auto font-mono text-[11px] text-base-content/40">derived</span>
-        </header>
-
-        <.caption id="read-model-caption" class="mb-3">
-          A <b>derived, disposable report</b>
-          folded off the <b>same aggregate core</b>
-          — a
-          projection, never the arrears gate (that reads the aggregate). It is rebuildable from the
-          log at any time; <code class="font-mono">days_behind</code>
-          is computed on read, here as-at the prefix's last event.
-          <.read_more href={"#{@docs.domain_model}#7-arrears"}>domain-model.md §7</.read_more>
-        </.caption>
-
-        <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[11px]">
-          <.field id="read-model-status" label="status">
-            <span class="badge badge-sm badge-ghost font-mono">{@derived.status}</span>
-          </.field>
-          <.field id="read-model-balance" label="balance_cents" count>
-            {money(@derived.balance_cents)}
-          </.field>
-          <.field id="read-model-oldest-unpaid" label="oldest_unpaid_due_date">
-            {fmt(@derived.oldest_unpaid_due_date)}
-          </.field>
-          <.field id="read-model-days-behind" label="days_behind" count>
-            {@derived.days_behind} days
-          </.field>
-          <.field id="read-model-final-balance" label="final_balance_cents" count>
-            {money(@derived.final_balance_cents)}
-          </.field>
-        </dl>
-      </div>
-
-      <%!-- ── Consistency check (immutability made visible, D1) ─────────────── --%>
+      <%!-- ── Consistency check — the verdict on the seam (D1) ─────────────── --%>
       <div
         id="consistency-check"
-        class={[
-          "rounded-xl border p-4 bg-base-100",
-          consistency_border(@consistency)
-        ]}
+        class={["sd-consist", consistency_drift?(@consistency) && "sd-drift"]}
       >
-        <header class="mb-2 flex items-center gap-2">
-          <h3 class="text-sm font-semibold">Consistency check</h3>
-          <span
-            :if={@consistency != :no_live_row}
-            id="consistency-verdict"
-            class={[
-              "ml-auto badge badge-sm",
-              if(@consistency.consistent?, do: "badge-success", else: "badge-error")
-            ]}
-          >
-            {if(@consistency.consistent?, do: "in sync", else: "drifted")}
-          </span>
-        </header>
+        <span class="sd-ck">{consistency_mark(@consistency)}</span>
+        <%= case @consistency do %>
+          <% :no_live_row -> %>
+            <span id="consistency-no-live-row">
+              No live read-model row is projected for this stream yet — nothing to check
+              against.
+            </span>
+          <% %{consistent?: true} -> %>
+            <span>
+              <span id="consistency-verdict" class="sd-mono">in sync</span>
+              — write &amp; read agree · both are folds of the same log.
+            </span>
+          <% _ -> %>
+            <span>
+              <span id="consistency-verdict" class="sd-mono">drifted</span>
+              — the recompute differs from the live row (see below).
+            </span>
+        <% end %>
+      </div>
 
-        <.caption id="consistency-caption" class="mb-3">
-          The read model is <b>just a fold of the log</b>: re-folding the full stream in memory
-          reproduces the live <code class="font-mono">Arrears</code>
-          row, field for field. Nothing is edited here — the log is <b>append-only / immutable</b>, and the recompute is read-only.
-        </.caption>
-
-        <p
-          :if={@consistency == :no_live_row}
-          id="consistency-no-live-row"
-          class="text-[11px] italic text-base-content/50"
-        >
-          No live read-model row is projected for this stream yet — nothing to check against.
+      <%!-- The field-by-field recompute vs the live row: immutability made visible. --%>
+      <div :if={@consistency != :no_live_row} class="sd-pane" style="margin-top:12px">
+        <p id="consistency-caption" class="sd-note">
+          The read model is <b>just a fold of the log</b>: re-folding the full stream in
+          memory reproduces the live <code class="sd-mono">Arrears</code>
+          row, field for field. Nothing is edited here — the log is <b>append-only /
+          immutable</b>, and the recompute is read-only.
         </p>
-
-        <dl
-          :if={@consistency != :no_live_row}
-          class="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 gap-y-1 text-[11px]"
-        >
-          <dt class="font-semibold text-base-content/50">field</dt>
-          <dd class="font-semibold text-base-content/50">recomputed</dd>
-          <dd class="font-semibold text-base-content/50">live</dd>
-          <dd class="font-semibold text-base-content/50 text-right">✓</dd>
-
+        <dl class="sd-fields" style="grid-template-columns:1fr auto auto auto">
+          <dt>field</dt>
+          <dd>recomputed</dd>
+          <dd>live</dd>
+          <dd>✓</dd>
           <div :for={f <- @consistency.fields} class="contents">
-            <dt id={"consistency-field-#{f.field}"} class="font-mono text-base-content/70">
-              {f.field}
-            </dt>
-            <dd class="font-mono">{fmt(f.recomputed)}</dd>
-            <dd class="font-mono">{fmt(f.live)}</dd>
-            <dd class={["text-right font-mono", if(f.match?, do: "text-success", else: "text-error")]}>
+            <dt id={"consistency-field-#{f.field}"}>{f.field}</dt>
+            <dd>{fmt(f.recomputed)}</dd>
+            <dd>{fmt(f.live)}</dd>
+            <dd style={"color:#{if f.match?, do: "var(--sd-ok)", else: "var(--sd-debit)"}"}>
               {if(f.match?, do: "=", else: "≠")}
             </dd>
           </div>
@@ -198,24 +158,46 @@ defmodule LatchkeyWeb.Inspector.StatePanes do
 
   attr :id, :string, required: true
   attr :label, :string, required: true
-  attr :count, :boolean, default: false, doc: "numeric field the fold animation counts to on scrub"
+
+  attr :count, :boolean,
+    default: false,
+    doc: "numeric field the fold animation counts to on scrub"
+
   slot :inner_block, required: true
 
   defp field(assigns) do
     ~H"""
-    <dt class="font-mono text-base-content/50">{@label}</dt>
-    <dd id={@id} data-fold-field data-fold-count={@count} class="font-mono break-all rounded-sm">
+    <dt>{@label}</dt>
+    <dd id={@id} data-fold-field data-fold-count={@count}>
       {render_slot(@inner_block)}
     </dd>
     """
   end
 
-  defp consistency_border(:no_live_row), do: "border-base-300"
-  defp consistency_border(%{consistent?: true}), do: "border-success/50"
-  defp consistency_border(%{consistent?: false}), do: "border-error/50"
+  # A status atom → a coloured spill. Unknown statuses read as "current"-toned.
+  attr :status, :any, required: true
 
-  defp charges_total(charges),
-    do: Enum.reduce(charges, 0, fn {_due, amount}, acc -> acc + amount end)
+  defp status_spill(assigns) do
+    assigns = assign(assigns, :tone, status_tone(assigns.status))
+
+    ~H"""
+    <span class={["sd-spill", @tone]}>{fmt(@status)}</span>
+    """
+  end
+
+  defp status_tone(:arrears), do: "sd-arrears"
+  defp status_tone(:settled), do: "sd-settled"
+  defp status_tone(:closed), do: "sd-settled"
+  defp status_tone(:pre), do: "sd-pre"
+  defp status_tone(nil), do: "sd-pre"
+  defp status_tone(_), do: "sd-current"
+
+  defp consistency_drift?(:no_live_row), do: false
+  defp consistency_drift?(%{consistent?: consistent?}), do: not consistent?
+
+  defp consistency_mark(:no_live_row), do: "—"
+  defp consistency_mark(%{consistent?: true}), do: "✓"
+  defp consistency_mark(_), do: "≠"
 
   # Render a signed cents amount as dollars (a nil amount reads "—").
   defp money(nil), do: "—"

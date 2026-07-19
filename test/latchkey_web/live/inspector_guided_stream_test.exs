@@ -1,9 +1,9 @@
 defmodule LatchkeyWeb.InspectorGuidedStreamTest do
   @moduledoc """
-  Tests for the deep-stream **numbered fold pipeline + opt-in guided tour**
-  (`LatchkeyWeb.Inspector.GuidedStream`): the resting layout renders four numbered
-  stages (log → replay → write & read model → ledger); a launcher opts into a
-  guided tour whose whole state is `tour_active?` + `tour_step`, driven server-side.
+  Tests for the deep-stream **editorial fold stage + opt-in guided tour**
+  (`LatchkeyWeb.Inspector.GuidedStream`): the resting layout renders three numbered
+  stages (the log → write & read model → ledger); a launcher opts into a guided tour
+  whose whole state is `tour_active?` + `tour_step`, driven server-side.
 
   Drives the real Postgres `EventStore` like the replay-scrubber test and asserts
   on stable DOM ids, never raw HTML. `async: false` — the EventStore runs outside
@@ -74,11 +74,11 @@ defmodule LatchkeyWeb.InspectorGuidedStreamTest do
       %{view: view, stream: stream}
     end
 
-    test "renders the four numbered pipeline stages and the tour launcher", %{view: view} do
+    test "renders the three numbered pipeline stages and the tour launcher", %{view: view} do
       assert has_element?(view, "#tour-stage-0")
       assert has_element?(view, "#tour-stage-1")
       assert has_element?(view, "#tour-stage-2")
-      assert has_element?(view, "#tour-stage-3")
+      refute has_element?(view, "#tour-stage-3")
       assert has_element?(view, "#tour-start")
     end
 
@@ -90,17 +90,17 @@ defmodule LatchkeyWeb.InspectorGuidedStreamTest do
       view |> element("#tour-start") |> render_click()
 
       assert has_element?(view, "#tour-narration")
-      assert has_element?(view, "#tour-progress", "1 / 4")
+      assert has_element?(view, "#tour-progress", "1 / 3")
     end
 
     test "next and back step the tour narration", %{view: view} do
       view |> element("#tour-start") |> render_click()
 
       view |> element("#tour-next") |> render_click()
-      assert has_element?(view, "#tour-progress", "2 / 4")
+      assert has_element?(view, "#tour-progress", "2 / 3")
 
       view |> element("#tour-back") |> render_click()
-      assert has_element?(view, "#tour-progress", "1 / 4")
+      assert has_element?(view, "#tour-progress", "1 / 3")
     end
 
     test "skipping the tour hides the narration but keeps the pipeline", %{view: view} do
@@ -118,30 +118,29 @@ defmodule LatchkeyWeb.InspectorGuidedStreamTest do
       # A forged over-large `max` no longer advances past the real stop count:
       # the client value is ignored and the step is clamped to 0..(stops-1).
       render_hook(view, "tour_step", %{"dir" => "next", "max" => "9999"})
-      assert has_element?(view, "#tour-progress", "2 / 4")
+      assert has_element?(view, "#tour-progress", "2 / 3")
 
       # Even repeated "next" clamps at the last stop rather than overrunning it
       # (which would make Enum.at/2 return nil and crash the narration render).
       for _ <- 1..10, do: render_hook(view, "tour_step", %{"dir" => "next"})
-      assert has_element?(view, "#tour-progress", "4 / 4")
+      assert has_element?(view, "#tour-progress", "3 / 3")
 
       # An unknown direction is a no-op delta, and "prev" cannot go below the first.
       render_hook(view, "tour_step", %{"dir" => "sideways"})
-      assert has_element?(view, "#tour-progress", "4 / 4")
+      assert has_element?(view, "#tour-progress", "3 / 3")
 
       for _ <- 1..10, do: render_hook(view, "tour_step", %{"dir" => "prev"})
-      assert has_element?(view, "#tour-progress", "1 / 4")
+      assert has_element?(view, "#tour-progress", "1 / 3")
     end
 
     test "the last stage swaps Next for a Done control that exits the tour", %{view: view} do
       view |> element("#tour-start") |> render_click()
 
-      # Four stages: three Next clicks reach the last.
-      view |> element("#tour-next") |> render_click()
+      # Three stages: two Next clicks reach the last.
       view |> element("#tour-next") |> render_click()
       view |> element("#tour-next") |> render_click()
 
-      assert has_element?(view, "#tour-progress", "4 / 4")
+      assert has_element?(view, "#tour-progress", "3 / 3")
       refute has_element?(view, "#tour-next")
       assert has_element?(view, "#tour-done")
 

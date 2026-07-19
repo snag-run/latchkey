@@ -1,56 +1,51 @@
 defmodule LatchkeyWeb.Inspector.GuidedStream do
   @moduledoc """
-  The deep-stream layout for the inspector: a **numbered fold pipeline** with an
-  optional **guided tour** overlaid on it.
+  The deep-stream layout for the inspector, in the editorial "stream-detail"
+  language: a single stage card that makes the derives-from direction explicit —
+  **the log (a horizontal filmstrip that is itself the scrubber, or a vertical
+  evidence log) ▽ folds into the write & read models ▽ folds into the ledger** — so
+  a newcomer can see that everything on the page is one fold of one append-only log.
 
-  The resting layout is a single top-to-bottom column that makes the derives-from
-  direction explicit — "① the log ▼ folds into ② replay ▼ ③ write & read model ▼
-  ④ ledger" — so a newcomer can see that everything on the page is one fold of one
-  append-only log, in reading order.
+  The event section offers two lenses over the same log and prefix: the horizontal
+  **filmstrip** (narrative) and the vertical **evidence log** (full payloads +
+  divergence flags), flipped with a view toggle.
 
-  On top of that sits an opt-in guided tour: a **Guided tour** button at the top
-  starts it, dimming every stage but one and narrating it in a fixed card that
-  scrolls the active stage into view; **Skip** / **✕** / **Done** leave the tour
-  and reveal the plain pipeline. The tour is server-driven — its whole state is
-  `tour_active?` + the `tour_step` index — and reuses the very same panes the
-  layout already renders (`events_pane`, `scrubber`, `fold_panes`, `ledger_pane`),
-  so it can never drift from what the page actually shows.
+  On top of that sits an opt-in **guided tour**: a launcher starts it, dimming every
+  stage but one and narrating it in a fixed card that scrolls the active stage into
+  view; Skip / ✕ / Done leave it. The tour is server-driven — its whole state is
+  `tour_active?` + the `tour_step` index — and reuses the very same panes the layout
+  already renders (`event_section`, `fold_panes`, `ledger_pane`), so it can never
+  drift from what the page actually shows.
 
   All read-only: it re-arranges and narrates existing panes, issues no commands.
   """
   use LatchkeyWeb, :html
 
-  import LatchkeyWeb.Inspector.EventLog
-  import LatchkeyWeb.Inspector.Scrubber
-  import LatchkeyWeb.Inspector.StatePanes
-  import LatchkeyWeb.Inspector.LedgerPane
+  import LatchkeyWeb.Inspector.Filmstrip, only: [event_section: 1]
+  import LatchkeyWeb.Inspector.StatePanes, only: [fold_panes: 1]
+  import LatchkeyWeb.Inspector.LedgerPane, only: [ledger_pane: 1]
 
-  # Ordered narration for the guided tour. Each stop lights up the pipeline stage
-  # with the matching `tour-stage-N` id and lands one idea about the fold.
+  # Ordered narration for the guided tour. Each stop lights up the stage with the
+  # matching `tour-stage-N` id and lands one idea about the fold.
   @tour_stops [
     %{
-      title: "① The log — the source of truth",
+      title: "① The log — replay the fold",
       body:
-        "Every row is an immutable fact, in the order it happened. Nothing else on this page is stored — it is all recomputed from these events. Append-only: corrections are new events, never edits."
+        "Every frame is one immutable fact, in the order it happened. The strip is the source of truth — nothing else on this page is stored, it is all recomputed. Click a frame or press play to fold the log up to that point, event by event, server-side. Flip to the full log for payloads and divergence flags."
     },
     %{
-      title: "② The fold — replay the log",
+      title: "② Write vs read — two folds, do they agree?",
       body:
-        "Drag to fold the log event-by-event. Each position recomputes every stage below as-of that prefix, server-side, using the very same fold production runs."
+        "The aggregate (write model) guards the invariants; the read model is a disposable projection for reporting. Both fold the same events — and the consistency check between them, the seam, proves they agree."
     },
     %{
-      title: "③ Write vs read model — two folds of one log",
+      title: "③ The ledger — the same events, as money",
       body:
-        "The aggregate (write model) guards the invariants; the read model is a disposable projection for reporting. Both fold the same events — and the consistency check proves they agree."
-    },
-    %{
-      title: "④ The ledger — the same events, as money",
-      body:
-        "The identical events viewed through an independent double-entry fold. Debits and credits whose running balance can be compared with the read model's balance."
+        "The identical events viewed through an independent double-entry fold. Debits and credits whose running balance equals the read model's balance by construction."
     }
   ]
 
-  @doc "Number of tour stops (one per pipeline stage)."
+  @doc "Number of tour stops (one per stage)."
   def stops_count, do: length(@tour_stops)
 
   attr :tour_active?, :boolean, required: true
@@ -58,6 +53,7 @@ defmodule LatchkeyWeb.Inspector.GuidedStream do
   attr :active_stream, :string, required: true
   attr :context_name, :string, required: true
   attr :event_rows, :list, required: true
+  attr :event_view, :atom, required: true, doc: ":horizontal (filmstrip) or :vertical (log)"
   attr :docs, :map, required: true
   attr :highlight_version, :integer, default: nil
   attr :scrubber_k, :integer, required: true
@@ -69,94 +65,76 @@ defmodule LatchkeyWeb.Inspector.GuidedStream do
   attr :consistency, :any, required: true
   attr :ledger_entries, :list, required: true
 
-  @doc "The deep-stream body: numbered fold pipeline + opt-in guided tour."
+  @doc "The deep-stream body: the editorial fold stage + opt-in guided tour."
   def deep_stream(assigns) do
     ~H"""
-    <div id="fold-flow" phx-hook=".FoldFlow" data-stream={@active_stream}>
+    <div id="fold-flow" class="stream-detail" phx-hook=".FoldFlow" data-stream={@active_stream}>
+      <p class="sd-eyebrow">Tenancy stream · the fold, made visible</p>
+      <h1 class="sd-h1">Write vs read — two folds, do they agree?</h1>
+      <p class="sd-lede">
+        The event log is a horizontal filmstrip that doubles as the scrubber. Below, the
+        same prefix folds into the write model and the read model — facing each other,
+        with the consistency check as the seam — then into the ledger, the same events as
+        money.
+      </p>
+      <p class="sd-streamid">
+        stream <b class="sd-mono">{@active_stream}</b>
+        <span aria-hidden="true">·</span>
+        {@context_name}
+      </p>
+
       <.tour_launcher tour_active?={@tour_active?} />
 
-      <div class={["max-w-2xl mx-auto space-y-2", @tour_active? && "pb-40"]}>
-      <.flow_stage
-        n="1"
-        tour_active?={@tour_active?}
-        step={0}
-        title="The log"
-        tag="source of truth"
-        active?={@tour_step == 0}
-      >
-        <.spotlight tour_active?={@tour_active?} active?={@tour_step == 0} step={0}>
-          <.events_pane
-            stream_id={@active_stream}
-            context_name={@context_name}
-            kind={:deep}
-            rows={@event_rows}
-            docs={@docs}
-            highlight_version={@highlight_version}
-          />
-        </.spotlight>
-      </.flow_stage>
+      <div class={["sd-stage", @tour_active? && "pb-40"]}>
+        <section id="tour-stage-0" style="scroll-margin-top:6rem">
+          <.spotlight tour_active?={@tour_active?} active?={@tour_step == 0} step={0}>
+            <.event_section
+              stream_id={@active_stream}
+              context_name={@context_name}
+              rows={@event_rows}
+              k={@scrubber_k}
+              n={@scrubber_n}
+              playing?={@scrubber_playing?}
+              view={@event_view}
+              highlight_version={@highlight_version}
+              new_events_available?={@new_events_available?}
+              docs={@docs}
+            />
+          </.spotlight>
+        </section>
 
-      <.flow_connector label="fold the events…" />
+        <div class="sd-foldlabel">
+          <span data-fold-connector>▽</span>
+          the folded prefix derives <span data-fold-connector>▽</span>
+        </div>
 
-      <.flow_stage
-        n="2"
-        tour_active?={@tour_active?}
-        step={1}
-        title="Replay"
-        tag="scrub the fold"
-        active?={@tour_step == 1}
-      >
-        <.spotlight tour_active?={@tour_active?} active?={@tour_step == 1} step={1}>
-          <.scrubber
-            k={@scrubber_k}
-            n={@scrubber_n}
-            playing?={@scrubber_playing?}
-            new_events_available?={@new_events_available?}
-            docs={@docs}
-          />
-        </.spotlight>
-      </.flow_stage>
+        <section id="tour-stage-1" style="scroll-margin-top:6rem">
+          <.spotlight tour_active?={@tour_active?} active?={@tour_step == 1} step={1}>
+            <.fold_panes
+              stream_id={@active_stream}
+              state={@aggregate_state}
+              derived={@read_model}
+              consistency={@consistency}
+              docs={@docs}
+            />
+          </.spotlight>
+        </section>
 
-      <.flow_connector label="…into state" />
+        <div class="sd-foldlabel">
+          <span data-fold-connector>▽</span>
+          the same events, as money <span data-fold-connector>▽</span>
+        </div>
 
-      <.flow_stage
-        n="3"
-        step={2}
-        title="Write & read model"
-        tag="two folds, one log"
-        tour_active?={@tour_active?}
-        active?={@tour_step == 2}
-      >
-        <.spotlight tour_active?={@tour_active?} active?={@tour_step == 2} step={2}>
-          <.fold_panes
-            stream_id={@active_stream}
-            state={@aggregate_state}
-            derived={@read_model}
-            consistency={@consistency}
-            docs={@docs}
-          />
-        </.spotlight>
-      </.flow_stage>
-
-      <.flow_connector label="…and the same fold, as money" />
-
-      <.flow_stage
-        n="4"
-        tour_active?={@tour_active?}
-        step={3}
-        title="Ledger"
-        tag="double-entry"
-        active?={@tour_step == 3}
-      >
-        <.spotlight tour_active?={@tour_active?} active?={@tour_step == 3} step={3}>
-          <.ledger_pane
-            stream_id={@active_stream}
-            entries={@ledger_entries}
-            read_model_balance_cents={@read_model.balance_cents}
-            docs={@docs}
-          />
-        </.spotlight>
-      </.flow_stage>
+        <section id="tour-stage-2" style="scroll-margin-top:6rem">
+          <.spotlight tour_active?={@tour_active?} active?={@tour_step == 2} step={2}>
+            <.ledger_pane
+              stream_id={@active_stream}
+              entries={@ledger_entries}
+              read_model_balance_cents={@read_model.balance_cents}
+              docs={@docs}
+            />
+          </.spotlight>
+        </section>
       </div>
 
       <.tour_narration tour_active?={@tour_active?} tour_step={@tour_step} />
@@ -267,64 +245,21 @@ defmodule LatchkeyWeb.Inspector.GuidedStream do
     """
   end
 
-  # ── Pipeline chrome ─────────────────────────────────────────────────────────
-
-  attr :n, :string, required: true
-  attr :step, :integer, required: true
-  attr :title, :string, required: true
-  attr :tag, :string, required: true
-  attr :tour_active?, :boolean, default: false
-  attr :active?, :boolean, default: false
-  slot :inner_block, required: true
-
-  defp flow_stage(assigns) do
-    ~H"""
-    <section id={"tour-stage-#{@step}"} class="min-w-0 scroll-mt-24">
-      <div class="flex items-center gap-3 mb-3">
-        <%!-- Outside the tour every stage reads as orange (no "current" step); --%>
-        <%!-- during the tour only the active stage's badge is orange. --%>
-        <span class={[
-          "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-colors",
-          if(!@tour_active? or @active?,
-            do: "bg-orange-500 text-white",
-            else: "bg-base-300 text-base-content/70"
-          )
-        ]}>
-          {@n}
-        </span>
-        <h3 class="text-sm font-semibold text-base-content">{@title}</h3>
-        <span class="text-[11px] uppercase tracking-wide text-base-content/40">{@tag}</span>
-      </div>
-      {render_slot(@inner_block)}
-    </section>
-    """
-  end
-
-  attr :label, :string, required: true
-
-  defp flow_connector(assigns) do
-    ~H"""
-    <div class="flex items-center gap-2 py-1 pl-3 text-xs text-base-content/40">
-      <span data-fold-connector class="inline-block origin-center text-lg leading-none">▼</span>
-      <span class="italic">{@label}</span>
-    </div>
-    """
-  end
-
-  # ── Guided-tour overlay ─────────────────────────────────────────────────────
+  # ── Guided-tour chrome ──────────────────────────────────────────────────────
 
   attr :tour_active?, :boolean, required: true
   attr :active?, :boolean, required: true
   attr :step, :integer, required: true
   slot :inner_block, required: true
 
-  # Wraps a pipeline stage: a highlight ring when it is the active tour step, a
-  # dim when the tour is running on a different step, and plain otherwise.
+  # Wraps a stage: a highlight ring when it is the active tour step, a dim when the
+  # tour is running on a different step, and plain otherwise.
   defp spotlight(assigns) do
     ~H"""
     <div class={[
-      "transition-all duration-300 rounded-xl",
-      @tour_active? && @active? && "ring-2 ring-orange-400 ring-offset-4 ring-offset-base-200",
+      "transition-all duration-300 rounded-2xl",
+      @tour_active? && @active? &&
+        "ring-2 ring-[color:var(--sd-accent)] ring-offset-4 ring-offset-[color:var(--sd-surface)]",
       @tour_active? && !@active? && "opacity-30 blur-[1px]"
     ]}>
       {render_slot(@inner_block)}
@@ -337,19 +272,12 @@ defmodule LatchkeyWeb.Inspector.GuidedStream do
   # The top strip: a prompt + the button that starts (or restarts) the tour.
   defp tour_launcher(assigns) do
     ~H"""
-    <div class="flex items-center justify-between mb-4">
-      <p class="text-xs text-base-content/50">
+    <div class="flex items-center justify-between mt-4 mb-1">
+      <p class="sd-note" style="margin:0">
         {if @tour_active?, do: "Guided tour in progress", else: "New here? Take the guided tour."}
       </p>
-      <button
-        type="button"
-        id="tour-start"
-        phx-click="tour_start"
-        class="inline-flex items-center gap-1.5 rounded-md border border-orange-300 px-3 py-1.5
-               text-xs font-medium text-orange-600 hover:bg-orange-500/10"
-      >
-        <span aria-hidden="true">{if @tour_active?, do: "↻", else: "▶"}</span>
-        {if @tour_active?, do: "Restart tour", else: "Guided tour"}
+      <button type="button" id="tour-start" phx-click="tour_start" class="sd-btn">
+        {if @tour_active?, do: "↻ Restart tour", else: "▶ Guided tour"}
       </button>
     </div>
     """
@@ -371,64 +299,55 @@ defmodule LatchkeyWeb.Inspector.GuidedStream do
     <div
       :if={@tour_active?}
       id="tour-narration"
+      class="stream-detail"
       phx-hook=".TourScroll"
       data-target={"tour-stage-#{@tour_step}"}
-      class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 w-[36rem] max-w-[calc(100vw-2rem)]
-             rounded-xl border border-orange-300 bg-base-100 shadow-2xl p-5"
+      style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:40;
+             width:36rem;max-width:calc(100vw - 2rem);background:var(--sd-surface);
+             border:1px solid var(--sd-accent);border-radius:14px;box-shadow:var(--sd-shadow);padding:18px 20px"
     >
       <button
         type="button"
         phx-click="tour_exit"
         aria-label="Close tour"
-        class="absolute top-3 right-3 text-base-content/40 hover:text-base-content"
+        style="position:absolute;top:12px;right:14px;color:var(--sd-muted);background:none;border:none;cursor:pointer"
       >
         ✕
       </button>
-      <p class="text-sm font-semibold text-orange-600 pr-6">{@stop.title}</p>
-      <p class="mt-1 text-sm text-base-content/70 leading-relaxed">{@stop.body}</p>
-      <div class="mt-4 flex items-center justify-between">
+      <p style="font-weight:650;color:var(--sd-accent);margin:0;padding-right:24px">{@stop.title}</p>
+      <p class="sd-lede" style="margin-top:4px;font-size:13.5px">{@stop.body}</p>
+      <div class="sd-transport" style="margin:16px 0 0">
+        <button type="button" id="tour-skip" phx-click="tour_exit" class="sd-btn">Skip tour</button>
+        <span id="tour-progress" class="sd-pos">{@tour_step + 1} / {@stops_count}</span>
         <button
           type="button"
-          id="tour-skip"
-          phx-click="tour_exit"
-          class="text-xs text-base-content/40 hover:text-base-content"
+          id="tour-back"
+          phx-click="tour_step"
+          phx-value-dir="prev"
+          disabled={@tour_step == 0}
+          class="sd-btn"
         >
-          Skip tour
+          ← Back
         </button>
-        <div class="flex items-center gap-3">
-          <button
-            type="button"
-            id="tour-back"
-            phx-click="tour_step"
-            phx-value-dir="prev"
-            disabled={@tour_step == 0}
-            class="px-3 py-1.5 text-xs rounded-md border border-base-300 disabled:opacity-30 hover:bg-base-200"
-          >
-            ← Back
-          </button>
-          <span id="tour-progress" class="text-xs text-base-content/40">
-            {@tour_step + 1} / {@stops_count}
-          </span>
-          <button
-            :if={!@last_step?}
-            type="button"
-            id="tour-next"
-            phx-click="tour_step"
-            phx-value-dir="next"
-            class="px-3 py-1.5 text-xs rounded-md bg-orange-500 text-white hover:bg-orange-600"
-          >
-            Next →
-          </button>
-          <button
-            :if={@last_step?}
-            type="button"
-            id="tour-done"
-            phx-click="tour_exit"
-            class="px-3 py-1.5 text-xs rounded-md bg-orange-500 text-white hover:bg-orange-600"
-          >
-            Done ✓
-          </button>
-        </div>
+        <button
+          :if={!@last_step?}
+          type="button"
+          id="tour-next"
+          phx-click="tour_step"
+          phx-value-dir="next"
+          class="sd-btn sd-primary"
+        >
+          Next →
+        </button>
+        <button
+          :if={@last_step?}
+          type="button"
+          id="tour-done"
+          phx-click="tour_exit"
+          class="sd-btn sd-primary"
+        >
+          Done ✓
+        </button>
       </div>
       <script :type={Phoenix.LiveView.ColocatedHook} name=".TourScroll">
         export default {
