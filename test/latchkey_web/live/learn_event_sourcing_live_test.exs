@@ -56,6 +56,8 @@ defmodule LatchkeyWeb.LearnEventSourcingLiveTest do
     {:ok, view, _html} = live(conn, ~p"/learn/event-sourcing")
 
     assert has_element?(view, ~s(a.navlink[href="/inspector"]))
+    # nav cross-links to the sibling primer (no in-page heading anchors)
+    assert has_element?(view, ~s(a.navlink[href="/learn/ddd"]))
     assert has_element?(view, ~s(a.lk-btn.primary[href="/inspector"]))
     assert has_element?(view, ~s(a.lk-btn.ghost[href="/inspector/docs/domain-model"]))
     assert has_element?(view, ~s(a.lk-btn.ghost[href="/inspector/docs/context-map"]))

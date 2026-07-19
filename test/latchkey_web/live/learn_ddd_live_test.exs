@@ -60,6 +60,8 @@ defmodule LatchkeyWeb.LearnDddLiveTest do
     {:ok, view, _html} = live(conn, ~p"/learn/ddd")
 
     assert has_element?(view, ~s(a.navlink[href="/inspector"]))
+    # nav cross-links to the sibling primer (no in-page heading anchors)
+    assert has_element?(view, ~s(a.navlink[href="/learn/event-sourcing"]))
     assert has_element?(view, ~s(a[href="/inspector/docs/context-map"]))
     assert has_element?(view, ~s(a[href="/inspector/docs/domain-model"]))
     assert has_element?(view, ~s(a[href="/inspector/glossary"]))
