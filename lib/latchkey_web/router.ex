@@ -25,6 +25,12 @@ defmodule LatchkeyWeb.Router do
     # live domain data and needs none of the inspector's session wiring.
     live "/learn/event-sourcing", LearnEventSourcingLive, :index
 
+    # DDD 101 primer page (issue #190): teaches bounded contexts, ubiquitous
+    # language, the Tenancy aggregate, and the payment ACL using Latchkey's own
+    # domain. A plain browser route, deliberately NOT in the :inspector
+    # live_session below (it renders no live domain data).
+    live "/learn/ddd", LearnDddLive, :index
+
     # Public, read-only ES/DDD inspector (spec developer-view.md, D6). Deliberately
     # NOT behind the `dev_routes` compile flag below: it is enabled in all envs
     # (incl. prod) so it can serve as a shareable portfolio artifact. It renders
