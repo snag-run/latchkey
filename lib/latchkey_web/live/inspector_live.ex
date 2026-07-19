@@ -871,10 +871,11 @@ defmodule LatchkeyWeb.InspectorLive do
   def render(assigns) do
     ~H"""
     <Layouts.inspector flash={@flash}>
-      <div id="inspector" class="flex flex-1 min-h-0">
+      <div id="inspector" class="insp-shell flex flex-1 min-h-0">
         <aside class={[
-          "w-64 shrink-0 overflow-y-auto p-3 border-r border-base-300 bg-base-100",
-          reference_route?(@live_action) && "insp-doc"
+          "w-64 shrink-0 overflow-y-auto p-3",
+          reference_route?(@live_action) && "insp-doc border-r border-base-300",
+          not reference_route?(@live_action) && "insp-rail"
         ]}>
           <%!-- Reference pages (glossary / deep docs) swap the stream nav for the
                 page's TOC rail; every other route keeps the stream nav. The TOC
@@ -899,12 +900,12 @@ defmodule LatchkeyWeb.InspectorLive do
           ]}>
             <%= cond do %>
               <% @live_action == :stream and @stream_found? -> %>
-                <nav id="inspector-breadcrumb" class="mb-4 text-xs text-base-content/50">
-                  <.link patch={~p"/inspector"} class="hover:text-base-content">Contexts</.link>
+                <nav id="inspector-breadcrumb" class="insp-crumb mb-4 text-xs">
+                  <.link patch={~p"/inspector"}>Contexts</.link>
                   <span aria-hidden="true">/</span>
-                  <span class="text-base-content">{@context_name}</span>
+                  <span class="cur">{@context_name}</span>
                   <span aria-hidden="true">/</span>
-                  <span class="font-mono text-base-content">{@active_stream}</span>
+                  <span class="cur font-mono">{@active_stream}</span>
                 </nav>
                 <%!-- Deep (tenancy) streams render the editorial fold stage with the --%>
                 <%!-- opt-in guided tour (LatchkeyWeb.Inspector.GuidedStream): the log --%>
@@ -973,7 +974,7 @@ defmodule LatchkeyWeb.InspectorLive do
                 streams, so a live event feed is noise next to static prose. --%>
           <aside
             :if={not reference_route?(@live_action)}
-            class="w-72 shrink-0 border-l border-base-300 bg-base-100"
+            class="insp-firehose w-72 shrink-0"
           >
             <.firehose_feed stream={@streams.firehose} />
           </aside>
