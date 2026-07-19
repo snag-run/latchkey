@@ -92,39 +92,42 @@ defmodule LatchkeyWeb.Layouts do
   def inspector(assigns) do
     ~H"""
     <div class="flex flex-col h-screen overflow-hidden bg-base-100 text-base-content">
-      <header class="flex items-center gap-3 h-12 shrink-0 px-4 border-b border-base-300 bg-base-200">
-        <a href={~p"/inspector"} class="font-semibold tracking-tight">/inspector</a>
-        <.link
-          navigate={~p"/inspector/log"}
-          id="inspector-full-log-link"
-          class="text-sm text-base-content/60 hover:text-base-content"
-        >
-          full log
+      <%!-- The workbench top bar wears the landing's editorial nav language
+            (`.insp-nav` reuses the `.brand`/`.navlink` atoms), but stays
+            full-width for the 3-column shell. The wordmark links to the site
+            home (`/`); "Overview" keeps the inspector's own orientation map
+            reachable from the reference pages, which carry no breadcrumb. --%>
+      <header class="insp-nav shrink-0">
+        <.link navigate={~p"/"} class="brand" aria-label="Latchkey home">
+          <span class="key" aria-hidden="true">L</span>
+          Latchkey <small>event-sourced tenancy ledger</small>
         </.link>
-        <.link
-          navigate={~p"/inspector/glossary"}
-          id="inspector-glossary-link"
-          class="text-sm text-base-content/60 hover:text-base-content"
-        >
-          glossary
-        </.link>
-        <.link
-          navigate={~p"/inspector/docs/context-map"}
-          id="inspector-context-map-link"
-          class="text-sm text-base-content/60 hover:text-base-content"
-        >
-          context map
-        </.link>
-        <.link
-          navigate={~p"/inspector/docs/domain-model"}
-          id="inspector-domain-model-link"
-          class="text-sm text-base-content/60 hover:text-base-content"
-        >
-          domain model
-        </.link>
-        <span class="ml-auto">
+        <nav aria-label="Inspector">
+          <.link class="navlink" navigate={~p"/inspector"} id="inspector-overview-link">
+            Overview
+          </.link>
+          <.link class="navlink" navigate={~p"/inspector/log"} id="inspector-full-log-link">
+            Full log
+          </.link>
+          <.link class="navlink" navigate={~p"/inspector/glossary"} id="inspector-glossary-link">
+            Glossary
+          </.link>
+          <.link
+            class="navlink"
+            navigate={~p"/inspector/docs/context-map"}
+            id="inspector-context-map-link"
+          >
+            Context map
+          </.link>
+          <.link
+            class="navlink"
+            navigate={~p"/inspector/docs/domain-model"}
+            id="inspector-domain-model-link"
+          >
+            Domain model
+          </.link>
           <.theme_toggle />
-        </span>
+        </nav>
       </header>
       {render_slot(@inner_block)}
     </div>

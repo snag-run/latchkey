@@ -36,6 +36,24 @@ defmodule LatchkeyWeb.InspectorLiveTest do
 
       refute has_element?(view, "form")
     end
+
+    test "the top-bar wordmark links to the site home, not the inspector overview",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/inspector")
+
+      # The workbench header wears the landing's nav language: the wordmark is the
+      # site home (`/`), and a dedicated Overview link keeps the inspector's own
+      # orientation map reachable — including from the reference pages, which carry
+      # no breadcrumb back.
+      assert has_element?(view, ~s(header.insp-nav a.brand[href="/"]))
+      assert has_element?(view, "#inspector-overview-link[href='/inspector']")
+    end
+
+    test "the Overview link is reachable from a reference page", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/inspector/glossary")
+
+      assert has_element?(view, "#inspector-overview-link[href='/inspector']")
+    end
   end
 
   describe "orientation-map landing" do
