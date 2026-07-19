@@ -4,7 +4,7 @@ defmodule LatchkeyWeb.LandingLive do
 
   A design-led page that teaches the event-sourced tenancy model in one stacked
   scenario: the append-only **event log** (source of truth), then an
-  **append-only** correction (`PaymentReversed`), the **write vs read** seam
+  **append-only** correction (a signed, negative `RentPaymentRecorded`), the **write vs read** seam
   across the payment ACL, **arrears over time** against the 14-day gate, and a
   close. It renders no domain data (the story is a fixed, internally consistent
   illustration at 620.00/week); the live event log lives at `/inspector`. The
@@ -30,14 +30,16 @@ defmodule LatchkeyWeb.LandingLive do
     <Layouts.landing flash={@flash}>
       <header class="topbar">
         <div class="row">
-          <div class="brand">
+          <.link navigate={~p"/"} class="brand" aria-label="Latchkey home">
             <span class="key" aria-hidden="true">L</span>
             Latchkey <small>event-sourced tenancy ledger</small>
-          </div>
+          </.link>
           <nav aria-label="Primary">
             <span class="desktop-nav">
               <a class="navlink" href="#seam">Write vs read</a>
               <a class="navlink" href="#timeline">Timeline</a>
+              <.link class="navlink" navigate={~p"/learn/event-sourcing"}>Event sourcing</.link>
+              <.link class="navlink" navigate={~p"/learn/ddd"}>DDD</.link>
               <.link class="navlink" navigate={~p"/inspector"}>Inspector</.link>
             </span>
             <Layouts.theme_toggle />
@@ -148,16 +150,19 @@ defmodule LatchkeyWeb.LandingLive do
               <div>
                 <h2 class="display">A reversal is a new line, not a deletion.</h2>
                 <p>
-                  When a payment is dishonoured, you don't erase it. A
-                  <span class="mono">PaymentReversed</span>
-                  fact is appended, reading as a debit that re-opens the arrears. The original payment
-                  stays in the log, and the history stays whole.
+                  When a payment is dishonoured, you don't erase it. In
+                  <span class="mono">Accounts</span>
+                  a <span class="mono">PaymentReversed</span>
+                  fact is appended; the payment ACL translates it onto the tenancy stream as a
+                  <span class="em">negative</span> <span class="mono">RentPaymentRecorded</span>, which
+                  reads as a debit and re-opens the arrears. The original payment stays in the log,
+                  and the history stays whole.
                 </p>
               </div>
               <div
                 class="corr"
                 role="img"
-                aria-label="A recorded payment, then an appended payment-reversed event that re-opens the arrears without deleting the original."
+                aria-label="A recorded payment, then an appended negative RentPaymentRecorded that re-opens the arrears without deleting the original."
               >
                 <div class="evt" phx-no-curly-interpolation>
                   <span class="name">RentPaymentRecorded</span>
@@ -166,12 +171,12 @@ defmodule LatchkeyWeb.LandingLive do
                   2026-03-05 <span class="k">}</span>
                 </div>
                 <div class="evt appended" phx-no-curly-interpolation>
-                  <span class="name">PaymentReversed</span>
-                  <span class="k">{ reverses:</span>
-                  2026-03-05<span class="k">, amount:</span>
-                  620.00 <span class="k">}</span>
+                  <span class="name">RentPaymentRecorded</span>
+                  <span class="k">{ amount:</span>
+                  −620.00<span class="k">, reverses:</span>
+                  2026-03-05 <span class="k">}</span>
                 </div>
-                <span class="appended-tag">appended, never mutated · reads as a debit</span>
+                <span class="appended-tag">appended, never mutated · a signed RentPaymentRecorded</span>
               </div>
             </div>
           </div>
@@ -398,6 +403,10 @@ defmodule LatchkeyWeb.LandingLive do
                   <span>Postgres EventStore</span><span><b>Ash</b> read model</span>
                 </div>
                 <div class="cta-row" style="margin-top: 22px;">
+                  <.link class="lk-btn primary" navigate={~p"/learn/event-sourcing"}>
+                    Event sourcing 101
+                  </.link>
+                  <.link class="lk-btn primary" navigate={~p"/learn/ddd"}>DDD 101</.link>
                   <.link class="lk-btn ghost" navigate={~p"/inspector/docs/domain-model"}>
                     Domain model
                   </.link>

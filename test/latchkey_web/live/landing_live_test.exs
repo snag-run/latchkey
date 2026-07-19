@@ -17,8 +17,10 @@ defmodule LatchkeyWeb.LandingLiveTest do
     assert html =~ "Every fact of a tenancy, in the order it happened."
     # the warm-paper landing scope is applied
     assert has_element?(view, "div.landing")
-    # append-only correction beat uses the real event name
+    # append-only correction beat: the Accounts PaymentReversed fact is named,
+    # and on the tenancy stream it lands as a signed (negative) RentPaymentRecorded
     assert html =~ "PaymentReversed"
+    assert has_element?(view, ".corr .evt.appended .name", "RentPaymentRecorded")
     # write vs read seam + arrears timeline anchors exist
     assert has_element?(view, "#seam")
     assert has_element?(view, "#timeline")
@@ -35,6 +37,23 @@ defmodule LatchkeyWeb.LandingLiveTest do
     assert has_element?(view, ~s(a.navlink[href="/inspector"]))
     assert has_element?(view, ~s(a.lk-btn.primary[href="/inspector"]))
     assert has_element?(view, ~s(a.lk-btn.ghost[href="/inspector/docs/domain-model"]))
+  end
+
+  test "cross-links to the learn primers from the nav and the about section", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    # discoverable in the top nav
+    assert has_element?(view, ~s(a.navlink[href="/learn/event-sourcing"]))
+    assert has_element?(view, ~s(a.navlink[href="/learn/ddd"]))
+    # and again, in context, from the about section
+    assert has_element?(view, ~s(#about a.lk-btn[href="/learn/event-sourcing"]))
+    assert has_element?(view, ~s(#about a.lk-btn[href="/learn/ddd"]))
+  end
+
+  test "the wordmark links home", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    assert has_element?(view, ~s(a.brand[href="/"]))
   end
 
   test "footer carries the byline and project links", %{conn: conn} do
