@@ -23,6 +23,10 @@ defmodule LatchkeyWeb.LandingLiveTest do
     assert has_element?(view, "#seam")
     assert has_element?(view, "#timeline")
     assert has_element?(view, "#arrears-timeline")
+    # names the learning-project framing (ES + DDD practice)
+    assert has_element?(view, "#about")
+    assert html =~ "learning project"
+    assert html =~ "event sourcing and domain-driven design"
   end
 
   test "calls-to-action point into the inspector", %{conn: conn} do
@@ -31,5 +35,13 @@ defmodule LatchkeyWeb.LandingLiveTest do
     assert has_element?(view, ~s(a.navlink[href="/inspector"]))
     assert has_element?(view, ~s(a.lk-btn.primary[href="/inspector"]))
     assert has_element?(view, ~s(a.lk-btn.ghost[href="/inspector/docs/domain-model"]))
+  end
+
+  test "footer carries the byline and project links", %{conn: conn} do
+    {:ok, view, html} = live(conn, ~p"/")
+
+    assert html =~ "David Taing"
+    assert has_element?(view, ~s(.lk-footer a[href="https://snag.run"]))
+    assert has_element?(view, ~s(.lk-footer a[href="https://github.com/snag-run/latchkey"]))
   end
 end

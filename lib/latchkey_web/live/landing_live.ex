@@ -1,13 +1,14 @@
 defmodule LatchkeyWeb.LandingLive do
   @moduledoc """
-  The public landing page — the app's front door at `/`.
+  The public landing page: the app's front door at `/`.
 
   A design-led page that teaches the event-sourced tenancy model in one stacked
-  scenario: the append-only **event log** (source of truth) → an **append-only**
-  correction (`PaymentReversed`) → the **write vs read** seam across the payment
-  ACL → **arrears over time** against the 14-day gate → close. It renders no
-  domain data (the story is a fixed, internally consistent illustration at
-  620.00/week); the live event log lives at `/inspector`.
+  scenario: the append-only **event log** (source of truth), then an
+  **append-only** correction (`PaymentReversed`), the **write vs read** seam
+  across the payment ACL, **arrears over time** against the 14-day gate, and a
+  close. It renders no domain data (the story is a fixed, internally consistent
+  illustration at 620.00/week); the live event log lives at `/inspector`. The
+  page also states plainly that Latchkey is a learning project in ES + DDD.
 
   Styling reuses the shipped warm-paper `sd-*` tokens; component classes are the
   `lk-*` set scoped under `.landing` (see `assets/css/app.css`). Interactivity is
@@ -378,6 +379,39 @@ defmodule LatchkeyWeb.LandingLive do
           </div>
         </section>
 
+        <%!-- ABOUT: the learning-project framing --%>
+        <section class="section" id="about" aria-label="About this project">
+          <div class="wrap">
+            <div class="band-inner">
+              <div>
+                <p class="eyebrow">About the project</p>
+                <h2 class="display">Built to practise event sourcing and DDD.</h2>
+                <p>
+                  Latchkey is a learning project, not production. It simulates the payments seam of
+                  NSW residential tenancy management to work event sourcing and domain-driven design
+                  end to end: a hash-chained log on Commanded and Postgres EventStore, arrears folded
+                  into Ash read models, and a wall-clock sweep that reveals events as they fall due.
+                </p>
+              </div>
+              <div>
+                <div class="provenance">
+                  <span><b>Elixir</b></span><span>Phoenix LiveView</span><span>Commanded</span>
+                  <span>Postgres EventStore</span><span><b>Ash</b> read model</span>
+                </div>
+                <div class="cta-row" style="margin-top: 22px;">
+                  <.link class="lk-btn ghost" navigate={~p"/inspector/docs/domain-model"}>
+                    Domain model
+                  </.link>
+                  <.link class="lk-btn ghost" navigate={~p"/inspector/docs/context-map"}>
+                    Context map
+                  </.link>
+                  <.link class="lk-btn ghost" navigate={~p"/inspector/glossary"}>Glossary</.link>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <%!-- CLOSE --%>
         <section class="wrap close-band" aria-label="Get started">
           <p class="formula"><b>expected</b> − <b>received</b> = <b>arrears</b></p>
@@ -387,6 +421,16 @@ defmodule LatchkeyWeb.LandingLive do
           </div>
         </section>
       </main>
+
+      <footer class="lk-footer">
+        <span>A project by <b>David Taing</b></span>
+        <span class="sep" aria-hidden="true">·</span>
+        <a href="https://snag.run" target="_blank" rel="noopener noreferrer">snag.run</a>
+        <span class="sep" aria-hidden="true">·</span>
+        <a href="https://github.com/snag-run/latchkey" target="_blank" rel="noopener noreferrer">
+          github.com/snag-run/latchkey
+        </a>
+      </footer>
     </div>
     """
   end

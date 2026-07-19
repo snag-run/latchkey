@@ -1513,6 +1513,40 @@
   justify-content: center;
 }
 
+/* footer — byline + project links */
+.landing .lk-footer {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 26px 24px 40px;
+  border-top: 1px solid var(--sd-line);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+  font-family: var(--lk-mono);
+  font-size: 11.5px;
+  color: var(--sd-muted);
+}
+.landing .lk-footer b {
+  color: var(--sd-ink-2);
+  font-weight: 600;
+}
+.landing .lk-footer a {
+  color: var(--sd-ink-2);
+  text-decoration: none;
+}
+.landing .lk-footer a:hover {
+  color: var(--sd-accent);
+}
+.landing .lk-footer a:focus-visible {
+  outline: 2px solid var(--sd-accent);
+  outline-offset: 2px;
+}
+.landing .lk-footer .sep {
+  color: var(--sd-axis);
+}
+
 /* motion — only if the viewer allows it */
 @media (prefers-reduced-motion: no-preference) {
   /* hero: events land in order, one after another (the append-only beat), then
