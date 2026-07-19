@@ -134,6 +134,36 @@ defmodule LatchkeyWeb.Layouts do
   end
 
   @doc """
+  Bare layout for the public landing page and the `/learn` primer pages
+  (`LatchkeyWeb.LandingLive` and its siblings).
+
+  Like `inspector/1`, these pages ship their own chrome (top bar, theme toggle)
+  and the warm-paper `sd-*` visual language, so this wrapper only scopes the
+  content under `.landing` and routes flash through `flash_group/1` (which must
+  stay in this module). Content pages therefore never call `flash_group/1`
+  directly.
+
+  ## Examples
+
+      <Layouts.landing flash={@flash}>
+        <header class="topbar">...</header>
+        <main>...</main>
+      </Layouts.landing>
+  """
+  attr :flash, :map, required: true, doc: "the map of flash messages"
+  slot :inner_block, required: true
+
+  def landing(assigns) do
+    ~H"""
+    <div class="landing">
+      {render_slot(@inner_block)}
+    </div>
+
+    <.flash_group flash={@flash} />
+    """
+  end
+
+  @doc """
   Shows the flash group with standard titles and content.
 
   ## Examples
