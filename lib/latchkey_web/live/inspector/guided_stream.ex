@@ -72,9 +72,10 @@ defmodule LatchkeyWeb.Inspector.GuidedStream do
   @doc "The deep-stream body: numbered fold pipeline + opt-in guided tour."
   def deep_stream(assigns) do
     ~H"""
-    <.tour_launcher tour_active?={@tour_active?} />
+    <div id="fold-flow" phx-hook=".FoldFlow" data-stream={@active_stream}>
+      <.tour_launcher tour_active?={@tour_active?} />
 
-    <div class={["max-w-2xl mx-auto space-y-2", @tour_active? && "pb-40"]}>
+      <div class={["max-w-2xl mx-auto space-y-2", @tour_active? && "pb-40"]}>
       <.flow_stage
         n="1"
         tour_active?={@tour_active?}
@@ -156,9 +157,113 @@ defmodule LatchkeyWeb.Inspector.GuidedStream do
           />
         </.spotlight>
       </.flow_stage>
-    </div>
+      </div>
 
-    <.tour_narration tour_active?={@tour_active?} tour_step={@tour_step} />
+      <.tour_narration tour_active?={@tour_active?} tour_step={@tour_step} />
+
+      <script :type={Phoenix.LiveView.ColocatedHook} name=".FoldFlow">
+        // Choreographs the "fold": when the server advances the scrubber prefix it
+        // pushes "fold:flow", and this hook plays the causality — the folded-in event
+        // pulses, the pulse runs down the pipeline connectors, and the state/read-model
+        // fields that actually changed flash (numeric headline fields count to value).
+        // Purely presentational: the server has already re-rendered the real panes.
+        export default {
+          mounted() {
+            this.stream = this.el.dataset.stream
+            this.seed()
+            this.handleEvent("fold:flow", (p) => this.run(p))
+          },
+          updated() {
+            // Reseed only when the whole stream changes; on a fold patch the cache must
+            // still hold the *previous* values so run() can diff against them.
+            if (this.el.dataset.stream !== this.stream) {
+              this.stream = this.el.dataset.stream
+              this.seed()
+            }
+          },
+          reduced() {
+            return window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          },
+          fields() {
+            return Array.from(this.el.querySelectorAll("[data-fold-field]"))
+          },
+          seed() {
+            this.cache = {}
+            this.fields().forEach((el) => { this.cache[el.id] = el.textContent.trim() })
+          },
+          run(p) {
+            const anime = window.anime
+            if (!anime || this.reduced()) { this.seed(); return }
+            const fwd = p.dir !== "back"
+
+            // 1) the event that just folded in
+            const row = this.el.querySelector('[aria-current="step"]')
+            if (row) {
+              anime.remove(row)
+              anime({ targets: row, translateX: [fwd ? -8 : 8, 0], opacity: [0.55, 1],
+                duration: 420, easing: "easeOutQuad" })
+            }
+
+            // 2) the pulse travelling down (or up) the pipeline
+            const conns = Array.from(this.el.querySelectorAll("[data-fold-connector]"))
+            if (conns.length) {
+              anime.remove(conns)
+              anime({ targets: conns,
+                keyframes: [{ scale: 1, opacity: 0.35 }, { scale: 1.6, opacity: 1 }, { scale: 1, opacity: 0.35 }],
+                delay: anime.stagger(90, { from: fwd ? "first" : "last" }),
+                duration: 460, easing: "easeInOutSine" })
+            }
+
+            // 3) flash the fields that changed; count the numeric headline ones
+            const lead = conns.length ? conns.length * 90 + 120 : 120
+            this.fields().forEach((el) => {
+              const now = el.textContent.trim()
+              const was = this.cache[el.id]
+              if (was !== undefined && was !== now) {
+                this.flash(el, lead)
+                if (el.hasAttribute("data-fold-count")) this.count(el, was, now, lead)
+              }
+              this.cache[el.id] = now
+            })
+
+            // 4) the newest ledger row (forward only — a back-step removes one)
+            if (fwd) {
+              const last = this.el.querySelector("#ledger-rows tr:last-child")
+              if (last && !last.querySelector("[colspan]")) this.flash(last, lead + 80)
+            }
+          },
+          flash(el, delay) {
+            const anime = window.anime
+            anime.remove(el)
+            anime({ targets: el, backgroundColor: ["rgba(249,115,22,0.30)", "rgba(249,115,22,0)"],
+              delay, duration: 900, easing: "easeOutQuad",
+              complete: () => { el.style.backgroundColor = "" } })
+          },
+          count(el, was, now, delay) {
+            const from = this.parse(was), to = this.parse(now)
+            if (from === null || to === null) return
+            const proxy = { v: from }
+            window.anime({ targets: proxy, v: to, delay, duration: 620, easing: "easeOutExpo",
+              update: () => { el.textContent = this.fmtLike(now, proxy.v) },
+              complete: () => { el.textContent = now } })
+          },
+          parse(t) {
+            const m = t.replace(/[^0-9.\-]/g, "")
+            if (m === "" || m === "-" || m === ".") return null
+            const n = parseFloat(m)
+            return isNaN(n) ? null : n
+          },
+          fmtLike(sample, v) {
+            if (/day/.test(sample)) return Math.round(v) + " days"
+            if (sample.includes("$")) {
+              const neg = v < 0
+              return (neg ? "-$" : "$") + Math.abs(v).toFixed(2)
+            }
+            return String(Math.round(v))
+          }
+        }
+      </script>
+    </div>
     """
   end
 
@@ -200,7 +305,7 @@ defmodule LatchkeyWeb.Inspector.GuidedStream do
   defp flow_connector(assigns) do
     ~H"""
     <div class="flex items-center gap-2 py-1 pl-3 text-xs text-base-content/40">
-      <span class="text-lg leading-none">▼</span>
+      <span data-fold-connector class="inline-block origin-center text-lg leading-none">▼</span>
       <span class="italic">{@label}</span>
     </div>
     """

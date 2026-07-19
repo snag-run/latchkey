@@ -24,6 +24,11 @@ import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/latchkey"
 import topbar from "../vendor/topbar"
+import anime from "../vendor/anime.min.js"
+
+// Expose anime to colocated hooks (e.g. .FoldFlow), which run as separately
+// bundled modules and read it off window rather than importing it directly.
+window.anime = anime
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {

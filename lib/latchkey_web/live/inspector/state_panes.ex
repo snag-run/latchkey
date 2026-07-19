@@ -80,7 +80,7 @@ defmodule LatchkeyWeb.Inspector.StatePanes do
           <.field id="aggregate-charges" label="charges">
             {length(@state.charges)} booked · {money(charges_total(@state.charges))}
           </.field>
-          <.field id="aggregate-payments-total" label="payments_total_cents">
+          <.field id="aggregate-payments-total" label="payments_total_cents" count>
             {money(@state.payments_total_cents)}
           </.field>
           <.field id="aggregate-applied-payments" label="applied_payment_ids">
@@ -120,16 +120,16 @@ defmodule LatchkeyWeb.Inspector.StatePanes do
           <.field id="read-model-status" label="status">
             <span class="badge badge-sm badge-ghost font-mono">{@derived.status}</span>
           </.field>
-          <.field id="read-model-balance" label="balance_cents">
+          <.field id="read-model-balance" label="balance_cents" count>
             {money(@derived.balance_cents)}
           </.field>
           <.field id="read-model-oldest-unpaid" label="oldest_unpaid_due_date">
             {fmt(@derived.oldest_unpaid_due_date)}
           </.field>
-          <.field id="read-model-days-behind" label="days_behind">
+          <.field id="read-model-days-behind" label="days_behind" count>
             {@derived.days_behind} days
           </.field>
-          <.field id="read-model-final-balance" label="final_balance_cents">
+          <.field id="read-model-final-balance" label="final_balance_cents" count>
             {money(@derived.final_balance_cents)}
           </.field>
         </dl>
@@ -198,12 +198,15 @@ defmodule LatchkeyWeb.Inspector.StatePanes do
 
   attr :id, :string, required: true
   attr :label, :string, required: true
+  attr :count, :boolean, default: false, doc: "numeric field the fold animation counts to on scrub"
   slot :inner_block, required: true
 
   defp field(assigns) do
     ~H"""
     <dt class="font-mono text-base-content/50">{@label}</dt>
-    <dd id={@id} class="font-mono break-all">{render_slot(@inner_block)}</dd>
+    <dd id={@id} data-fold-field data-fold-count={@count} class="font-mono break-all rounded-sm">
+      {render_slot(@inner_block)}
+    </dd>
     """
   end
 

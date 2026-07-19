@@ -204,7 +204,8 @@ defmodule LatchkeyWeb.InspectorLive do
   # Advances one event; on reaching the head it halts (auto-pauses), otherwise it
   # schedules the next tick.
   def handle_info(:scrubber_tick, %{assigns: %{scrubber_playing?: true}} = socket) do
-    next = socket.assigns.scrubber_k + 1
+    prev = socket.assigns.scrubber_k
+    next = prev + 1
 
     socket =
       if next >= socket.assigns.scrubber_n do
@@ -213,7 +214,7 @@ defmodule LatchkeyWeb.InspectorLive do
         socket |> assign_prefix(next) |> schedule_tick()
       end
 
-    {:noreply, socket}
+    {:noreply, maybe_push_fold(socket, prev)}
   end
 
   def handle_info(:scrubber_tick, socket), do: {:noreply, socket}
@@ -242,15 +243,21 @@ defmodule LatchkeyWeb.InspectorLive do
   # clamp defensively; `assign_prefix/2` re-clamps, so a bogus value is harmless.
   @impl true
   def handle_event("scrub", %{"k" => k}, socket) do
-    {:noreply, socket |> cancel_play() |> assign_prefix(to_int(k, socket.assigns.scrubber_k))}
+    prev = socket.assigns.scrubber_k
+    socket = socket |> cancel_play() |> assign_prefix(to_int(k, prev))
+    {:noreply, maybe_push_fold(socket, prev)}
   end
 
   def handle_event("step_back", _params, socket) do
-    {:noreply, socket |> cancel_play() |> assign_prefix(socket.assigns.scrubber_k - 1)}
+    prev = socket.assigns.scrubber_k
+    socket = socket |> cancel_play() |> assign_prefix(prev - 1)
+    {:noreply, maybe_push_fold(socket, prev)}
   end
 
   def handle_event("step_forward", _params, socket) do
-    {:noreply, socket |> cancel_play() |> assign_prefix(socket.assigns.scrubber_k + 1)}
+    prev = socket.assigns.scrubber_k
+    socket = socket |> cancel_play() |> assign_prefix(prev + 1)
+    {:noreply, maybe_push_fold(socket, prev)}
   end
 
   # Play/pause. Pausing cancels the tick. Playing schedules the first tick; if we are
@@ -279,7 +286,9 @@ defmodule LatchkeyWeb.InspectorLive do
   # the user jumps to the head — fold the whole live history in and resume following
   # (at k = N, the next live event follows automatically). Cancels any auto-advance.
   def handle_event("jump_to_head", _params, socket) do
-    {:noreply, socket |> cancel_play() |> assign_prefix(socket.assigns.scrubber_n)}
+    prev = socket.assigns.scrubber_k
+    socket = socket |> cancel_play() |> assign_prefix(socket.assigns.scrubber_n)
+    {:noreply, maybe_push_fold(socket, prev)}
   end
 
   # ── Nav-rail filter + group collapse (server-side) ──────────────────────────
@@ -665,6 +674,21 @@ defmodule LatchkeyWeb.InspectorLive do
     do: assign(socket, :new_events_available?, false)
 
   defp maybe_clear_nudge(socket, _k, _n), do: socket
+
+  # Cue the client-side fold choreography (`.FoldFlow` hook, guided_stream.ex) after a
+  # scrubber move: the panes have already re-rendered server-side, so this only tells
+  # the browser to animate the causality — the folded-in event, the pulse down the
+  # pipeline, and the fields that changed. Fires only when connected and the prefix
+  # actually moved; `dir` runs the pulse forward (down) or back (up).
+  defp maybe_push_fold(socket, prev_k) do
+    k = socket.assigns.scrubber_k
+
+    if connected?(socket) and k != prev_k do
+      push_event(socket, "fold:flow", %{dir: if(k > prev_k, do: "fwd", else: "back")})
+    else
+      socket
+    end
+  end
 
   # ── Aggregate-state + read-model + ledger panes (issue #83/#84, spec D1/D2) ──
   # Folds a **prefix** through the **shared** `ArrearsFold.fold_and_derive/1` — the
