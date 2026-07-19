@@ -1638,3 +1638,122 @@
     opacity: 1;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   DDD 101 primer (/learn/ddd, issue #190)
+
+   A handful of primer-specific helpers. Scoped under `.landing` and namespaced
+   `lk-*` so they never collide with daisyUI (.btn/.hero/.label/.timeline). The
+   page otherwise reuses the shipped landing components (seam, eventlog, side
+   cards, band-inner, provenance, corr). No new colours or motion: everything
+   below draws from the existing `sd-*` tokens and is static, so it is light/dark
+   and reduced-motion safe with no extra work.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/* Core / Supporting classification pill (context cards) */
+.landing .lk-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--lk-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: var(--sd-muted);
+}
+.landing .lk-tag::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.landing .lk-tag.core {
+  color: var(--sd-accent);
+}
+.landing .lk-tag.supporting {
+  color: var(--sd-read);
+}
+
+/* Card heading — serif, matches the display family without the large sizes */
+.landing .lk-cardhead {
+  font-family: var(--lk-serif);
+  font-weight: 600;
+  font-size: 22px;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--sd-ink);
+  margin: 0 0 12px;
+}
+
+/* Term name — mono, for the ubiquitous-language cards */
+.landing .lk-termname {
+  font-family: var(--lk-mono);
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--sd-accent);
+  margin: 0 0 12px;
+}
+
+/* Inline code token used in prose (property_ref, RentFellDue, …) */
+.landing .lk-code {
+  font-family: var(--lk-mono);
+  font-size: 0.86em;
+  color: var(--sd-ink);
+  background: var(--sd-surface-2);
+  border: 1px solid var(--sd-line);
+  border-radius: 6px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+/* Seam caption inside the hero context-map card, and a note under sections */
+.landing .lk-seamcap {
+  font-family: var(--lk-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sd-muted);
+  text-align: center;
+  padding: 8px 0;
+}
+.landing .lk-seamnote {
+  color: var(--sd-ink-2);
+  font-size: 15px;
+  max-width: 64ch;
+  margin: 28px 0 0;
+}
+
+/* Ubiquitous-language cards read best top-aligned, not vertically centred */
+.landing .band-inner.lk-terms {
+  align-items: stretch;
+}
+.landing .lk-terms .side p:last-child {
+  margin-bottom: 0;
+  color: var(--sd-ink-2);
+  font-size: 14.5px;
+}
+
+/* Aggregate consistency boundary — a dashed outline framing the event log */
+.landing .lk-boundary {
+  position: relative;
+  border: 1.5px dashed var(--sd-axis);
+  border-radius: 20px;
+  padding: 26px 16px 16px;
+}
+.landing .lk-boundary-tag {
+  position: absolute;
+  top: -11px;
+  left: 20px;
+  font-family: var(--lk-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--sd-accent);
+  background: var(--sd-bg);
+  padding: 2px 10px;
+  border-radius: 999px;
+}
