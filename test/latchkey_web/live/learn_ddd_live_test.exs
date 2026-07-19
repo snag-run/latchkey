@@ -5,7 +5,10 @@ defmodule LatchkeyWeb.LearnDddLiveTest do
 
   test "GET /learn/ddd renders the primer", %{conn: conn} do
     conn = get(conn, ~p"/learn/ddd")
-    assert html_response(conn, 200) =~ "Two contexts, one seam"
+    assert conn.status == 200
+
+    {:ok, view, _html} = live(conn)
+    assert has_element?(view, "h1.display", "Two contexts, one seam")
   end
 
   test "the page mounts inside the warm-paper landing scope", %{conn: conn} do
