@@ -254,6 +254,7 @@
 .stream-detail,
 .landing,
 .insp-nav,
+.insp-shell,
 .insp-doc {
   --sd-bg: #f3f4f1;
   --sd-surface: #fbfbf9;
@@ -266,6 +267,11 @@
   --sd-accent: #b8531f;
   --sd-accent-2: #d9772e;
   --sd-on-accent: #fff;
+  /* AA-legible accent/read for small text on the soft badge + active-row tints
+     (the base accent/read fail AA on those light-theme fills). Dark theme keeps
+     the base tones — they already clear AA on the darker fills. */
+  --sd-accent-ink: #9c4315;
+  --sd-read-ink: #1e5bb8;
   --sd-write: #1f7a4d;
   --sd-write-soft: rgba(31, 122, 77, 0.12);
   --sd-read: #2a6fd6;
@@ -285,6 +291,7 @@
 [data-theme="dark"] .stream-detail,
 [data-theme="dark"] .landing,
 [data-theme="dark"] .insp-nav,
+[data-theme="dark"] .insp-shell,
 [data-theme="dark"] .insp-doc {
   --sd-bg: #0c0d0b;
   --sd-surface: #171815;
@@ -297,6 +304,8 @@
   --sd-accent: #e79157;
   --sd-accent-2: #f0a86f;
   --sd-on-accent: #1c130a;
+  --sd-accent-ink: var(--sd-accent);
+  --sd-read-ink: var(--sd-read);
   --sd-write: #43b880;
   --sd-write-soft: rgba(67, 184, 128, 0.15);
   --sd-read: #5a95ec;
@@ -936,6 +945,122 @@
   --color-primary-content: var(--sd-on-accent);
 
   background: var(--sd-bg);
+}
+
+/* inspector shell frame — the workbench chrome (left nav rail, right live
+   firehose, stream breadcrumb) brought onto the editorial warm-paper language.
+   Like `.insp-doc`, the shell remaps daisyUI's base tokens so the incidental
+   muted text, dividers, and hover fills warm up with no markup change; on top
+   of that it hand-builds the distinctly daisyUI-shaped bits — the kind badges,
+   status dots, the active-stream row, the filter, and the two rail surfaces —
+   as editorial atoms. Applied to the `#inspector` root, so it also warms the
+   still-daisyUI log/orientation neutrals sitting inside (their accent chips are
+   the deferred structural pass). */
+.insp-shell {
+  --lk-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", "Consolas", monospace;
+  --color-base-100: var(--sd-bg);
+  --color-base-200: var(--sd-surface-2);
+  --color-base-300: var(--sd-line);
+  --color-base-content: var(--sd-ink);
+  /* also remap the daisyUI semantic accents so the still-daisyUI panes inside
+     (log pane, orientation map, stream-not-found) don't strand cool `text-primary`
+     / `badge-info` / `text-warning` chips on the warm surface. Colour-only; their
+     structural editorial pass is still deferred. */
+  --color-primary: var(--sd-accent);
+  --color-primary-content: var(--sd-on-accent);
+  --color-info: var(--sd-read);
+  --color-success: var(--sd-ok);
+  --color-warning: var(--sd-accent-2);
+  --color-error: var(--sd-debit);
+
+  background: var(--sd-bg);
+}
+
+/* the two side rails sit a shade above the paper, like the stream-detail cards */
+.insp-shell .insp-rail {
+  background: var(--sd-surface);
+  border-right: 1px solid var(--sd-line);
+}
+.insp-shell .insp-firehose {
+  background: var(--sd-surface);
+  border-left: 1px solid var(--sd-line);
+}
+
+/* context kind badge (deep core vs supporting edge) — soft-tinted pills, not
+   daisyUI's solid chips */
+.insp-shell .insp-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-family: var(--lk-mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+}
+.insp-shell .insp-badge-deep {
+  color: var(--sd-accent-ink);
+  background: color-mix(in srgb, var(--sd-accent) 14%, transparent);
+}
+.insp-shell .insp-badge-edge {
+  color: var(--sd-read-ink);
+  background: var(--sd-read-soft);
+}
+
+/* status / kind dots — the daisyUI semantic colours remapped onto the palette */
+.insp-shell .dot-deep {
+  background: var(--sd-accent);
+}
+.insp-shell .dot-edge,
+.insp-shell .dot-info {
+  background: var(--sd-read);
+}
+.insp-shell .dot-ok {
+  background: var(--sd-ok);
+}
+.insp-shell .dot-warn {
+  background: var(--sd-accent-2);
+}
+.insp-shell .dot-crit {
+  background: var(--sd-debit);
+}
+.insp-shell .dot-muted {
+  background: var(--sd-muted);
+}
+
+/* active stream row — accent-tinted, replacing daisyUI's `bg-primary/10` */
+.insp-shell .is-active {
+  color: var(--sd-accent-ink);
+  background: color-mix(in srgb, var(--sd-accent) 12%, transparent);
+  font-weight: 500;
+}
+
+/* stream filter input */
+.insp-shell .insp-filter {
+  color: var(--sd-ink);
+  background: var(--sd-surface-2);
+  border: 1px solid var(--sd-line);
+}
+.insp-shell .insp-filter::placeholder {
+  color: var(--sd-muted);
+}
+.insp-shell .insp-filter:focus {
+  border-color: var(--sd-accent);
+  outline: none;
+}
+
+/* stream breadcrumb */
+.insp-shell .insp-crumb {
+  color: var(--sd-ink-2);
+}
+.insp-shell .insp-crumb a {
+  color: var(--sd-ink-2);
+  text-decoration: none;
+}
+.insp-shell .insp-crumb a:hover {
+  color: var(--sd-ink);
+}
+.insp-shell .insp-crumb .cur {
+  color: var(--sd-ink);
 }
 
 /* shared type */

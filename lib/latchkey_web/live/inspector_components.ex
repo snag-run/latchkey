@@ -259,7 +259,7 @@ defmodule LatchkeyWeb.InspectorComponents do
           phx-debounce="150"
           autocomplete="off"
           placeholder="Filter streams…"
-          class="w-full px-2 py-1 text-xs rounded-md bg-base-200 border border-base-300 focus:outline-none focus:border-primary"
+          class="insp-filter w-full px-2 py-1 text-xs rounded-md"
         />
       </div>
 
@@ -268,8 +268,8 @@ defmodule LatchkeyWeb.InspectorComponents do
           <span class={["inline-block size-2 rounded-full", context_dot(ctx.kind)]} />
           {ctx.name}
           <span class={[
-            "ml-auto badge badge-sm",
-            if(ctx.kind == :deep, do: "badge-primary", else: "badge-info")
+            "ml-auto insp-badge",
+            if(ctx.kind == :deep, do: "insp-badge-deep", else: "insp-badge-edge")
           ]}>
             {ctx.kind}
           </span>
@@ -366,7 +366,7 @@ defmodule LatchkeyWeb.InspectorComponents do
       patch={~p"/inspector/streams/#{@stream.id}"}
       class={[
         "flex items-center gap-2 pl-6 pr-2 py-1.5 rounded-md hover:bg-base-200 transition-colors",
-        @active_stream == @stream.id && "bg-primary/10 text-primary font-medium",
+        @active_stream == @stream.id && "is-active",
         @hidden && "hidden"
       ]}
     >
@@ -609,12 +609,12 @@ defmodule LatchkeyWeb.InspectorComponents do
     """
   end
 
-  defp context_dot(:deep), do: "bg-primary"
-  defp context_dot(_), do: "bg-info"
+  defp context_dot(:deep), do: "dot-deep"
+  defp context_dot(_), do: "dot-edge"
 
-  defp tone_dot(:ok), do: "bg-success"
-  defp tone_dot(:warn), do: "bg-warning"
-  defp tone_dot(:crit), do: "bg-error"
-  defp tone_dot(:info), do: "bg-info"
-  defp tone_dot(_), do: "bg-base-content/40"
+  defp tone_dot(:ok), do: "dot-ok"
+  defp tone_dot(:warn), do: "dot-warn"
+  defp tone_dot(:crit), do: "dot-crit"
+  defp tone_dot(:info), do: "dot-info"
+  defp tone_dot(_), do: "dot-muted"
 end

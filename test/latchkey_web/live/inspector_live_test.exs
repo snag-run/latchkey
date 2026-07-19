@@ -205,7 +205,7 @@ defmodule LatchkeyWeb.InspectorLiveTest do
 
       assert has_element?(view, "#fold-flow")
       # nav marks it active
-      assert has_element?(view, "#nav-stream-tenancy-paid-up.bg-primary\\/10")
+      assert has_element?(view, "#nav-stream-tenancy-paid-up.is-active")
     end
 
     test "an unknown stream id surfaces not-found, not a defaulted context", %{conn: conn} do
