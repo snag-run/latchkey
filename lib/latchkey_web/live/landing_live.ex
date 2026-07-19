@@ -8,7 +8,8 @@ defmodule LatchkeyWeb.LandingLive do
   across the payment ACL, **arrears over time** against the 14-day gate, and a
   close. It renders no domain data (the story is a fixed, internally consistent
   illustration at 620.00/week); the live event log lives at `/inspector`. The
-  page also states plainly that Latchkey is a learning project in ES + DDD.
+  page also states plainly that Latchkey is a learning project in event
+  sourcing and domain-driven design.
 
   Styling reuses the shipped warm-paper `sd-*` tokens; component classes are the
   `lk-*` set scoped under `.landing` (see `assets/css/app.css`). Interactivity is
@@ -385,12 +386,12 @@ defmodule LatchkeyWeb.LandingLive do
             <div class="band-inner">
               <div>
                 <p class="eyebrow">About the project</p>
-                <h2 class="display">Built to practise event sourcing and DDD.</h2>
+                <h2 class="display">Built to practise event sourcing and domain-driven design.</h2>
                 <p>
                   Latchkey is a learning project, not production. It simulates the payments seam of
-                  NSW residential tenancy management to work event sourcing and domain-driven design
-                  end to end: a hash-chained log on Commanded and Postgres EventStore, arrears folded
-                  into Ash read models, and a wall-clock sweep that reveals events as they fall due.
+                  NSW residential tenancy management to work both patterns end to end: a hash-chained
+                  log on Commanded and Postgres EventStore, arrears folded into Ash read models, and a
+                  wall-clock sweep that reveals events as they fall due.
                 </p>
               </div>
               <div>
