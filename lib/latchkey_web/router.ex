@@ -17,7 +17,7 @@ defmodule LatchkeyWeb.Router do
   scope "/", LatchkeyWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", LandingLive, :index
 
     # Public, read-only ES/DDD inspector (spec developer-view.md, D6). Deliberately
     # NOT behind the `dev_routes` compile flag below: it is enabled in all envs
