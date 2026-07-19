@@ -904,7 +904,8 @@
    the workbench shell (no `--maxw` centring; the shell is a full-width 3-column
    app, so a centred bar would read narrower than the content below it). */
 .insp-nav {
-  --lk-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --lk-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", "Consolas", monospace;
+
   display: flex;
   align-items: center;
   gap: 16px;
@@ -933,6 +934,7 @@
   --color-base-content: var(--sd-ink);
   --color-primary: var(--sd-accent);
   --color-primary-content: var(--sd-on-accent);
+
   background: var(--sd-bg);
 }
 
