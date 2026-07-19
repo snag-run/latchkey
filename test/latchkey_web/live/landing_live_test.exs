@@ -18,9 +18,12 @@ defmodule LatchkeyWeb.LandingLiveTest do
     # the warm-paper landing scope is applied
     assert has_element?(view, "div.landing")
     # append-only correction beat: the Accounts PaymentReversed fact is named,
-    # and on the tenancy stream it lands as a signed (negative) RentPaymentRecorded
+    # and on the tenancy stream it lands as a signed (negative) RentPaymentRecorded,
+    # not a raw PaymentReversed on the PM stream
     assert html =~ "PaymentReversed"
     assert has_element?(view, ".corr .evt.appended .name", "RentPaymentRecorded")
+    assert has_element?(view, ".corr .evt.appended", "−620.00")
+    refute has_element?(view, ".corr .evt.appended .name", "PaymentReversed")
     # write vs read seam + arrears timeline anchors exist
     assert has_element?(view, "#seam")
     assert has_element?(view, "#timeline")

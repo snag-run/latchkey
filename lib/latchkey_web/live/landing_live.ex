@@ -36,8 +36,6 @@ defmodule LatchkeyWeb.LandingLive do
           </.link>
           <nav aria-label="Primary">
             <span class="desktop-nav">
-              <a class="navlink" href="#seam">Write vs read</a>
-              <a class="navlink" href="#timeline">Timeline</a>
               <.link class="navlink" navigate={~p"/learn/event-sourcing"}>Event sourcing</.link>
               <.link class="navlink" navigate={~p"/learn/ddd"}>DDD</.link>
               <.link class="navlink" navigate={~p"/inspector"}>Inspector</.link>
@@ -167,14 +165,14 @@ defmodule LatchkeyWeb.LandingLive do
                 <div class="evt" phx-no-curly-interpolation>
                   <span class="name">RentPaymentRecorded</span>
                   <span class="k">{ amount:</span>
-                  620.00<span class="k">, on:</span>
-                  2026-03-05 <span class="k">}</span>
+                  620.00<span class="k">, source_payment_id:</span>
+                  pay_9f2c <span class="k">}</span>
                 </div>
                 <div class="evt appended" phx-no-curly-interpolation>
                   <span class="name">RentPaymentRecorded</span>
                   <span class="k">{ amount:</span>
                   −620.00<span class="k">, reverses:</span>
-                  2026-03-05 <span class="k">}</span>
+                  pay_9f2c <span class="k">}</span>
                 </div>
                 <span class="appended-tag">appended, never mutated · a signed RentPaymentRecorded</span>
               </div>
