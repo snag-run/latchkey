@@ -262,6 +262,7 @@
   --sd-axis: #c6c5bb;
   --sd-accent: #b8531f;
   --sd-accent-2: #d9772e;
+  --sd-on-accent: #fff;
   --sd-write: #1f7a4d;
   --sd-write-soft: rgba(31, 122, 77, 0.12);
   --sd-read: #2a6fd6;
@@ -288,6 +289,7 @@
   --sd-axis: #3a3c36;
   --sd-accent: #e79157;
   --sd-accent-2: #f0a86f;
+  --sd-on-accent: #1c130a;
   --sd-write: #43b880;
   --sd-write-soft: rgba(67, 184, 128, 0.15);
   --sd-read: #5a95ec;
@@ -369,7 +371,7 @@
 }
 .stream-detail .sd-btn.sd-primary {
   background: var(--sd-accent);
-  color: #fff;
+  color: var(--sd-on-accent);
   border-color: transparent;
 }
 .stream-detail .sd-btn:focus-visible {
@@ -406,7 +408,7 @@
 }
 .stream-detail .sd-toggle button[aria-pressed="true"] {
   background: var(--sd-accent);
-  color: #fff;
+  color: var(--sd-on-accent);
 }
 
 /* Filmstrip spine */
@@ -480,7 +482,7 @@
 .stream-detail .sd-frame.sd-here .sd-card {
   border-color: var(--sd-accent);
   transform: translateY(-3px);
-  box-shadow: 0 6px 16px rgba(184, 83, 31, 0.2);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--sd-accent) 20%, transparent);
 }
 .stream-detail .sd-frame.sd-here .sd-rail {
   background: var(--sd-accent);
@@ -509,7 +511,7 @@
 }
 .stream-detail .sd-vrow.sd-here {
   border-color: var(--sd-accent);
-  box-shadow: 0 4px 14px rgba(184, 83, 31, 0.14);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--sd-accent) 14%, transparent);
 }
 .stream-detail .sd-vrow.sd-dim {
   opacity: 0.5;
@@ -642,7 +644,7 @@
   color: var(--sd-write);
 }
 .stream-detail .sd-spill.sd-arrears {
-  background: rgba(192, 57, 43, 0.14);
+  background: color-mix(in srgb, var(--sd-debit) 14%, transparent);
   color: var(--sd-debit);
 }
 .stream-detail .sd-spill.sd-settled,
@@ -693,7 +695,7 @@
   margin: 16px 0;
 }
 .stream-detail .sd-consist.sd-drift {
-  background: rgba(192, 57, 43, 0.12);
+  background: color-mix(in srgb, var(--sd-debit) 12%, transparent);
   border-color: color-mix(in srgb, var(--sd-debit) 45%, var(--sd-line));
 }
 .stream-detail .sd-consist .sd-ck {

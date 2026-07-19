@@ -833,6 +833,9 @@ defmodule LatchkeyWeb.InspectorLive do
   defp payload_pairs(%_struct{} = data) do
     data
     |> Map.from_struct()
+    # occurred_on/recorded_on are rendered as dedicated envelope-date fields; drop
+    # them here so they don't appear a second time in the payload list.
+    |> Map.drop([:occurred_on, :recorded_on])
     |> Enum.sort_by(fn {key, _value} -> Atom.to_string(key) end)
   end
 
