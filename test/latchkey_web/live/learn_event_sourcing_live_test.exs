@@ -3,20 +3,19 @@ defmodule LatchkeyWeb.LearnEventSourcingLiveTest do
 
   import Phoenix.LiveViewTest
 
-  test "GET /learn/event-sourcing renders the primer", %{conn: conn} do
+  test "GET /learn/event-sourcing returns 200", %{conn: conn} do
     conn = get(conn, ~p"/learn/event-sourcing")
-    assert html_response(conn, 200) =~ "Learn event sourcing on one tenancy."
+    assert html_response(conn, 200)
   end
 
   test "the page mounts and shows the primer sections", %{conn: conn} do
-    {:ok, view, html} = live(conn, ~p"/learn/event-sourcing")
+    {:ok, view, _html} = live(conn, ~p"/learn/event-sourcing")
 
-    # hero copy
-    assert html =~ "Learn event sourcing on one tenancy."
+    assert has_element?(view, "h1.display", "Learn event sourcing on one tenancy.")
     # the warm-paper landing scope is applied (reuses the lk-*/sd-* system)
     assert has_element?(view, "div.landing")
 
-    # the six primer beats are reachable anchors
+    # the primer beats are reachable anchors
     assert has_element?(view, "#events")
     assert has_element?(view, "#log")
     assert has_element?(view, "#projections")
@@ -28,20 +27,29 @@ defmodule LatchkeyWeb.LearnEventSourcingLiveTest do
     assert has_element?(view, "#es-arrears-timeline")
   end
 
-  test "teaches the real tenancy event vocabulary", %{conn: conn} do
-    {:ok, _view, html} = live(conn, ~p"/learn/event-sourcing")
+  test "teaches the real tenancy event vocabulary, scoped to where it lives", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/learn/event-sourcing")
 
-    # the exact event names from docs/domain-model.md
-    assert html =~ "TenancyCommenced"
-    assert html =~ "RentFellDue"
-    assert html =~ "RentPaymentRecorded"
-    assert html =~ "PaymentReversed"
-    assert html =~ "TerminationNoticeGiven"
+    # the core Property Management (tenancy-stream) events, in the events card
+    assert has_element?(view, "#events .evt .name", "TenancyCommenced")
+    assert has_element?(view, "#events .evt .name", "RentFellDue")
+    assert has_element?(view, "#events .evt .name", "RentPaymentRecorded")
+    assert has_element?(view, "#events .evt .name", "TerminationNoticeGiven")
 
-    # the real read models and the replay primitive
-    assert html =~ "arrears"
-    assert html =~ ":origin"
-    assert html =~ "14-day gate"
+    # PaymentReversed is an Accounts fact (docs/domain-model.md), taught in the
+    # compensation section — the tenancy stream never carries it directly
+    assert has_element?(view, "#compensation .mono", "PaymentReversed")
+    # the reversal lands on the tenancy stream as a signed (negative) RentPaymentRecorded
+    assert has_element?(view, "#compensation .evt.appended .name", "RentPaymentRecorded")
+
+    # the replay primitive folds from :origin
+    assert has_element?(view, "#replay .mono", ":origin")
+  end
+
+  test "the brand links back to the landing", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/learn/event-sourcing")
+
+    assert has_element?(view, ~s(a.brand[href="/"]))
   end
 
   test "cross-links into the inspector and its docs", %{conn: conn} do

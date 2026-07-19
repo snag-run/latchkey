@@ -5,15 +5,16 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
   A design-led explainer at `/learn/event-sourcing` that teaches event sourcing
   using only what Latchkey implements, in the order a newcomer meets it:
 
-    1. **Events as facts**: the real tenancy vocabulary (`TenancyCommenced`,
-       `RentFellDue`, `RentPaymentRecorded`, `PaymentReversed`,
-       `TerminationNoticeGiven`).
+    1. **Events as facts**: the core tenancy vocabulary (`TenancyCommenced`,
+       `RentFellDue`, `RentPaymentRecorded`, `TerminationNoticeGiven`), plus the
+       Accounts `PaymentReversed` that crosses the payment ACL.
     2. **The append-only, hash-chained log** as the single source of truth,
        legible enough to stand up as NCAT (tribunal) evidence.
     3. **Projections are reads**: the rental ledger, the arrears read model, and
        the timeline are folds of the log, derived and disposable.
-    4. **Correction by compensation**: nothing is mutated; a `PaymentReversed`
-       is appended, reads as a debit, and re-opens the arrears.
+    4. **Correction by compensation**: nothing is mutated; an Accounts
+       `PaymentReversed` crosses the ACL as a negative `RentPaymentRecorded`,
+       reads as a debit, and re-opens the arrears.
     5. **Replay and rebuild**: projectors refold from `:origin`, and the
        Commanded reset primitive cold-rebuilds the whole board from the log.
 
@@ -39,12 +40,12 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="landing">
+    <Layouts.landing flash={@flash}>
       <header class="topbar">
         <div class="row">
-          <div class="brand">
+          <.link navigate={~p"/"} class="brand" aria-label="Latchkey home">
             <span class="key" aria-hidden="true">L</span> Latchkey <small>ES 101 primer</small>
-          </div>
+          </.link>
           <nav aria-label="Primary">
             <span class="desktop-nav">
               <a class="navlink" href="#events">Events</a>
@@ -81,11 +82,7 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
               </div>
             </div>
 
-            <div
-              class="eventlog"
-              role="img"
-              aria-label="Sample append-only event log for a tenancy stream: each event is numbered, timestamped, and hash-chained to the previous one."
-            >
+            <div class="eventlog">
               <div class="head">
                 <span class="who">Event log</span>
                 <span class="ref">stream: tenancy-a3f9 · append-only</span>
@@ -163,9 +160,12 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
                 <p class="eyebrow">1 · Events as facts</p>
                 <h2 class="display">An event is something that already happened.</h2>
                 <p>
-                  It is named in the past tense, and it is never edited or deleted once written. These
-                  are the only events Latchkey records on a tenancy stream. Everything you read later is
-                  folded from exactly these facts.
+                  It is named in the past tense, and never edited or deleted once written. These are
+                  the core tenancy facts this page follows; the stream carries more (rent changes,
+                  notices, settlement). Payments are <span class="mono">Accounts</span>
+                  facts that cross
+                  the payment ACL to land here as a signed <span class="mono">RentPaymentRecorded</span>.
+                  Everything you read later is folded from facts like these.
                 </p>
                 <div class="cta-row" style="margin-top: 22px;">
                   <.link class="lk-btn ghost" navigate={~p"/inspector/glossary"}>
@@ -173,11 +173,7 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
                   </.link>
                 </div>
               </div>
-              <div
-                class="corr"
-                role="img"
-                aria-label="The five tenancy events Latchkey records: TenancyCommenced, RentFellDue, RentPaymentRecorded, PaymentReversed, and TerminationNoticeGiven."
-              >
+              <div class="corr">
                 <div class="evt">
                   <span class="name">TenancyCommenced</span>
                   a tenancy begins at a <span class="k">property_ref</span>, with its rent and cycle.
@@ -189,11 +185,8 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
                 </div>
                 <div class="evt">
                   <span class="name">RentPaymentRecorded</span>
-                  a payment fact, crossed in from Accounts, lands against the tenancy.
-                </div>
-                <div class="evt">
-                  <span class="name">PaymentReversed</span>
-                  a dishonoured payment, appended as a compensating debit.
+                  the payment ACL's output: a payment against the tenancy, signed (a reversal is
+                  negative).
                 </div>
                 <div class="evt">
                   <span class="name">TerminationNoticeGiven</span>
@@ -312,7 +305,7 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
               <p>
                 The arrears read model is the same idea in motion. The 14-day gate is two weeks of rent
                 owed, not two weeks on the calendar. A part-payment can drop the tenant back under the
-                line. Only when a later charge crosses it, uncured, does a termination notice issue.
+                line. Only when a later charge crosses it, uncured, is a termination notice given.
               </p>
             </div>
 
@@ -415,7 +408,7 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
                   part-pay 300
                 </text>
                 <text class="note accent reveal" x="636" y="60" style="animation-delay:4.0s">
-                  Notice issued
+                  Notice given
                 </text>
 
                 <%!-- x-axis dates --%>
@@ -430,7 +423,7 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
                 <div class="legend">
                   <span><i class="w"></i>rent fell due</span>
                   <span><i class="r"></i>payment recorded</span>
-                  <span><i class="n"></i>notice issued</span>
+                  <span><i class="n"></i>notice given</span>
                 </div>
                 <.link class="lk-btn primary" navigate={~p"/inspector"}>Scrub a real stream</.link>
               </div>
@@ -446,17 +439,16 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
                 <p class="eyebrow">4 · Correction by compensation</p>
                 <h2 class="display">You fix the log by adding to it, never by editing it.</h2>
                 <p>
-                  When a payment is dishonoured, the original stays. A
-                  <span class="mono">PaymentReversed</span>
-                  fact is appended, reads as a debit, and re-opens the arrears. The history stays whole,
-                  and the next fold picks the correction up for free.
+                  When a payment is dishonoured, the original stays. In
+                  <span class="mono">Accounts</span>
+                  a <span class="mono">PaymentReversed</span>
+                  fact is appended; the payment ACL translates it onto the tenancy stream as a
+                  <span class="em">negative</span> <span class="mono">RentPaymentRecorded</span>, which
+                  reads as a debit and re-opens the arrears. Correction by compensation, never mutation,
+                  and the next fold picks it up for free.
                 </p>
               </div>
-              <div
-                class="corr"
-                role="img"
-                aria-label="A recorded payment, then an appended payment-reversed event that re-opens the arrears without deleting the original."
-              >
+              <div class="corr">
                 <div class="evt" phx-no-curly-interpolation>
                   <span class="name">RentPaymentRecorded</span>
                   <span class="k">{ amount:</span>
@@ -464,12 +456,12 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
                   2026-03-05 <span class="k">}</span>
                 </div>
                 <div class="evt appended" phx-no-curly-interpolation>
-                  <span class="name">PaymentReversed</span>
-                  <span class="k">{ reverses:</span>
-                  2026-03-05<span class="k">, amount:</span>
-                  620.00 <span class="k">}</span>
+                  <span class="name">RentPaymentRecorded</span>
+                  <span class="k">{ amount:</span>
+                  −620.00<span class="k">, reverses:</span>
+                  2026-03-05 <span class="k">}</span>
                 </div>
-                <span class="appended-tag">appended, never mutated · reads as a debit</span>
+                <span class="appended-tag">the reversal: a signed RentPaymentRecorded · reads as a debit</span>
               </div>
             </div>
           </div>
@@ -494,11 +486,7 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
                   </.link>
                 </div>
               </div>
-              <div
-                class="corr"
-                role="img"
-                aria-label="A projector subscribing from origin refolds every event to rebuild the same read model."
-              >
+              <div class="corr">
                 <div class="evt" phx-no-curly-interpolation>
                   <span class="name">ArrearsProjector</span>
                   <span class="k">{ start_from:</span> :origin <span class="k">}</span>
@@ -565,7 +553,7 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
           github.com/snag-run/latchkey
         </a>
       </footer>
-    </div>
+    </Layouts.landing>
     """
   end
 end
