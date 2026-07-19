@@ -31,13 +31,13 @@ defmodule LatchkeyWeb.LearnDddLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="landing">
+    <Layouts.landing flash={@flash}>
       <header class="topbar">
         <div class="row">
-          <div class="brand">
+          <.link navigate={~p"/"} class="brand" aria-label="Latchkey home">
             <span class="key" aria-hidden="true">L</span>
             Latchkey <small>DDD 101 · a primer by example</small>
-          </div>
+          </.link>
           <nav aria-label="Primary">
             <span class="desktop-nav">
               <a class="navlink" href="#contexts">Contexts</a>
@@ -183,8 +183,8 @@ defmodule LatchkeyWeb.LearnDddLive do
                   The rental ledger: a two-column money statement where
                   <code class="lk-code">RentFellDue</code>
                   is a debit and <code class="lk-code">RentPaymentRecorded</code>
-                  a credit, and the running balance is Σ debits − Σ credits. A reversal reads as a
-                  debit, never a negative credit.
+                  a credit, and the running balance is Σ debits − Σ credits. A reversal is a negative <code class="lk-code">RentPaymentRecorded</code>, a signed credit that undoes an
+                  earlier one, appended never deleted.
                 </p>
               </div>
 
@@ -367,9 +367,9 @@ defmodule LatchkeyWeb.LearnDddLive do
                   a3f9<span class="k">, amount:</span>
                   620.00 <span class="k">}</span>
                 </div>
-                <div class="evt" phx-no-curly-interpolation>
+                <div class="evt">
                   <span class="name">RentPaymentRecorded</span>
-                  <span class="k">→ credit, reduces</span> arrears <span class="k">}</span>
+                  <span class="k">→ credit, reduces</span> arrears
                 </div>
                 <div class="gate clear">arrears reduced, model uncorrupted</div>
               </div>
@@ -411,7 +411,7 @@ defmodule LatchkeyWeb.LearnDddLive do
           github.com/snag-run/latchkey
         </a>
       </footer>
-    </div>
+    </Layouts.landing>
     """
   end
 end

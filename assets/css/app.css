@@ -1668,7 +1668,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: currentColor;
+  background: currentcolor;
 }
 .landing .lk-tag.core {
   color: var(--sd-accent);
