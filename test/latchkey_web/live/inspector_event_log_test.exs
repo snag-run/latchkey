@@ -101,6 +101,9 @@ defmodule LatchkeyWeb.InspectorEventLogTest do
       ])
 
       {:ok, view, _html} = live(conn, ~p"/inspector/streams/#{stream}")
+      # The deep stream opens on the horizontal filmstrip; flip to the vertical
+      # evidence log, which is where the full payloads / dates / divergence live.
+      view |> element("#event-view-vertical") |> render_click()
       %{view: view, tid: tid, stream: stream, pref: pref}
     end
 

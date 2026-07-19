@@ -102,11 +102,12 @@ defmodule LatchkeyWeb.InspectorReplayScrubberTest do
       %{view: view, tid: tid, stream: stream}
     end
 
-    test "renders the scrubber controls by stable DOM id, opening at the head", %{
+    test "renders the filmstrip controls by stable DOM id, opening at the head", %{
       view: view
     } do
       assert has_element?(view, "#replay-scrubber")
-      assert has_element?(view, "#scrubber-slider")
+      assert has_element?(view, "#filmstrip-frames")
+      assert has_element?(view, "#scrubber-start")
       assert has_element?(view, "#scrubber-step-back")
       assert has_element?(view, "#scrubber-step-forward")
       assert has_element?(view, "#scrubber-play-toggle")
@@ -136,11 +137,11 @@ defmodule LatchkeyWeb.InspectorReplayScrubberTest do
       refute has_element?(view, "#event-row-#{stream}-4[aria-current]")
     end
 
-    test "the slider scrubs to an arbitrary prefix, recomputing all panes server-side", %{
+    test "clicking a frame scrubs to an arbitrary prefix, recomputing all panes server-side", %{
       view: view,
       stream: stream
     } do
-      view |> element("#scrubber-slider") |> render_change(%{"k" => "2"})
+      view |> element("#event-row-#{stream}-2") |> render_click()
 
       assert has_element?(view, "#scrubber-position", "2 / 4")
       # Prefix [0..2]: one charge, not yet late.
@@ -154,15 +155,16 @@ defmodule LatchkeyWeb.InspectorReplayScrubberTest do
     end
 
     test "arrears visibly climb and fall across the scrub (days_behind as-at event k)", %{
-      view: view
+      view: view,
+      stream: stream
     } do
-      view |> element("#scrubber-slider") |> render_change(%{"k" => "2"})
+      view |> element("#event-row-#{stream}-2") |> render_click()
       assert has_element?(view, "#read-model-days-behind", "0 days")
 
-      view |> element("#scrubber-slider") |> render_change(%{"k" => "3"})
+      view |> element("#event-row-#{stream}-3") |> render_click()
       assert has_element?(view, "#read-model-days-behind", "7 days")
 
-      view |> element("#scrubber-slider") |> render_change(%{"k" => "4"})
+      view |> element("#event-row-#{stream}-4") |> render_click()
       assert has_element?(view, "#read-model-days-behind", "0 days")
     end
 
@@ -170,7 +172,7 @@ defmodule LatchkeyWeb.InspectorReplayScrubberTest do
       view: view,
       stream: stream
     } do
-      view |> element("#scrubber-slider") |> render_change(%{"k" => "0"})
+      view |> element("#scrubber-start") |> render_click()
 
       assert has_element?(view, "#scrubber-position", "0 / 4")
       assert has_element?(view, "#read-model-balance", "$0.00")
@@ -179,8 +181,8 @@ defmodule LatchkeyWeb.InspectorReplayScrubberTest do
       refute has_element?(view, "#ledger-row-#{stream}-0")
     end
 
-    test "step-forward advances toward the head", %{view: view} do
-      view |> element("#scrubber-slider") |> render_change(%{"k" => "1"})
+    test "step-forward advances toward the head", %{view: view, stream: stream} do
+      view |> element("#event-row-#{stream}-1") |> render_click()
       assert has_element?(view, "#scrubber-position", "1 / 4")
 
       view |> element("#scrubber-step-forward") |> render_click()
@@ -203,8 +205,11 @@ defmodule LatchkeyWeb.InspectorReplayScrubberTest do
       assert has_element?(view, "#scrubber-position", "2 / 4")
     end
 
-    test "auto-advance halts at the head and clears the playing state", %{view: view} do
-      view |> element("#scrubber-slider") |> render_change(%{"k" => "3"})
+    test "auto-advance halts at the head and clears the playing state", %{
+      view: view,
+      stream: stream
+    } do
+      view |> element("#event-row-#{stream}-3") |> render_click()
       # Resume play from k=3.
       view |> element("#scrubber-play-toggle") |> render_click()
       assert has_element?(view, "#scrubber-play-toggle[aria-pressed='true']")
@@ -219,8 +224,11 @@ defmodule LatchkeyWeb.InspectorReplayScrubberTest do
       assert has_element?(view, "#scrubber-position", "4 / 4")
     end
 
-    test "pause cancels auto-advance so a later tick does not advance", %{view: view} do
-      view |> element("#scrubber-slider") |> render_change(%{"k" => "1"})
+    test "pause cancels auto-advance so a later tick does not advance", %{
+      view: view,
+      stream: stream
+    } do
+      view |> element("#event-row-#{stream}-1") |> render_click()
       view |> element("#scrubber-play-toggle") |> render_click()
       # Pause.
       view |> element("#scrubber-play-toggle") |> render_click()
@@ -244,7 +252,7 @@ defmodule LatchkeyWeb.InspectorReplayScrubberTest do
 
       assert has_element?(view, "#event-log")
       refute has_element?(view, "#replay-scrubber")
-      refute has_element?(view, "#scrubber-slider")
+      refute has_element?(view, "#filmstrip-frames")
     end
   end
 end

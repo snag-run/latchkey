@@ -175,7 +175,7 @@ defmodule LatchkeyWeb.InspectorLiveTest do
 
       view |> element("#nav-stream-accounts") |> render_click()
 
-      assert has_element?(view, "#stream-view")
+      assert has_element?(view, "#event-log")
       assert has_element?(view, "#stream-view-accounts")
       assert has_element?(view, "#inspector-breadcrumb")
     end
@@ -185,7 +185,7 @@ defmodule LatchkeyWeb.InspectorLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/inspector/streams/tenancy-paid-up")
 
-      assert has_element?(view, "#stream-view-tenancy-paid-up")
+      assert has_element?(view, "#fold-flow")
       # nav marks it active
       assert has_element?(view, "#nav-stream-tenancy-paid-up.bg-primary\\/10")
     end
@@ -195,7 +195,7 @@ defmodule LatchkeyWeb.InspectorLiveTest do
 
       assert has_element?(view, "#stream-not-found")
       # it must NOT masquerade as a valid stream/context view
-      refute has_element?(view, "#stream-view")
+      refute has_element?(view, "#fold-flow")
       refute has_element?(view, "#inspector-breadcrumb")
     end
 

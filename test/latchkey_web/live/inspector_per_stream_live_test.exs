@@ -144,7 +144,7 @@ defmodule LatchkeyWeb.InspectorPerStreamLiveTest do
     test "parked mid-history, position holds and a nudge appears; jumping resumes at head",
          %{view: view, tid: tid, stream: stream} do
       # Park back at k=1 (commence only — balance $0.00).
-      view |> element("#scrubber-slider") |> render_change(%{"k" => "1"})
+      view |> element("#event-row-#{stream}-1") |> render_click()
       assert has_element?(view, "#scrubber-position", "1 / 2")
       assert has_element?(view, "#read-model-balance", "$0.00")
       refute has_element?(view, "#scrubber-nudge")

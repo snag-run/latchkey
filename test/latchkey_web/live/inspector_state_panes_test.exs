@@ -118,7 +118,7 @@ defmodule LatchkeyWeb.InspectorStatePanesTest do
       assert has_element?(view, "#aggregate-status", "active")
       assert has_element?(view, "#aggregate-due-through")
       assert has_element?(view, "#aggregate-charges")
-      assert has_element?(view, "#aggregate-effective-end-date")
+      assert has_element?(view, "#aggregate-rent-amount")
       # A write-model caption distinguishing it, deep-linking the in-app aggregate
       # doc section (#129/D10: in-app anchor, same-tab — no github.com, no _blank).
       assert has_element?(view, "#aggregate-caption")
