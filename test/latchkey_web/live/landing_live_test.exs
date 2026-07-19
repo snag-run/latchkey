@@ -20,7 +20,7 @@ defmodule LatchkeyWeb.LandingLiveTest do
     # append-only correction beat: the Accounts PaymentReversed fact is named,
     # and on the tenancy stream it lands as a signed (negative) RentPaymentRecorded,
     # not a raw PaymentReversed on the PM stream
-    assert html =~ "PaymentReversed"
+    assert has_element?(view, "span.mono", "PaymentReversed")
     assert has_element?(view, ".corr .evt.appended .name", "RentPaymentRecorded")
     assert has_element?(view, ".corr .evt.appended", "−620.00")
     refute has_element?(view, ".corr .evt.appended .name", "PaymentReversed")
