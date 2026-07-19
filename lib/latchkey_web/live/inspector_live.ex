@@ -872,9 +872,13 @@ defmodule LatchkeyWeb.InspectorLive do
     ~H"""
     <Layouts.inspector flash={@flash}>
       <div id="inspector" class="flex flex-1 min-h-0">
-        <aside class="w-64 shrink-0 overflow-y-auto p-3 border-r border-base-300 bg-base-100">
+        <aside class={[
+          "w-64 shrink-0 overflow-y-auto p-3 border-r border-base-300 bg-base-100",
+          reference_route?(@live_action) && "insp-doc"
+        ]}>
           <%!-- Reference pages (glossary / deep docs) swap the stream nav for the
-                page's TOC rail; every other route keeps the stream nav. --%>
+                page's TOC rail; every other route keeps the stream nav. The TOC
+                rail + content also take the warm-paper `.insp-doc` palette. --%>
           <%= if reference_route?(@live_action) do %>
             <.toc_rail toc={@toc} title={@toc_title} />
           <% else %>
@@ -889,7 +893,10 @@ defmodule LatchkeyWeb.InspectorLive do
         </aside>
 
         <div class="flex flex-1 min-w-0">
-          <main class="flex-1 min-w-0 overflow-y-auto p-6">
+          <main class={[
+            "flex-1 min-w-0 overflow-y-auto p-6",
+            reference_route?(@live_action) && "insp-doc"
+          ]}>
             <%= cond do %>
               <% @live_action == :stream and @stream_found? -> %>
                 <nav id="inspector-breadcrumb" class="mb-4 text-xs text-base-content/50">
