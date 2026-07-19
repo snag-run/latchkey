@@ -40,10 +40,7 @@ defmodule LatchkeyWeb.LearnDddLive do
           </.link>
           <nav aria-label="Primary">
             <span class="desktop-nav">
-              <a class="navlink" href="#contexts">Contexts</a>
-              <a class="navlink" href="#language">Language</a>
-              <a class="navlink" href="#aggregate">Aggregate</a>
-              <a class="navlink" href="#acl">ACL</a>
+              <.link class="navlink" navigate={~p"/learn/event-sourcing"}>Event sourcing</.link>
               <.link class="navlink" navigate={~p"/inspector"}>Inspector</.link>
             </span>
             <Layouts.theme_toggle />

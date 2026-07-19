@@ -48,9 +48,7 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
           </.link>
           <nav aria-label="Primary">
             <span class="desktop-nav">
-              <a class="navlink" href="#events">Events</a>
-              <a class="navlink" href="#projections">Projections</a>
-              <a class="navlink" href="#replay">Replay</a>
+              <.link class="navlink" navigate={~p"/learn/ddd"}>DDD</.link>
               <.link class="navlink" navigate={~p"/inspector"}>Inspector</.link>
             </span>
             <Layouts.theme_toggle />
@@ -452,14 +450,14 @@ defmodule LatchkeyWeb.LearnEventSourcingLive do
                 <div class="evt" phx-no-curly-interpolation>
                   <span class="name">RentPaymentRecorded</span>
                   <span class="k">{ amount:</span>
-                  620.00<span class="k">, on:</span>
-                  2026-03-05 <span class="k">}</span>
+                  620.00<span class="k">, source_payment_id:</span>
+                  pay_9f2c <span class="k">}</span>
                 </div>
                 <div class="evt appended" phx-no-curly-interpolation>
                   <span class="name">RentPaymentRecorded</span>
                   <span class="k">{ amount:</span>
                   −620.00<span class="k">, reverses:</span>
-                  2026-03-05 <span class="k">}</span>
+                  pay_9f2c <span class="k">}</span>
                 </div>
                 <span class="appended-tag">the reversal: a signed RentPaymentRecorded · reads as a debit</span>
               </div>
