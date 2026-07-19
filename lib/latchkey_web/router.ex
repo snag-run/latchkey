@@ -19,6 +19,12 @@ defmodule LatchkeyWeb.Router do
 
     live "/", LandingLive, :index
 
+    # "ES 101" primer (issue #191): a public, design-led explainer of event
+    # sourcing taught on Latchkey's real tenancy stream. A plain `live` route,
+    # deliberately NOT inside the `:inspector` live_session below. It renders no
+    # live domain data and needs none of the inspector's session wiring.
+    live "/learn/event-sourcing", LearnEventSourcingLive, :index
+
     # Public, read-only ES/DDD inspector (spec developer-view.md, D6). Deliberately
     # NOT behind the `dev_routes` compile flag below: it is enabled in all envs
     # (incl. prod) so it can serve as a shareable portfolio artifact. It renders
