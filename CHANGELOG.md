@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.6.0](https://github.com/snag-run/latchkey/compare/v0.5.0...v0.6.0) (2026-07-19)
+
+
+### Features
+
+* **inspector:** tenancy stream redesign — filmstrip + write-vs-read, animated fold ([#187](https://github.com/snag-run/latchkey/issues/187)) ([390e1fa](https://github.com/snag-run/latchkey/commit/390e1fac799cfb762eb90b92b6d2ba40249ad1e6))
+* **landing:** event-sourced tenancy landing page at / ([#192](https://github.com/snag-run/latchkey/issues/192)) ([95a729e](https://github.com/snag-run/latchkey/commit/95a729ebcc77aa33a5b167881a43ff9b051626ed))
+* **landing:** link the /learn primers and fix the reversal beat ([#195](https://github.com/snag-run/latchkey/issues/195)) ([8452ba3](https://github.com/snag-run/latchkey/commit/8452ba35f5634779311c715d958e9060da60752e))
+* **learn:** "ES 101" event-sourcing primer page ([#191](https://github.com/snag-run/latchkey/issues/191)) ([#193](https://github.com/snag-run/latchkey/issues/193)) ([9539360](https://github.com/snag-run/latchkey/commit/95393609efc7a90843ab773cddd6ede4adb658aa))
+* **learn:** DDD 101 primer page at /learn/ddd ([#194](https://github.com/snag-run/latchkey/issues/194)) ([326b4f0](https://github.com/snag-run/latchkey/commit/326b4f00c2352cb6c86bc1873a032923bd3ba0b1))
+
+
+### Bug Fixes
+
+* **learn:** apply the DDD primer review fixes that missed [#194](https://github.com/snag-run/latchkey/issues/194)'s merge ([#196](https://github.com/snag-run/latchkey/issues/196)) ([9e87ebc](https://github.com/snag-run/latchkey/commit/9e87ebc9d94cad97f334b3c1970d81863ab08e35))
+
 ## [0.5.0](https://github.com/snag-run/latchkey/compare/v0.4.0...v0.5.0) (2026-07-17)
 
 
