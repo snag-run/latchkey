@@ -179,6 +179,44 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
     end
   end
 
+  describe "future_timeline/3 — the planner's > today slice" do
+    test "a reliable tenant's future periods are scheduled as payment steps" do
+      # first_due today-14, weekly, 8 periods → three periods ≤ today (paid, square) and
+      # the rest ahead — the runway the catalogue now adds so the tenant keeps paying.
+      scenario = %Scenario{
+        label: "ongoing",
+        tenancy_id: "ongoing",
+        property_ref: "prop-ongoing",
+        rent_amount_cents: 50_000,
+        first_due_date: Date.add(@today, -14),
+        profile: Profile.reliable(),
+        schedule_count: 8
+      }
+
+      future = Projection.future_timeline(scenario, scenario.tenancy_id, @today)
+
+      # Every future step is a payment (a reliable tenant never crosses a threshold), each
+      # dated strictly after today.
+      assert future != []
+      assert Enum.all?(future, fn {_date, {kind, _}} -> kind == :payment end)
+      assert Enum.all?(future, fn {date, _} -> Date.after?(date, @today) end)
+
+      # Extending the schedule past today leaves the as-of-today read model untouched.
+      assert %{status: :active, days_behind: 0, balance_cents: 0} =
+               Projection.derive(scenario, @today)
+    end
+
+    test "a silent tenant schedules no future payments" do
+      # Pays two periods then goes silent — its only payments are in the past, so the
+      # future slice carries no payment steps (the silence keeps it accruing, by design).
+      scenario = silent_scenario("silent-future", first_due: Date.add(@today, -70), overstay: 0)
+
+      future = Projection.future_timeline(scenario, scenario.tenancy_id, @today)
+
+      refute Enum.any?(future, fn {_date, {kind, _}} -> kind == :payment end)
+    end
+  end
+
   describe "dated_timeline/3" do
     test "pairs each step with its own ordering date, oldest first, matching timeline/3" do
       scenario = silent_scenario("dated", first_due: Date.add(@today, -70), overstay: 0)

@@ -13,24 +13,26 @@ defmodule Latchkey.Simulation.Planner do
   its date. It is a **realizer, not a runtime decider**: it reads no live arrears and
   decides nothing at job-run time — there is no recurring decider cron.
 
-  ## What gets scheduled: `notice` and `vacate`
+  ## What gets scheduled: `payment`, `notice` and `vacate`
 
-  Only the derived **agent actions** are scheduled — the termination `notice` and the
-  tenant's `vacate` (keys-return). Payments are *not* planned here: in v1 each
-  scheduled event *kind* occurs **at most once per tenancy lifecycle** (no curing, no
-  re-let), which is exactly what makes the `{tenancy_id, event}` idempotency key below
-  sound — a property a recurring payment would break. (Reliable tenants keeping up
-  future payments as real time passes is a separate concern the reset-to-healthy cron,
-  issue #92, owns; the planner deliberately does not manufacture them.)
+  Every future world-line step is scheduled — the tenant's future **payments** and the
+  derived **agent actions** (the termination `notice` and the `vacate`/keys-return). A
+  payment is the one *recurring* kind, so it cannot key on `{tenancy_id, event}` alone
+  the way the once-per-lifecycle agent actions do; it uses the stable per-period
+  `payment_id` as its idempotency `ref` instead (see the `@unique` note below). This is
+  what keeps a reliable tenant paying as real time passes — the schedule is extended a
+  runway past today (`Seeder.Catalogue`), and the planner realizes those future payments
+  as scheduled jobs. Silent/terminal tenants simply have no future payment steps to
+  schedule.
 
-  ## Idempotent on `{tenancy_id, event, generation}`
+  ## Idempotent on `{tenancy_id, ref, generation}`
 
-  The enqueue is idempotent on `{tenancy_id, event, generation}` via Oban uniqueness
+  The enqueue is idempotent on `{tenancy_id, ref, generation}` via Oban uniqueness
   (`period: :infinity`, `states: :all`): a re-plan under the **same** seed generation (a
-  re-run) inserts **no duplicates**. Because each event kind is unique per tenancy in v1,
-  `{tenancy_id, event}` uniquely identifies its single occurrence *within a generation*;
-  the aggregate's own dedupe backstops it. *Extension point:* if a later change makes an
-  event kind recur, the key must gain a stable per-occurrence world-line event id (spec).
+  re-run) inserts **no duplicates**. `ref` is the per-occurrence world-line id — the
+  once-per-lifecycle agent actions use their event name (`"notice"`/`"vacate"`), and the
+  recurring payments use their stable per-period `payment_id` — so every occurrence keys
+  uniquely *within a generation*; the aggregate's/ACL's own dedupe backstops it.
 
   ## Generation-aware uniqueness (issue #162)
 
@@ -54,11 +56,14 @@ defmodule Latchkey.Simulation.Planner do
 
   @time_zone "Australia/Sydney"
 
-  # Idempotency: one job per {tenancy_id, event, generation}, forever, across every job
+  # Idempotency: one job per {tenancy_id, ref, generation}, forever, across every job
   # state — so a re-plan under the same generation never double-schedules regardless of
-  # whether the prior job is still scheduled, already ran, or was cancelled. `generation`
-  # keeps a lingering old-generation job from blocking a post-reset replan (issue #162).
-  @unique [keys: [:tenancy_id, :event, :generation], period: :infinity, states: :all]
+  # whether the prior job is still scheduled, already ran, or was cancelled. `ref` is the
+  # per-occurrence world-line id: `"notice"`/`"vacate"` (unique per tenancy) for the agent
+  # actions, and the stable per-period `payment_id` for a payment — so recurring payments
+  # each get their own key (the extension point noted above). `generation` keeps a lingering
+  # old-generation job from blocking a post-reset replan (issue #162).
+  @unique [keys: [:tenancy_id, :ref, :generation], period: :infinity, states: :all]
 
   @doc """
   Runs the planner as a top-level Oban job: plans the full catalogue as of `today`
@@ -94,6 +99,7 @@ defmodule Latchkey.Simulation.Planner do
     today = Keyword.get(opts, :today, Clock.today())
     scenarios = Keyword.get_lazy(opts, :scenarios, fn -> Seeder.catalogue(today) end)
     prefix = Keyword.get(opts, :id_prefix, "")
+    accounts_stream = Keyword.get(opts, :accounts_stream, "accounts")
 
     # Read the live seed generation once and stamp every job planned this run with it, so
     # the whole plan is one atomic generation (issue #162). A reset advances the
@@ -101,26 +107,31 @@ defmodule Latchkey.Simulation.Planner do
     generation = SeedGeneration.current()
 
     scenarios
-    |> Enum.flat_map(&changesets(&1, prefix, today, generation))
+    |> Enum.flat_map(&changesets(&1, prefix, today, generation, accounts_stream))
     |> Enum.map(&Oban.insert!/1)
   end
 
   # The scheduled-job changesets for one scenario's future slice.
-  defp changesets(%Scenario{} = scenario, prefix, today, generation) do
+  defp changesets(%Scenario{} = scenario, prefix, today, generation, accounts_stream) do
     tenancy_id = prefix <> scenario.tenancy_id
 
     scenario
     |> Projection.future_timeline(tenancy_id, today)
-    |> Enum.flat_map(fn {date, step} -> changeset(step, tenancy_id, date, generation) end)
+    |> Enum.flat_map(fn {date, step} ->
+      changeset(step, tenancy_id, date, generation, accounts_stream)
+    end)
   end
 
-  # `notice` and `vacate` are scheduled; a future payment (if any) is not — see moduledoc.
-  defp changeset({:notice, notice}, tenancy_id, date, generation) do
+  # Each future world-line step becomes one scheduled job. `ref` is the per-occurrence
+  # idempotency key (see `@unique`): the event name for the once-per-lifecycle agent
+  # actions, the stable `payment_id` for a recurring payment.
+  defp changeset({:notice, notice}, tenancy_id, date, generation, _accounts_stream) do
     [
       new_job(
         %{
           tenancy_id: tenancy_id,
           event: "notice",
+          ref: "notice",
           generation: generation,
           given_on: Date.to_iso8601(notice.given_on),
           termination_date: Date.to_iso8601(notice.termination_date),
@@ -131,12 +142,13 @@ defmodule Latchkey.Simulation.Planner do
     ]
   end
 
-  defp changeset({:exit, exit}, tenancy_id, date, generation) do
+  defp changeset({:exit, exit}, tenancy_id, date, generation, _accounts_stream) do
     [
       new_job(
         %{
           tenancy_id: tenancy_id,
           event: "vacate",
+          ref: "vacate",
           generation: generation,
           keys_on: Date.to_iso8601(exit.keys_on)
         },
@@ -145,7 +157,27 @@ defmodule Latchkey.Simulation.Planner do
     ]
   end
 
-  defp changeset({:payment, _payment}, _tenancy_id, _date, _generation), do: []
+  # A future payment fires *live* through the Accounts edge (not a Commanded command),
+  # so the job carries the payment's edge inputs and the target Accounts stream. `ref`
+  # is the stable per-period `payment_id`, so re-plans dedupe per payment.
+  defp changeset({:payment, payment}, tenancy_id, date, generation, accounts_stream) do
+    [
+      new_job(
+        %{
+          tenancy_id: tenancy_id,
+          event: "payment",
+          ref: payment.payment_id,
+          generation: generation,
+          accounts_stream: accounts_stream,
+          payment_id: payment.payment_id,
+          amount_cents: payment.amount_cents,
+          received_on: Date.to_iso8601(payment.occurred_on),
+          holder: payment.holder
+        },
+        date
+      )
+    ]
+  end
 
   defp new_job(args, %Date{} = date) do
     ScheduledEvent.new(args, scheduled_at: scheduled_at(date), unique: @unique)

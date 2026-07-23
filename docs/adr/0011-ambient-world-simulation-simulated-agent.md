@@ -46,3 +46,21 @@ purity of the tenant engine are preserved.
   derived from `(tenant archetype × agent archetype × commence date)`.
 - Freshness stays with the finite-population + reset-to-healthy model (issue #92);
   perpetual re-letting remains deferred.
+
+## Amendment — future payments are scheduled plan-once too (issue #200)
+
+The original decision scheduled only the derived **agent actions** (notice, vacate) and
+left **future payments** to the reset-to-healthy re-anchor. That was insufficient: rent
+accrues forever (the daily sweep), but a reliable tenant's finite schedule ran out ~today
+at seed time, so every reliable tenant slid into ever-growing arrears a bounded time after
+seeding — and the reset (monthly, default-disabled, coarse) could not keep weekly payers
+current between firings.
+
+Future payments are now planned **the same plan-once way** as agent actions: reliable/
+ongoing tenants' schedules extend a runway (~5 months, longer than the quarterly reset
+cadence) past today, and the planner realizes each future `{:payment, _}` world-line step
+as a scheduled job — dispatched *live* through the Accounts edge, keyed idempotently on the
+stable per-period `payment_id`. Determinism and the pure tenant engine are unchanged (the
+payment pattern still comes from `Behaviour.payments/2`); the reset-to-healthy re-anchor
+re-extends the runway on each firing. Silent/terminal scenarios are untouched — their finite
+schedule *is* how the arrears are modelled.

@@ -10,9 +10,10 @@
 # no-op: each already-commenced tenancy is skipped.
 #
 # Then the planner realizes the *future* (ADR 0011): it folds each tenancy's world-line
-# and enqueues the `> today` agent actions (notice/vacate) as scheduled Oban jobs, so
-# the board keeps evolving AFK. Idempotent on `{tenancy_id, event}`, so this is safe to
-# re-run.
+# and enqueues the `> today` events — future payments and the derived agent actions
+# (notice/vacate) — as scheduled Oban jobs, so the board keeps evolving AFK (reliable
+# tenants keep paying as time advances; issue #200). Idempotent on `{tenancy_id, ref}`,
+# so this is safe to re-run.
 
 alias Latchkey.Simulation.Planner
 alias Latchkey.Simulation.Seeder

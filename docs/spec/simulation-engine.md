@@ -118,14 +118,13 @@ a deterministic agent archetype. The existing midnight sweep continues to advanc
 - **Plan-once after seed.** Deterministic + finite + no intervention ⇒ the whole
   remaining future is known at seed time. The planner enqueues every future event
   once, as scheduled Oban jobs at their date; runtime jobs are dumb (dispatch the
-  pre-decided command, no arrears read). Idempotent on `{tenancy_id, event}` —
-  sufficient in v1 because each scheduled event *kind* (`notice`, `vacate`) occurs
-  **at most once per tenancy lifecycle** (no curing, no re-let), so `{tenancy_id,
-  event}` uniquely identifies its single occurrence; the aggregate's own dedupe
-  backstops it. *Extension point:* if a later change makes an event kind recur
-  (re-letting a vacated property, multiple notice cycles after curing), the key
-  must gain a stable per-occurrence world-line event id so distinct occurrences
-  don't collapse into one. No recurring decider cron.
+  pre-decided command / append the payment, no arrears read). Idempotent on
+  `{tenancy_id, ref}`, where `ref` is a **stable per-occurrence world-line id**: the
+  once-per-lifecycle agent actions use their event name (`notice`, `vacate`), while a
+  recurring **payment** — the one event kind that occurs many times per tenancy
+  (issue #200) — uses its stable per-period `payment_id`, so distinct payments never
+  collapse into one. The aggregate's / payment ACL's own dedupe backstops it. No
+  recurring decider cron.
 - **Reset carries a seed generation.** Reset (#92) purges *scheduled* planned jobs
   and replans — but a job Oban has already **claimed** (moved to `executing`) is
   past deletion and would otherwise dispatch a stale command into the fresh seed.
