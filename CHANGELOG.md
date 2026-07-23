@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/snag-run/latchkey/compare/v0.6.0...v0.7.0) (2026-07-23)
+
+
+### Features
+
+* **sim:** schedule ongoing archetype-driven rental payments ([#200](https://github.com/snag-run/latchkey/issues/200)) ([08b430f](https://github.com/snag-run/latchkey/commit/08b430f60d3ffd4ea2c735973c5485b33e2b2893))
+
 ## [0.6.0](https://github.com/snag-run/latchkey/compare/v0.5.0...v0.6.0) (2026-07-19)
 
 
