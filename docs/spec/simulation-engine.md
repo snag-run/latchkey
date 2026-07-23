@@ -44,9 +44,10 @@ a deterministic agent archetype. The existing midnight sweep continues to advanc
 5. As the developer, I want the planner to compute each tenancy's world-line once
    after seed and enqueue only the future events as scheduled jobs, so that runtime
    jobs are dumb dispatches with no arrears read.
-6. As the developer, I want the enqueue idempotent on `{tenancy_id, event}` — safe
-   because each scheduled event kind occurs at most once per tenancy in v1 — so a
-   re-run never double-schedules and the aggregate's own dedupe backstops it.
+6. As the developer, I want the enqueue idempotent on `{tenancy_id, ref}` — where
+   `ref` is the event name for the once-per-lifecycle agent actions and the stable
+   per-period `payment_id` for a recurring payment — so a re-run never double-schedules
+   and the aggregate's / payment ACL's own dedupe backstops it.
 7. As the developer, I want the agent's notice threshold to be a per-scenario
    archetype, so the board can show both a strict and a lenient response.
 8. As the developer, I want a noticed tenant's vacate date derived as `E + overstay`,
@@ -163,9 +164,10 @@ a deterministic agent archetype. The existing midnight sweep continues to advanc
   tests.
 - **Planner enqueue as behaviour, not internals.** Assert that planning a scenario
   inserts scheduled Oban jobs at the right dates for the future slice only (past
-  events are not enqueued), and that a second plan run inserts no duplicates
-  (idempotency on `{tenancy_id, event}`). Use Oban's testing mode; assert on
-  enqueued jobs, not on dispatch side effects.
+  events are not enqueued) — including the recurring future payments — and that a
+  second plan run inserts no duplicates (idempotency on `{tenancy_id, ref}`, per-period
+  for payments). Use Oban's testing mode; assert on enqueued jobs, not on dispatch
+  side effects.
 - **Reset-generation guard.** Cover the reset-vs-claimed-job race: a planned job
   stamped with generation *N*, executed after a reset has advanced the generation
   to *N+1*, must no-op (dispatch no command); a job whose stamp matches the current

@@ -382,12 +382,15 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   defp back_periods(%Date{} = date, :fortnightly, n), do: Date.add(date, -14 * n)
   defp back_periods(%Date{} = date, :monthly, n), do: Date.shift(date, month: -n)
 
-  # Future cadence periods covering `@payment_runway_days` — the runway added to an
-  # ongoing reliable payer's schedule so it keeps paying past today (the shortest month
-  # is used for monthly so the day-count is never under-covered).
-  defp future_periods(:weekly), do: ceil(@payment_runway_days / 7)
-  defp future_periods(:fortnightly), do: ceil(@payment_runway_days / 14)
-  defp future_periods(:monthly), do: ceil(@payment_runway_days / 28)
+  # Future cadence periods added to an ongoing reliable payer's schedule so its last due
+  # date lands **at least** `@payment_runway_days` past today. The base schedule ends
+  # ~one cadence period *before* today (its next due is the first that would dangle), so
+  # we add one period beyond `ceil(runway / period)` to cover that gap plus the small
+  # anchor `offset` — guaranteeing the runway is never short. The shortest month (28d) is
+  # used for monthly so the day-count is never under-covered.
+  defp future_periods(:weekly), do: ceil(@payment_runway_days / 7) + 1
+  defp future_periods(:fortnightly), do: ceil(@payment_runway_days / 14) + 1
+  defp future_periods(:monthly), do: ceil(@payment_runway_days / 28) + 1
 
   # A little deterministic rent variation (45k..70k) so the board isn't monotone. This is
   # the whole-period rent for the tenancy's cadence (ADR 0009 decision 1).

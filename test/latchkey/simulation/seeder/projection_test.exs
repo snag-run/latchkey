@@ -9,8 +9,13 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
 
   alias Latchkey.Accounts.Events.PaymentReceived
   alias Latchkey.Simulation.Behaviour.Profile
+  alias Latchkey.Simulation.Seeder.Catalogue
   alias Latchkey.Simulation.Seeder.Projection
   alias Latchkey.Simulation.Seeder.Scenario
+
+  # The runway the catalogue promises a reliable tenant keeps paying (mirrors
+  # `Catalogue`'s `@payment_runway_days`); the boundary test asserts it is never short.
+  @runway_days 150
 
   @today ~D[2026-06-15]
 
@@ -214,6 +219,33 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
       future = Projection.future_timeline(scenario, scenario.tenancy_id, @today)
 
       refute Enum.any?(future, fn {_date, {kind, _}} -> kind == :payment end)
+    end
+
+    test "every cadence's healthy runway reaches at least @payment_runway_days past today" do
+      # The catalogue promises a reliable tenant keeps paying ~5 months out; assert the
+      # last scheduled payment on each cadence lands at least `@runway_days` past today,
+      # so no reliable tenant runs dry before the (quarterly) reset re-anchors (#200).
+      floor = Date.add(@today, @runway_days)
+
+      healthy_by_cadence =
+        @today
+        |> Catalogue.build()
+        |> Enum.filter(&(&1.label =~ ~r/^healthy-/))
+        |> Enum.group_by(& &1.cycle)
+
+      for cadence <- [:weekly, :fortnightly, :monthly] do
+        scenario = healthy_by_cadence |> Map.fetch!(cadence) |> hd()
+
+        last_payment =
+          scenario
+          |> Projection.future_timeline(scenario.tenancy_id, @today)
+          |> Enum.filter(fn {_date, {kind, _}} -> kind == :payment end)
+          |> Enum.map(fn {date, _} -> date end)
+          |> Enum.max(Date)
+
+        assert Date.compare(last_payment, floor) != :lt,
+               "#{cadence}: last payment #{last_payment} is short of #{floor}"
+      end
     end
   end
 

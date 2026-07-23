@@ -21,8 +21,14 @@ defmodule Latchkey.Simulation.ScheduledEvent do
     * a `payment` is *not* a Commanded command — it is appended to the **Accounts**
       stream (`Accounts.append/2`), where the payment ACL crosses it into PM's
       `RentPaymentRecorded` asynchronously, exactly as any live payment does. No
-      synchronous await is needed (the daily sweep reflects it downstream); the
-      aggregate/ACL dedupe on `source_payment_id` makes a retry safe.
+      synchronous await is needed (the daily sweep reflects it downstream). **PM state
+      stays correct under a retry**: the ACL/aggregate dedupe on `source_payment_id`
+      (`= payment_id`), so a re-fired payment never double-books arrears. The raw
+      Accounts stream is *not* strictly idempotent — `Accounts.append/2` writes with
+      `:any_version`, so a crash between the append and the Oban ack can leave a
+      duplicate `PaymentReceived` fact on it. That is tolerated by design: Accounts is
+      an append-only source with no write-side invariant to protect, and PM — the
+      read side that matters — dedupes it away.
 
   ## `recorded_on` is left to default — this fires *live*
 
