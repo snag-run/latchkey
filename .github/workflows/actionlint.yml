@@ -26,7 +26,7 @@ jobs:
     steps:
       # This job only reads the workflow files and runs a downloaded binary, so
       # it never needs the checkout token left behind in .git/config.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
