@@ -1,30 +1,42 @@
 defmodule Latchkey.Simulation.ScheduledEvent do
   @moduledoc """
   The **thin scheduled-event worker** — the Oban job the planner enqueues for each
-  future world-line agent action (ADR 0011 / spec `docs/spec/simulation-engine.md`,
-  "plan-once after seed"). One job per derived action (`notice`, `vacate`), scheduled
+  future world-line step (ADR 0011 / spec `docs/spec/simulation-engine.md`,
+  "plan-once after seed"). One job per step (`payment`, `notice`, `vacate`), scheduled
   at the real-world date it occurs, on the dedicated `:simulation` queue.
 
   ## A dumb dispatch (issue #158)
 
   The planner decided *everything* at plan time; a fired job carries its pre-decided
-  command in its `args` and does **no** arrears read and **no** run-time decision. When
-  it fires it simply reconstitutes the command from those args and dispatches it through
-  the live seam — `GiveTerminationNotice` for a `notice`, `ReturnKeys` for a `vacate` —
-  with `consistency: :strong`, so on return the aggregate has folded it.
+  work in its `args` and does **no** arrears read and **no** run-time decision. When it
+  fires it simply reconstitutes that work from those args and drives it through the live
+  seam:
 
-  Dispatching `ReturnKeys` at the derived vacate date is all the exit lifecycle needs:
-  the aggregate itself catches accrual up to `E`, appends any overstay charge, and
-  settles to `Terminal` (spec, "Exit lifecycle needs no new machinery"). The two
-  commands drive the whole exit.
+    * a `notice`/`vacate` dispatches the pre-decided `GiveTerminationNotice`/`ReturnKeys`
+      command through Commanded with `consistency: :strong`, so on return the aggregate
+      has folded it. Dispatching `ReturnKeys` at the derived vacate date is all the exit
+      lifecycle needs: the aggregate itself catches accrual up to `E`, appends any
+      overstay charge, and settles to `Terminal` (spec, "Exit lifecycle needs no new
+      machinery").
+    * a `payment` is *not* a Commanded command — it is appended to the **Accounts**
+      stream (`Accounts.append/2`), where the payment ACL crosses it into PM's
+      `RentPaymentRecorded` asynchronously, exactly as any live payment does. No
+      synchronous await is needed (the daily sweep reflects it downstream). **PM state
+      stays correct under a retry**: the ACL/aggregate dedupe on `source_payment_id`
+      (`= payment_id`), so a re-fired payment never double-books arrears. The raw
+      Accounts stream is *not* strictly idempotent — `Accounts.append/2` writes with
+      `:any_version`, so a crash between the append and the Oban ack can leave a
+      duplicate `PaymentReceived` fact on it. That is tolerated by design: Accounts is
+      an append-only source with no write-side invariant to protect, and PM — the
+      read side that matters — dedupes it away.
 
   ## `recorded_on` is left to default — this fires *live*
 
   Unlike the seeder, which backdates `recorded_on` to manufacture history, a fired job
   runs on the real-world date the event occurs, so it leaves `recorded_on` nil and lets
-  the aggregate default it to `Clock.today/0` (ADR 0005). Because the job's scheduled
-  instant *is* that day, the booking date and the pre-decided occurred date (`given_on`
-  / `keys_on`) coincide — a live same-day booking.
+  the edge default it to `Clock.today/0` (ADR 0005). Because the job's scheduled instant
+  *is* that day, the booking date and the pre-decided occurred date (`given_on` /
+  `keys_on` / a payment's `received_on`) coincide — a live same-day booking.
 
   ## Idempotency lives on the enqueue
 
@@ -46,6 +58,7 @@ defmodule Latchkey.Simulation.ScheduledEvent do
   """
   use Oban.Worker, queue: :simulation, max_attempts: 3
 
+  alias Latchkey.Accounts
   alias Latchkey.CommandedApp
   alias Latchkey.PropertyManagement.Tenancy.Commands.GiveTerminationNotice
   alias Latchkey.PropertyManagement.Tenancy.Commands.ReturnKeys
@@ -53,16 +66,46 @@ defmodule Latchkey.Simulation.ScheduledEvent do
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
-    if stale?(args) do
-      # Planned under a superseded seed generation (a reset advanced past it while this
-      # job was already claimed): drop the stale command rather than inject it into the
-      # fresh world. The completed no-op leaves the fresh generation's replan untouched.
-      :ok
-    else
-      args
-      |> command()
-      |> CommandedApp.dispatch(consistency: :strong)
+    cond do
+      stale?(args) ->
+        # Planned under a superseded seed generation (a reset advanced past it while this
+        # job was already claimed): drop the stale work rather than inject it into the
+        # fresh world. The completed no-op leaves the fresh generation's replan untouched.
+        :ok
+
+      args["event"] == "payment" ->
+        # A payment fires *live* through the Accounts edge — appended to the Accounts
+        # stream, where the payment ACL crosses it into PM asynchronously, exactly as any
+        # live payment does (no synchronous await; the daily sweep reflects it downstream).
+        record_payment(args)
+
+      true ->
+        args
+        |> command()
+        |> CommandedApp.dispatch(consistency: :strong)
     end
+  end
+
+  # Reconstitute the payment's edge inputs and append it to the Accounts stream. Fires on
+  # the received date, so `recorded_on` is left to default to `Clock.today/0` (a live
+  # same-day booking, matching this worker's dumb-dispatch contract for notice/vacate).
+  defp record_payment(args) do
+    %{
+      "payment_id" => payment_id,
+      "amount_cents" => amount_cents,
+      "received_on" => received_on,
+      "holder" => holder
+    } = args
+
+    payment =
+      Accounts.payment_received(%{
+        payment_id: payment_id,
+        amount_cents: amount_cents,
+        received_on: Date.from_iso8601!(received_on),
+        holder: holder
+      })
+
+    Accounts.append(payment, stream: Map.get(args, "accounts_stream", "accounts"))
   end
 
   # A job is stale iff its stamped generation is *behind* the live one — the generation

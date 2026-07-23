@@ -44,9 +44,10 @@ a deterministic agent archetype. The existing midnight sweep continues to advanc
 5. As the developer, I want the planner to compute each tenancy's world-line once
    after seed and enqueue only the future events as scheduled jobs, so that runtime
    jobs are dumb dispatches with no arrears read.
-6. As the developer, I want the enqueue idempotent on `{tenancy_id, event}` — safe
-   because each scheduled event kind occurs at most once per tenancy in v1 — so a
-   re-run never double-schedules and the aggregate's own dedupe backstops it.
+6. As the developer, I want the enqueue idempotent on `{tenancy_id, ref}` — where
+   `ref` is the event name for the once-per-lifecycle agent actions and the stable
+   per-period `payment_id` for a recurring payment — so a re-run never double-schedules
+   and the aggregate's / payment ACL's own dedupe backstops it.
 7. As the developer, I want the agent's notice threshold to be a per-scenario
    archetype, so the board can show both a strict and a lenient response.
 8. As the developer, I want a noticed tenant's vacate date derived as `E + overstay`,
@@ -118,14 +119,13 @@ a deterministic agent archetype. The existing midnight sweep continues to advanc
 - **Plan-once after seed.** Deterministic + finite + no intervention ⇒ the whole
   remaining future is known at seed time. The planner enqueues every future event
   once, as scheduled Oban jobs at their date; runtime jobs are dumb (dispatch the
-  pre-decided command, no arrears read). Idempotent on `{tenancy_id, event}` —
-  sufficient in v1 because each scheduled event *kind* (`notice`, `vacate`) occurs
-  **at most once per tenancy lifecycle** (no curing, no re-let), so `{tenancy_id,
-  event}` uniquely identifies its single occurrence; the aggregate's own dedupe
-  backstops it. *Extension point:* if a later change makes an event kind recur
-  (re-letting a vacated property, multiple notice cycles after curing), the key
-  must gain a stable per-occurrence world-line event id so distinct occurrences
-  don't collapse into one. No recurring decider cron.
+  pre-decided command / append the payment, no arrears read). Idempotent on
+  `{tenancy_id, ref}`, where `ref` is a **stable per-occurrence world-line id**: the
+  once-per-lifecycle agent actions use their event name (`notice`, `vacate`), while a
+  recurring **payment** — the one event kind that occurs many times per tenancy
+  (issue #200) — uses its stable per-period `payment_id`, so distinct payments never
+  collapse into one. The aggregate's / payment ACL's own dedupe backstops it. No
+  recurring decider cron.
 - **Reset carries a seed generation.** Reset (#92) purges *scheduled* planned jobs
   and replans — but a job Oban has already **claimed** (moved to `executing`) is
   past deletion and would otherwise dispatch a stale command into the fresh seed.
@@ -164,9 +164,10 @@ a deterministic agent archetype. The existing midnight sweep continues to advanc
   tests.
 - **Planner enqueue as behaviour, not internals.** Assert that planning a scenario
   inserts scheduled Oban jobs at the right dates for the future slice only (past
-  events are not enqueued), and that a second plan run inserts no duplicates
-  (idempotency on `{tenancy_id, event}`). Use Oban's testing mode; assert on
-  enqueued jobs, not on dispatch side effects.
+  events are not enqueued) — including the recurring future payments — and that a
+  second plan run inserts no duplicates (idempotency on `{tenancy_id, ref}`, per-period
+  for payments). Use Oban's testing mode; assert on enqueued jobs, not on dispatch
+  side effects.
 - **Reset-generation guard.** Cover the reset-vs-claimed-job race: a planned job
   stamped with generation *N*, executed after a reset has advanced the generation
   to *N+1*, must no-op (dispatch no command); a job whose stamp matches the current

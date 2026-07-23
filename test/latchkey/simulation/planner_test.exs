@@ -102,21 +102,47 @@ defmodule Latchkey.Simulation.PlannerTest do
     end
   end
 
-  describe "plan/1 — only agent actions are scheduled" do
-    test "a never-noticed tenant schedules nothing, and future payments are not enqueued" do
+  describe "plan/1 — schedules future payments" do
+    test "a reliable tenant's future payments each enqueue a live payment job" do
       # A reliable tenant with the whole payment schedule ahead of `today`: it never
-      # crosses a threshold (no notice/vacate), and — proving payments are out of scope
-      # for the planner — none of its future payment dates produce a job either.
+      # crosses a threshold (no notice/vacate), but every one of its future payment dates
+      # is realized as a live payment job — the reliable-tenant freshness this fixes.
       reliable =
         exiting_scenario(label: "reliable", tenancy_id: "t2", profile: Profile.reliable())
 
       Planner.plan(scenarios: [reliable], today: ~D[2026-01-01])
 
-      assert all_enqueued(worker: ScheduledEvent) == []
+      jobs = all_enqueued(worker: ScheduledEvent)
+
+      # All 8 scheduled periods are ahead of today, all paid (reliable), none a notice/vacate.
+      assert Enum.all?(jobs, &(&1.args["event"] == "payment"))
+      assert length(jobs) == 8
+
+      # Each payment job carries its edge inputs and uses the stable per-period payment_id
+      # as its idempotency ref; the earliest fires on the first due date.
+      one = job_for("payment")
+      assert one.args["holder"] == "tenancy-t2"
+      assert one.args["amount_cents"] == @rent
+      assert one.args["ref"] == one.args["payment_id"]
+      assert one.args["accounts_stream"] == "accounts"
+      assert jobs |> Enum.map(&fires_on/1) |> Enum.min(Date) == @first_due
+    end
+
+    test "a re-plan under the same generation inserts no duplicate payment jobs" do
+      opts = [
+        scenarios: [exiting_scenario(tenancy_id: "t2", profile: Profile.reliable())],
+        today: ~D[2026-01-01]
+      ]
+
+      Planner.plan(opts)
+      Planner.plan(opts)
+
+      # Per-payment `ref` uniqueness collapses the replan — still exactly 8 payment jobs.
+      assert length(all_enqueued(worker: ScheduledEvent, args: %{event: "payment"})) == 8
     end
   end
 
-  describe "plan/1 — idempotent on {tenancy_id, event}" do
+  describe "plan/1 — idempotent on {tenancy_id, ref}" do
     test "a second plan run inserts no duplicates" do
       opts = [scenarios: [exiting_scenario()], today: ~D[2026-01-20]]
 
@@ -180,13 +206,15 @@ defmodule Latchkey.Simulation.PlannerTest do
         today
         |> Seeder.catalogue()
         |> Enum.flat_map(&Projection.future_timeline(&1, &1.tenancy_id, today))
-        |> Enum.count(fn {_date, {kind, _payload}} -> kind in [:notice, :exit] end)
+        |> length()
 
       assert :ok = perform_job(Planner, %{"today" => Date.to_iso8601(today)})
 
       jobs = all_enqueued(worker: ScheduledEvent)
       assert length(jobs) == expected
-      assert Enum.all?(jobs, &(&1.args["event"] in ["notice", "vacate"]))
+      assert Enum.all?(jobs, &(&1.args["event"] in ["payment", "notice", "vacate"]))
+      # The catalogue's reliable tenants now contribute future payment jobs.
+      assert Enum.any?(jobs, &(&1.args["event"] == "payment"))
     end
   end
 end

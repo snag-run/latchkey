@@ -9,8 +9,13 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
 
   alias Latchkey.Accounts.Events.PaymentReceived
   alias Latchkey.Simulation.Behaviour.Profile
+  alias Latchkey.Simulation.Seeder.Catalogue
   alias Latchkey.Simulation.Seeder.Projection
   alias Latchkey.Simulation.Seeder.Scenario
+
+  # The runway the catalogue promises a reliable tenant keeps paying (mirrors
+  # `Catalogue`'s `@payment_runway_days`); the boundary test asserts it is never short.
+  @runway_days 150
 
   @today ~D[2026-06-15]
 
@@ -176,6 +181,71 @@ defmodule Latchkey.Simulation.Seeder.ProjectionTest do
 
       assert :notice in kinds
       refute :exit in kinds
+    end
+  end
+
+  describe "future_timeline/3 — the planner's > today slice" do
+    test "a reliable tenant's future periods are scheduled as payment steps" do
+      # first_due today-14, weekly, 8 periods → three periods ≤ today (paid, square) and
+      # the rest ahead — the runway the catalogue now adds so the tenant keeps paying.
+      scenario = %Scenario{
+        label: "ongoing",
+        tenancy_id: "ongoing",
+        property_ref: "prop-ongoing",
+        rent_amount_cents: 50_000,
+        first_due_date: Date.add(@today, -14),
+        profile: Profile.reliable(),
+        schedule_count: 8
+      }
+
+      future = Projection.future_timeline(scenario, scenario.tenancy_id, @today)
+
+      # Every future step is a payment (a reliable tenant never crosses a threshold), each
+      # dated strictly after today.
+      assert future != []
+      assert Enum.all?(future, fn {_date, {kind, _}} -> kind == :payment end)
+      assert Enum.all?(future, fn {date, _} -> Date.after?(date, @today) end)
+
+      # Extending the schedule past today leaves the as-of-today read model untouched.
+      assert %{status: :active, days_behind: 0, balance_cents: 0} =
+               Projection.derive(scenario, @today)
+    end
+
+    test "a silent tenant schedules no future payments" do
+      # Pays two periods then goes silent — its only payments are in the past, so the
+      # future slice carries no payment steps (the silence keeps it accruing, by design).
+      scenario = silent_scenario("silent-future", first_due: Date.add(@today, -70), overstay: 0)
+
+      future = Projection.future_timeline(scenario, scenario.tenancy_id, @today)
+
+      refute Enum.any?(future, fn {_date, {kind, _}} -> kind == :payment end)
+    end
+
+    test "every cadence's healthy runway reaches at least @payment_runway_days past today" do
+      # The catalogue promises a reliable tenant keeps paying ~5 months out; assert the
+      # last scheduled payment on each cadence lands at least `@runway_days` past today,
+      # so no reliable tenant runs dry before the (quarterly) reset re-anchors (#200).
+      floor = Date.add(@today, @runway_days)
+
+      healthy_by_cadence =
+        @today
+        |> Catalogue.build()
+        |> Enum.filter(&(&1.label =~ ~r/^healthy-/))
+        |> Enum.group_by(& &1.cycle)
+
+      for cadence <- [:weekly, :fortnightly, :monthly] do
+        scenario = healthy_by_cadence |> Map.fetch!(cadence) |> hd()
+
+        last_payment =
+          scenario
+          |> Projection.future_timeline(scenario.tenancy_id, @today)
+          |> Enum.filter(fn {_date, {kind, _}} -> kind == :payment end)
+          |> Enum.map(fn {date, _} -> date end)
+          |> Enum.max(Date)
+
+        assert Date.compare(last_payment, floor) != :lt,
+               "#{cadence}: last payment #{last_payment} is short of #{floor}"
+      end
     end
   end
 

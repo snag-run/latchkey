@@ -45,4 +45,7 @@ purity of the tenant engine are preserved.
 - The catalogue **drops hand-authored** notices/keys-returns — agent events are
   derived from `(tenant archetype × agent archetype × commence date)`.
 - Freshness stays with the finite-population + reset-to-healthy model (issue #92);
-  perpetual re-letting remains deferred.
+  perpetual re-letting remains deferred. **This "future payments left to the reset"
+  half is amended by [ADR 0012](0012-schedule-future-payments-plan-once.md)** —
+  future payments are now scheduled plan-once too (issue #200), because the reset
+  alone could not keep reliable tenants paying between re-anchors.

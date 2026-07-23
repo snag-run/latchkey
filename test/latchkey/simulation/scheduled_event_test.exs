@@ -10,6 +10,7 @@ defmodule Latchkey.Simulation.ScheduledEventTest do
   use Latchkey.DataCase, async: false
   use Oban.Testing, repo: Latchkey.Repo
 
+  alias Latchkey.Accounts.Events.PaymentReceived
   alias Latchkey.Clock
   alias Latchkey.CommandedApp
   alias Latchkey.EventStore
@@ -126,6 +127,60 @@ defmodule Latchkey.Simulation.ScheduledEventTest do
     # The derived later vacate date is the one that fires as `occurred_on`.
     keys = emitted(tid, KeysReturned)
     assert keys.occurred_on == "2026-02-23"
+  end
+
+  describe "a fired `payment` job" do
+    test "appends the PaymentReceived to the Accounts stream, booked live" do
+      tid = "sched-#{System.unique_integer([:positive])}"
+      stream = "accounts-#{tid}"
+
+      assert :ok = perform_job(ScheduledEvent, payment_args(tid, stream))
+
+      # The payment fires through the Accounts edge (not a Commanded command): one
+      # PaymentReceived on the target stream, carrying its pre-decided edge inputs.
+      assert [%PaymentReceived{} = payment] = read_stream(stream)
+      assert payment.payment_id == "tenancy-#{tid}-pmt-0"
+      assert payment.amount_cents == 50_000
+      assert payment.holder == "tenancy-#{tid}"
+      # `occurred_on` is the planned received date; `recorded_on` defaults to today — a
+      # live same-day booking (dates round-trip as ISO strings through the store).
+      assert payment.occurred_on == "2026-02-02"
+      assert payment.recorded_on == today_iso()
+    end
+
+    test "a stale-generation payment no-ops — appends nothing" do
+      tid = "sched-#{System.unique_integer([:positive])}"
+      stream = "accounts-#{tid}"
+
+      args = Map.put(payment_args(tid, stream), "generation", SeedGeneration.current())
+      assert SeedGeneration.advance() == 1
+
+      assert :ok = perform_job(ScheduledEvent, args)
+
+      # The staleness guard dropped it before the append — the stream was never created.
+      assert read_stream(stream) == []
+    end
+  end
+
+  defp payment_args(tid, stream) do
+    %{
+      "tenancy_id" => tid,
+      "event" => "payment",
+      "ref" => "tenancy-#{tid}-pmt-0",
+      "accounts_stream" => stream,
+      "payment_id" => "tenancy-#{tid}-pmt-0",
+      "amount_cents" => 50_000,
+      "received_on" => "2026-02-02",
+      "holder" => "tenancy-#{tid}"
+    }
+  end
+
+  # Read a stream's event structs, treating a never-created stream as empty.
+  defp read_stream(stream) do
+    case EventStore.stream_forward(stream) do
+      {:error, :stream_not_found} -> []
+      events -> events |> Enum.map(& &1.data)
+    end
   end
 
   describe "reset-generation staleness guard (issue #162)" do

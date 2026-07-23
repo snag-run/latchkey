@@ -74,6 +74,13 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   @week 7
   @base_rent_cents 50_000
 
+  # Reliable, still-paying tenancies get their schedule extended ~5 months past today so
+  # their scripted payments keep landing as wall-clock time advances — comfortably longer
+  # than the quarterly reset-to-healthy re-anchor, so a live tenant never runs dry between
+  # resets (the planner schedules these future payments; ADR 0011). Silent/terminal
+  # scenarios deliberately keep their finite schedule — the silence *is* the truncation.
+  @payment_runway_days 150
+
   # E = notice + 14 (s88); mirrors WorldLine so the catalogue can place a scenario's
   # commence date relative to where its derived notice/E/V will land.
   @statutory_notice_days 14
@@ -115,7 +122,9 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
     [paid_up(today), twenty_days_behind(today), notice_then_paid(today)]
   end
 
-  # A reliable tenant who has paid every period up to today — square, `days_behind` 0.
+  # A reliable tenant who has paid every period up to today — square, `days_behind` 0 —
+  # and keeps paying: the schedule runs a runway past today (weekly cadence) so this
+  # headline "square" tenant stays square as the sweep advances, rather than drifting.
   defp paid_up(today) do
     %Scenario{
       label: "paid-up",
@@ -123,7 +132,7 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
       rent_amount_cents: @base_rent_cents,
       first_due_date: days_before(today, 30),
       profile: Profile.reliable(),
-      schedule_count: 5
+      schedule_count: 5 + future_periods(:weekly)
     }
   end
 
@@ -174,10 +183,11 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
     healthy(today) ++ arrears(today) ++ under_notice(today) ++ exited(today) ++ relets(today)
   end
 
-  # Reliable tenants square today: the schedule spans `periods` paid periods, and the
-  # first_due offset lands the *next* due date after today, so nothing dangles unpaid.
-  # `first_due` is stepped back `periods` whole cadence periods from `today` (then nudged
-  # `offset` days forward), so it stays square on any cadence.
+  # Reliable tenants square today: the `periods` past periods are all paid up to today,
+  # then the schedule runs a `future_periods/1` runway *past* today so the tenant keeps
+  # paying as wall-clock time advances (the planner schedules those; ADR 0011). `first_due`
+  # is stepped back `periods` whole cadence periods from `today` (then nudged `offset` days
+  # forward), so it stays square on any cadence.
   defp healthy(today) do
     for idx <- 0..(@healthy_count - 1) do
       cycle = cycle_for(idx)
@@ -191,7 +201,7 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
         cycle: cycle,
         first_due_date: Date.add(back_periods(today, cycle, periods), offset),
         profile: Profile.reliable(),
-        schedule_count: periods
+        schedule_count: periods + future_periods(cycle)
       }
     end
   end
@@ -323,6 +333,10 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
     mild_arrears? = rem(idx, 2) == 1
     paid = if mild_arrears?, do: max(1, elapsed_weeks - 1), else: elapsed_weeks + 1
 
+    # The paid-up successors keep paying past today (runway added); the mild-arrears ones
+    # keep their finite schedule so they stay a little behind, as before.
+    schedule_count = if mild_arrears?, do: paid, else: paid + future_periods(cycle)
+
     current = %Scenario{
       label: "relet-#{n}-current",
       tenancy_id: "relet-#{n}-current",
@@ -331,7 +345,7 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
       cycle: cycle,
       first_due_date: days_before(today, commence_age),
       profile: Profile.reliable(),
-      schedule_count: paid
+      schedule_count: schedule_count
     }
 
     [prior, current]
@@ -367,6 +381,16 @@ defmodule Latchkey.Simulation.Seeder.Catalogue do
   defp back_periods(%Date{} = date, :weekly, n), do: Date.add(date, -7 * n)
   defp back_periods(%Date{} = date, :fortnightly, n), do: Date.add(date, -14 * n)
   defp back_periods(%Date{} = date, :monthly, n), do: Date.shift(date, month: -n)
+
+  # Future cadence periods added to an ongoing reliable payer's schedule so its last due
+  # date lands **at least** `@payment_runway_days` past today. The base schedule ends
+  # ~one cadence period *before* today (its next due is the first that would dangle), so
+  # we add one period beyond `ceil(runway / period)` to cover that gap plus the small
+  # anchor `offset` — guaranteeing the runway is never short. The shortest month (28d) is
+  # used for monthly so the day-count is never under-covered.
+  defp future_periods(:weekly), do: ceil(@payment_runway_days / 7) + 1
+  defp future_periods(:fortnightly), do: ceil(@payment_runway_days / 14) + 1
+  defp future_periods(:monthly), do: ceil(@payment_runway_days / 28) + 1
 
   # A little deterministic rent variation (45k..70k) so the board isn't monotone. This is
   # the whole-period rent for the tenancy's cadence (ADR 0009 decision 1).
