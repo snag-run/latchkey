@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.0](https://github.com/snag-run/latchkey/compare/v0.6.0...v0.7.0) (2026-08-03)
+
+
+### Features
+
+* **sim:** schedule ongoing archetype-driven rental payments ([#200](https://github.com/snag-run/latchkey/issues/200)) ([08b430f](https://github.com/snag-run/latchkey/commit/08b430f60d3ffd4ea2c735973c5485b33e2b2893))
+
+
+### Bug Fixes
+
+* **deps:** bump daisyui from v5.6.15 to v5.6.20 ([#205](https://github.com/snag-run/latchkey/issues/205)) ([e314f36](https://github.com/snag-run/latchkey/commit/e314f3607a57f650706e480d1a69a55c25af0ffa))
+* **deps:** bump the mix-production group across 1 directory with 6 updates ([#207](https://github.com/snag-run/latchkey/issues/207)) ([79ebee7](https://github.com/snag-run/latchkey/commit/79ebee79232d9674e3559b2377e314a4b6f7e442))
+
 ## [0.6.0](https://github.com/snag-run/latchkey/compare/v0.5.0...v0.6.0) (2026-07-19)
 
 
